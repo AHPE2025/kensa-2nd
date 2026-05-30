@@ -1,0 +1,1522 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>建物検査システム</title>
+  <style>
+    :root{
+      --bg:#f3f4f6; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --brand:#2563eb; --danger:#dc2626; --ok:#16a34a;
+      --shadow: 0 10px 30px rgba(0,0,0,.08);
+      --radius: 14px;
+      --bubbleW: 150px;
+      --bubbleH: 44px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1600px;margin:0 auto;padding:14px}
+    .row{display:flex;gap:14px;align-items:stretch}
+    .col{flex:1}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .card h2{margin:0;padding:14px 14px 10px 14px;font-size:16px}
+    .card .body{padding:14px}
+    .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .btn{appearance:none;border:1px solid var(--line);background:#fff;color:var(--text);padding:10px 12px;border-radius:12px;cursor:pointer;font-weight:600}
+    .btn:hover{border-color:#cbd5e1}
+    .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+    .btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+    .btn.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .field{display:flex;flex-direction:column;gap:6px}
+    .field label{font-size:12px;color:var(--muted)}
+    .field input,.field select,.field textarea{border:1px solid var(--line);border-radius:12px;padding:10px 10px;font-size:14px;background:#fff}
+    .field textarea{min-height:78px;resize:vertical}
+    .hint{font-size:12px;color:var(--muted);line-height:1.5}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .divider{height:1px;background:var(--line);margin:12px 0}
+    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:hidden;aspect-ratio:16/9;}
+    canvas#bg{position:absolute;top:0;left:0;display:block;}
+    svg#overlay{position:absolute;top:0;left:0;touch-action:none}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:#fff}
+    .status{display:flex;gap:10px;flex-wrap:wrap}
+    .toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:var(--shadow);max-width:520px;display:none;white-space:pre-wrap}
+    .list{overflow:auto;border:1px solid var(--line);border-radius:14px}
+    .item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+    .item:last-child{border-bottom:none}
+    .item:hover{background:#f9fafb}
+    .item .meta{flex:1;min-width:0}
+    .item .meta .t{font-weight:800;font-size:13px}
+    .item .meta .s{font-size:12px;color:var(--muted);margin-top:2px}
+    .item .act{display:flex;gap:8px}
+    .tag{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;color:var(--muted)}
+    .sel{outline:2px solid var(--brand);outline-offset:-2px}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;background:#f9fafb;border:1px solid var(--line);padding:2px 6px;border-radius:8px;color:#111827}
+    .small{font-size:12px;color:var(--muted)}
+
+    /* フルスクリーンモード */
+    .fs-btn{position:absolute;top:10px;right:10px;z-index:10;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
+    .fs-btn:hover{background:rgba(17,24,39,.95)}
+    .stageWrap.fullscreen{position:fixed;top:0;left:0;width:100vw;height:100vh;width:100dvw;height:100dvh;z-index:1000;border-radius:0;border:none;aspect-ratio:unset;transform-origin:center center;transition:transform 0.3s ease;}
+    /* 回転クラス */
+    .stageWrap.fullscreen.rot90 {transform:rotate(90deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
+    .stageWrap.fullscreen.rot180{transform:rotate(180deg);}
+    .stageWrap.fullscreen.rot270{transform:rotate(270deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
+    #fsPanel{display:none;position:fixed;z-index:2000;background:rgba(17,24,39,.88);backdrop-filter:blur(12px);border-radius:20px;padding:12px 20px;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center;box-shadow:0 8px 32px rgba(0,0,0,.5);max-width:96vw;cursor:grab;user-select:none;touch-action:none;}
+    #fsPanel.show{display:flex}
+    #fsPanel.dragging{cursor:grabbing;}
+    #fsPanelHandle{width:36px;height:4px;background:#475569;border-radius:4px;margin:0 auto 8px auto;cursor:grab;flex-basis:100%;}
+    #fsPanel label{font-size:11px;color:#94a3b8;margin-bottom:2px;display:block}
+    #fsPanel select{background:#1e293b;color:#f1f5f9;border:1px solid #334155;border-radius:10px;padding:8px 10px;font-size:14px;font-weight:600;}
+    #fsPanel .fs-field{display:flex;flex-direction:column;gap:2px}
+    #fsPanel .sep{width:1px;height:38px;background:#334155;flex-shrink:0}
+    #fsPanel .fs-count{font-size:12px;color:#64748b;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- ── ヘッダー操作バー ── -->
+    <div class="topbar card" style="margin-bottom:12px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+      <strong style="font-size:15px;margin-right:4px">🏗 建物検査</strong>
+      <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
+        <label style="white-space:nowrap;font-size:12px;color:var(--muted)">PDF</label>
+        <input id="pdfInput" type="file" accept="application/pdf" style="font-size:12px" />
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn" id="btnPrevPage" style="padding:7px 10px">◀</button>
+        <span class="tag" id="pageInfo" style="white-space:nowrap">PDF未選択</span>
+        <button class="btn" id="btnNextPage" style="padding:7px 10px">▶</button>
+        <input id="pageInput" type="number" min="1" value="1" style="width:64px;border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px" />
+      </div>
+      <div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap">
+        <button class="btn primary" id="btnSavePng" style="padding:7px 12px;font-size:13px">💾 保存</button>
+        <button class="btn" id="btnEditMemo" disabled style="padding:7px 12px;font-size:13px">📝 メモ</button>
+        <button class="btn danger" id="btnDeleteSelected" disabled style="padding:7px 12px;font-size:13px">🗑 削除</button>
+        <button class="btn" id="btnClearStorage" style="padding:7px 12px;font-size:13px">⚠ データ消去</button>
+      </div>
+    </div>
+
+    <!-- ── メインエリア ── -->
+    <div class="main-col">
+
+      <!-- 図面カード -->
+      <div class="card" style="margin-bottom:12px">
+
+        <!-- 図面上部：指摘種別・業者セレクタ -->
+        <div class="drawing-controls card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px 14px;border-bottom:1px solid var(--line);margin:0;box-shadow:none;border-radius:var(--radius) var(--radius) 0 0;border:none;border-bottom:1px solid var(--line)">
+          <div class="field" style="min-width:140px;flex:1">
+            <label>指摘種別</label>
+            <select id="typeSelect">
+              <option value="傷">傷</option>
+              <option value="汚れ">汚れ</option>
+              <option value="建具">建具</option>
+              <option value="設備">設備</option>
+              <option value="その他">その他</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:140px;flex:1">
+            <label>業者</label>
+            <select id="vendorSelect">
+              <option value="大工">大工</option>
+              <option value="電気">電気</option>
+              <option value="設備">設備</option>
+              <option value="内装">内装</option>
+              <option value="クリーニング">クリーニング</option>
+              <option value="その他">その他</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:200px;flex:2">
+            <label>メモ（任意）</label>
+            <input type="text" id="memoInput" placeholder="例：巾木のキズ、タッチアップ要" style="border:1px solid var(--line);border-radius:12px;padding:10px;font-size:14px" />
+          </div>
+          <div class="field" style="flex-direction:column;gap:4px;align-self:center">
+            <label style="font-size:11px;color:var(--muted)">図面回転</label>
+            <div style="display:flex;gap:6px">
+              <button class="btn" id="btnRotL" title="左90°回転" style="padding:7px 11px;font-size:16px">↺</button>
+              <button class="btn" id="btnRotR" title="右90°回転" style="padding:7px 11px;font-size:16px">↻</button>
+            </div>
+          </div>
+          <span class="small" style="white-space:nowrap;align-self:center">図面をタップ→マーカー追加</span>
+        </div>
+
+        <!-- 図面ステージ（横画面デフォルト） -->
+        <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
+          <canvas id="bg"></canvas>
+          <svg id="overlay"></svg>
+          <button class="fs-btn" id="btnFullscreen">⛶ フルスクリーン</button>
+        </div>
+
+        <!-- 図面下部：指摘一覧 -->
+        <div style="padding:12px 14px 0">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <strong style="font-size:14px">指摘一覧</strong>
+            <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
+              <label style="font-size:12px;color:var(--muted);white-space:nowrap">業者フィルタ</label>
+              <select id="filterVendor" style="border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px">
+                <option value="">全て</option>
+                <option value="大工">大工</option>
+                <option value="電気">電気</option>
+                <option value="設備">設備</option>
+                <option value="内装">内装</option>
+                <option value="クリーニング">クリーニング</option>
+                <option value="その他">その他</option>
+              </select>
+            </div>
+          </div>
+          <div class="list" id="list" style="max-height:280px"></div>
+          <div style="height:14px"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- メモ編集ポップアップ -->
+  <div id="memoPopup" style="display:none;position:fixed;z-index:3000;background:#1e293b;border:1px solid #334155;border-radius:16px;padding:14px;box-shadow:0 8px 32px rgba(0,0,0,.5);min-width:260px;">
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:6px">メモを編集</div>
+    <textarea id="memoPopupInput" rows="3" style="width:100%;background:#0f172a;color:#f1f5f9;border:1px solid #334155;border-radius:10px;padding:8px;font-size:14px;resize:vertical;box-sizing:border-box;" placeholder="メモを入力…"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+      <button id="memoPopupCancel" class="btn" style="background:#334155;color:#f1f5f9;border-color:#475569;padding:7px 14px">キャンセル</button>
+      <button id="memoPopupSave" class="btn primary" style="padding:7px 14px">保存</button>
+    </div>
+  </div>
+
+  <!-- メモ編集ポップアップ -->
+  <!-- フルスクリーン操作パネル - body直下でposition:fixed -->
+  <div id="fsPanel">
+    <div id="fsPanelHandle" title="ドラッグで移動"></div>
+    <div class="fs-field">
+      <label>指摘種別</label>
+      <select id="fsTypeSelect">
+        <option value="傷">傷</option>
+        <option value="汚れ">汚れ</option>
+        <option value="建具">建具</option>
+        <option value="設備">設備</option>
+        <option value="その他">その他</option>
+      </select>
+    </div>
+    <div class="sep"></div>
+    <div class="fs-field">
+      <label>業者</label>
+      <select id="fsVendorSelect">
+        <option value="大工">大工</option>
+        <option value="電気">電気</option>
+        <option value="設備">設備</option>
+        <option value="内装">内装</option>
+        <option value="クリーニング">クリーニング</option>
+        <option value="その他">その他</option>
+      </select>
+    </div>
+    <div class="sep"></div>
+    <div class="fs-field">
+      <label>ページ</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn" id="fsBtnPrev" style="padding:7px 10px;background:#1e293b;color:#f1f5f9;border-color:#334155">◀</button>
+        <span class="fs-count" id="fsPageInfo">-</span>
+        <button class="btn" id="fsBtnNext" style="padding:7px 10px;background:#1e293b;color:#f1f5f9;border-color:#334155">▶</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="fs-field">
+      <label>回転</label>
+      <div style="display:flex;gap:6px">
+        <button class="btn" id="fsBtnRotL" title="左90°" style="padding:7px 12px;background:#1e293b;color:#f1f5f9;border-color:#334155;font-size:17px">↺</button>
+        <button class="btn" id="fsBtnRotR" title="右90°" style="padding:7px 12px;background:#1e293b;color:#f1f5f9;border-color:#334155;font-size:17px">↻</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <span class="fs-count" id="fsMarkerCount">指摘 0件</span>
+    <div class="sep"></div>
+    <div class="fs-field">
+      <label>選択中</label>
+      <button class="btn" id="fsBtnDelete" disabled style="padding:8px 14px;background:#7f1d1d;color:#fca5a5;border-color:#991b1b">🗑 削除</button>
+      <button class="btn" id="fsBtnEditMemo" disabled style="padding:8px 14px;background:#1e3a5f;color:#93c5fd;border-color:#1d4ed8">📝 メモ</button>
+    </div>
+    <button class="btn" id="btnExitFs" style="background:#dc2626;color:#fff;border-color:#dc2626;padding:8px 14px">✕ 閉じる</button>
+  </div>
+  <script>
+  document.addEventListener("DOMContentLoaded", function(){
+    // -------------------- Utilities --------------------
+    const $ = (id)=>document.getElementById(id);
+    const toast = (msg)=>{
+      const t = $("toast");
+      t.textContent = msg;
+      t.style.display = "block";
+      clearTimeout(toast._tm);
+      toast._tm = setTimeout(()=>{t.style.display="none";}, 6000);
+    };
+    const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+
+    // -------------------- Persistent Storage --------------------
+    const STORAGE_KEY = "inspection_system_v3_plainjs";
+    const defaultStore = {
+      version: 1,
+      // backgrounds:
+      // activeBg: { kind:"none"|"pdf", pdfId:"...", page:1, pageCount: N, pageCache: { "pdfId:page": dataURL } }
+      activeBg: { kind:"none" },
+      // markersByKey: { "template": [..], "pdf:PDFID:1": [..] }
+      markersByKey: {}
+    };
+
+    function loadStore(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return structuredClone(defaultStore);
+        const obj = JSON.parse(raw);
+        if(!obj || typeof obj !== "object") return structuredClone(defaultStore);
+        if(!obj.markersByKey) obj.markersByKey = {};
+        if(!obj.activeBg) obj.activeBg = { kind:"none" };
+        return obj;
+      }catch(e){
+        console.error(e);
+        return structuredClone(defaultStore);
+      }
+    }
+    function saveStore(){
+      try{
+        // pageCache（ページ画像）はlocalStorageに保存しない（容量が大きすぎるため）
+        // マーカーデータのみ保存する
+        const toSave = {
+          ...store,
+          activeBg: store.activeBg ? { ...store.activeBg, pageCache: {} } : store.activeBg
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      }catch(e){
+        console.error(e);
+        toast("マーカー保存に失敗しました。\n" + String(e));
+      }
+    }
+
+    // -------------------- State --------------------
+    let store = loadStore();
+    let selectedId = null;
+    let filterVendor = "";
+    // stage measured size
+    let stageW = 1, stageH = 1;
+
+    // Bubble size (for auto arrangement collision checks)
+    const BUBBLE_W = 150;
+    const BUBBLE_H = 44;
+
+    function activeKey(){
+      const bg = store.activeBg;
+      if(bg?.kind === "pdf" && bg.pdfId && bg.page){
+        return `pdf:${bg.pdfId}:${bg.page}`;
+      }
+      return "template";
+    }
+    function markers(){
+      const key = activeKey();
+      if(!store.markersByKey[key]) store.markersByKey[key] = [];
+      return store.markersByKey[key];
+    }
+
+    // -------------------- Background Rendering --------------------
+    const bgCanvas = $("bg");
+    const ctx = bgCanvas.getContext("2d");
+    const overlay = $("overlay");
+    const stageWrap = $("stageWrap");
+
+    function resizeStage(){
+      // devicePixelRatioを考慮してcanvasを物理ピクセルサイズで確保する
+      // これにより高DPI(Retina)ディスプレイでもシャープに表示される
+      const dpr = window.devicePixelRatio || 1;
+
+      const rot = (typeof fsRotation !== "undefined") ? fsRotation : 0;
+      const inFs = (typeof isFullscreen !== "undefined") && isFullscreen;
+
+      let cssW, cssH;
+      if(inFs && (rot === 90 || rot === 270)){
+        cssW = window.innerHeight;
+        cssH = window.innerWidth;
+      } else {
+        const r = stageWrap.getBoundingClientRect();
+        cssW = Math.max(1, Math.round(r.width));
+        cssH = Math.max(1, Math.round(r.height));
+      }
+
+      // stageW/Hは論理座標系（CSS px）で持つ
+      stageW = cssW;
+      stageH = cssH;
+
+      // canvasの実ピクセルをDPR倍にしてシャープにする
+      // canvasの物理ピクセル数をDPR倍にしてシャープにする
+      bgCanvas.width  = Math.round(cssW * dpr);
+      bgCanvas.height = Math.round(cssH * dpr);
+      // inset:0を使わずJS側でサイズを完全制御（CSS insetがstyle.widthを上書きするため）
+      bgCanvas.style.width  = cssW + "px";
+      bgCanvas.style.height = cssH + "px";
+      // overlayも同様にサイズ設定
+      overlay.style.width  = cssW + "px";
+      overlay.style.height = cssH + "px";
+      // DPR倍スケールをctxに設定（描画はCSS座標で行える）
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
+      redrawBackground();
+      redrawOverlay();
+    }
+    window.addEventListener("resize", resizeStage);
+
+    function clearBackground(){
+      // PDFなし時はデフォルトのアスペクト比に戻す
+      if(typeof isFullscreen === 'undefined' || !isFullscreen) stageWrap.style.aspectRatio = "16 / 9";
+      ctx.clearRect(0,0,stageW,stageH);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0,0,stageW,stageH);
+      ctx.strokeStyle = "#eef2f7";
+      for(let x=0;x<stageW;x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,stageH); ctx.stroke();}
+      for(let y=0;y<stageH;y+=40){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(stageW,y); ctx.stroke();}
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "14px system-ui, sans-serif";
+      ctx.fillText("背景が未設定です（PDFをアップロードしてください）", 18, 28);
+    }
+
+    // PDFのアスペクト比をstageWrapに適用する（resizeStageは呼ばない）
+    function applyPdfAspectRatio(iw, ih){
+      // 常に16:9横固定。縦画像はdrawImageFitで左右にレターボックス表示する。
+    }
+
+    // 通常モードの画像回転（0/90/180/270）
+    let normalRotation = 0;
+
+    // imgRect: 元画像サイズ・スケール・回転を保持（正規化された比率変換に使用）
+    let imgRect = { iw: 1, ih: 1, sc: 1, rot: 0 };
+
+    function drawImageFit(img){
+      // フルスクリーン時は rot=0（CSSで回転）、通常時は normalRotation でcanvas回転
+      const rot = isFullscreen ? 0 : normalRotation;
+      const iw = img.width, ih = img.height;
+      const cw = stageW, ch = stageH;
+
+      // 回転後にcanvasにフィットするスケールを計算
+      const swapped = (rot === 90 || rot === 270);
+      const sc = Math.min(cw / (swapped ? ih : iw), ch / (swapped ? iw : ih));
+
+      // imgRect に元画像サイズ・スケール・回転を保存
+      imgRect = { iw, ih, sc, rot };
+
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, cw, ch);
+
+      // 高品質ダウンスケーリング（大きいPDF画像を縮小表示するとき重要）
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
+      if(rot === 0){
+        const dw = iw*sc, dh = ih*sc;
+        ctx.drawImage(img, 0,0, iw,ih, (cw-dw)/2,(ch-dh)/2, dw,dh);
+      } else {
+        ctx.save();
+        ctx.translate(cw/2, ch/2);
+        ctx.rotate(rot * Math.PI / 180);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0,0, iw,ih, -iw*sc/2,-ih*sc/2, iw*sc,ih*sc);
+        ctx.restore();
+      }
+    }
+
+    // canvas座標 → 元画像の正規化比率(0-1) [回転に依存しない正規座標系]
+    function canvasPxToImgRatio(px, py){
+      const {iw, ih, sc, rot} = imgRect;
+      // canvas中心からの相対座標
+      const cx = px - stageW/2, cy = py - stageH/2;
+      // 逆回転して元画像ローカル座標へ
+      const rad = -rot * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const lx = (cx*cos - cy*sin) / sc;
+      const ly = (cx*sin + cy*cos) / sc;
+      // 比率に変換（0=左端/上端, 1=右端/下端）
+      return { x: lx/iw + 0.5, y: ly/ih + 0.5 };
+    }
+
+    // 元画像の正規化比率 → canvas座標 px [回転に依存しない正規座標系]
+    function imgRatioToCanvasPx(rx, ry){
+      const {iw, ih, sc, rot} = imgRect;
+      // 元画像ローカル座標（中心基準）
+      const lx = (rx - 0.5) * iw;
+      const ly = (ry - 0.5) * ih;
+      // 回転してcanvas座標へ
+      const rad = rot * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      return {
+        x: (lx*cos - ly*sin) * sc + stageW/2,
+        y: (lx*sin + ly*cos) * sc + stageH/2,
+      };
+    }
+
+    function redrawBackground(){
+      const bg = store.activeBg;
+      if(bg?.kind === "pdf"){
+        const cacheKey = `${bg.pdfId}:${bg.page}`;
+        const dataURL = bg.pageCache?.[cacheKey];
+        if(dataURL){
+          const img = new Image();
+          img.onload = ()=>{
+            // アスペクト比をまず変更し、その後サイズを再計算してから描画
+            applyPdfAspectRatio(img.width, img.height);
+            // DOMのレイアウト更新を待ってからcanvasサイズ再計算
+            requestAnimationFrame(()=>{
+              // resizeStageと同じロジックでDPR対応
+              const dpr2 = window.devicePixelRatio || 1;
+              const rot2 = (typeof fsRotation !== "undefined") ? fsRotation : 0;
+              const inFs2 = (typeof isFullscreen !== "undefined") && isFullscreen;
+              let cssW2, cssH2;
+              if(inFs2 && (rot2 === 90 || rot2 === 270)){
+                cssW2 = window.innerHeight; cssH2 = window.innerWidth;
+              } else if(!inFs2){
+                const r = stageWrap.getBoundingClientRect();
+                cssW2 = Math.max(1, Math.round(r.width));
+                cssH2 = Math.max(1, Math.round(r.height));
+              } else {
+                cssW2 = stageW; cssH2 = stageH;
+              }
+              stageW = cssW2; stageH = cssH2;
+              bgCanvas.width  = Math.round(cssW2 * dpr2);
+              bgCanvas.height = Math.round(cssH2 * dpr2);
+              bgCanvas.style.width  = cssW2 + "px";
+              bgCanvas.style.height = cssH2 + "px";
+              overlay.style.width   = cssW2 + "px";
+              overlay.style.height  = cssH2 + "px";
+              ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+              overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
+              drawImageFit(img);
+              redrawOverlay();
+            });
+          };
+          img.onerror = ()=> clearBackground();
+          img.src = dataURL;
+        }else{
+          clearBackground();
+          ctx.fillStyle="#111827";
+          ctx.font="14px system-ui, sans-serif";
+          ctx.fillText("PDFページ画像を生成中…（少し待ってください）", 18, 50);
+        }
+      }else{
+        clearBackground();
+      }
+    }
+
+    // -------------------- Marker Model --------------------
+    function newId(){
+      return "m_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+    }
+    function defaultBubbleOffset(){ return { dx: 24, dy: -52 }; }
+
+    function addMarker(x,y){
+      // 座標はPDF画像内の比率（0〜1）で保存する。
+      // canvas全体ではなく「画像が表示されている領域」基準にすることで
+      // フルスクリーン切替後もずれない。
+      const ratio = canvasPxToImgRatio(x, y);
+      // 吹き出しオフセットも画像サイズ基準の比率で保存
+      const off = defaultBubbleOffset();
+      const m = {
+        id: newId(),
+        x: ratio.x, y: ratio.y, // anchor (canonical image ratio)
+        // dx/dyも元画像サイズ基準の比率で保存
+        dx: off.dx / (imgRect.iw * imgRect.sc),
+        dy: off.dy / (imgRect.ih * imgRect.sc),
+        type: $("typeSelect").value,
+        vendor: $("vendorSelect").value,
+        memo: $("memoInput").value || "",
+        createdAt: Date.now(),
+        bubbleMoved: false, // if user drags bubble, don't auto-move this bubble unless re-run manual
+      };
+      markers().push(m);
+      selectedId = m.id;
+      saveStore();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+    }
+
+    function deleteSelected(){
+      if(!selectedId) return;
+      const arr = markers();
+      const idx = arr.findIndex(m=>m.id===selectedId);
+      if(idx>=0){
+        arr.splice(idx,1);
+        selectedId = null;
+        saveStore();
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+      }
+    }
+
+
+    // -------------------- SVG Overlay Rendering --------------------
+    function svgEl(name, attrs={}){
+      const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+      for(const [k,v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+      return el;
+    }
+
+    function redrawOverlay(){
+      while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
+
+      const arr = markers();
+      // background click target (so clicks not swallowed by elements)
+      const hit = svgEl("rect", { x:0,y:0,width:stageW,height:stageH, fill:"transparent", "pointer-events":"all" });
+      overlay.appendChild(hit);
+
+      arr.forEach((m, idx)=>{
+        const isSel = m.id === selectedId;
+        const group = svgEl("g", { "data-id": m.id });
+
+        // line from anchor to bubble
+        // 画像比率→canvas px 変換
+        const _a = imgRatioToCanvasPx(m.x, m.y);
+        const ax = _a.x, ay = _a.y;
+        const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
+        const bx = _b.x, by = _b.y;
+        // 線の終点は吹き出しの中心（回転しても常にここに繋がる）
+        const linex2 = bx + BUBBLE_W / 2;
+        const liney2 = by + BUBBLE_H / 2;
+        const line = svgEl("line", { x1: ax, y1: ay, x2: linex2, y2: liney2, stroke: "#111827", "stroke-width": 2, "stroke-opacity": 0.65 });
+        group.appendChild(line);
+
+        // anchor point (draggable)
+        const anchor = svgEl("circle", { cx: ax, cy: ay, r: 7, fill: "#dc2626", stroke: isSel? "#2563eb":"#ffffff", "stroke-width": isSel? 3:2, cursor:"grab" });
+        if(isSel) anchor.classList.add("sel");
+        anchor.setAttribute("data-role","anchor");
+        group.appendChild(anchor);
+
+        // bubble (draggable)
+        // 逆回転はフルスクリーン時のみ（CSSでstageWrap全体が回転するため）
+        // 通常モードはcanvasだけが回転でSVGは回転しないので逆回転不要
+        const rot = isFullscreen ? fsRotation : 0;
+        const bcx = BUBBLE_W / 2, bcy = BUBBLE_H / 2;
+        const bubbleTransform = rot === 0
+          ? `translate(${bx},${by})`
+          : `translate(${bx},${by}) rotate(${-rot},${bcx},${bcy})`;
+        const bubbleG = svgEl("g", { transform: bubbleTransform, cursor:"grab" });
+        bubbleG.setAttribute("data-role","bubble");
+
+        const bubble = svgEl("rect", { x:0,y:0,width:BUBBLE_W,height:BUBBLE_H, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
+        bubbleG.appendChild(bubble);
+
+        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827" });
+        t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
+        bubbleG.appendChild(t1);
+
+        const memo = (m.memo||"").trim();
+        const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280" });
+        t2.textContent = memo ? (memo.length>22? memo.slice(0,22)+"…" : memo) : "（メモなし）";
+        bubbleG.appendChild(t2);
+
+        group.appendChild(bubbleG);
+
+        overlay.appendChild(group);
+      });
+      // フルスクリーン時に件数を更新
+      if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
+    }
+
+    // -------------------- List Rendering --------------------
+    function redrawList(){
+      const list = $("list");
+      list.innerHTML = "";
+      const arr = markers();
+      const view = filterVendor ? arr.filter(m=>m.vendor===filterVendor) : arr;
+
+      if(view.length === 0){
+        const div = document.createElement("div");
+        div.className = "item";
+        div.style.cursor = "default";
+        div.innerHTML = `<div class="meta"><div class="t">このページの指摘はまだありません</div><div class="s">図面をクリックして追加してください</div></div>`;
+        list.appendChild(div);
+        return;
+      }
+
+      view.forEach((m, idx)=>{
+        const div = document.createElement("div");
+        div.className = "item" + (m.id===selectedId ? " sel" : "");
+        div.dataset.id = m.id;
+        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>38? m.memo.slice(0,38)+"…" : m.memo) : "なし"} / 作成：${new Date(m.createdAt).toLocaleString()}`;
+        div.innerHTML = `
+          <div class="meta">
+            <div class="t">${escapeHtml(title)}</div>
+            <div class="s">${escapeHtml(sub)}</div>
+          </div>
+          <div class="act">
+            <button class="btn" data-act="center" style="padding:8px 10px;border-radius:10px">表示</button>
+            <button class="btn" data-act="editmemo" style="padding:8px 10px;border-radius:10px">📝</button>
+            <button class="btn danger" data-act="delete" style="padding:8px 10px;border-radius:10px">削除</button>
+          </div>
+        `;
+        list.appendChild(div);
+      });
+    }
+    function escapeHtml(s){
+      return String(s).replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    }
+
+    // -------------------- Interactions --------------------
+    function svgPointFromEvent(e){
+      // フルスクリーン中はCSS回転(fsRotation)、通常時はcanvas描画回転(normalRotation)
+      const rot = isFullscreen ? fsRotation : 0; // 通常モードはcanvas側で回転済みなので0扱い
+
+      if(rot === 0){
+        const rect = overlay.getBoundingClientRect();
+        return {
+          x: (e.clientX - rect.left) * (stageW / rect.width),
+          y: (e.clientY - rect.top)  * (stageH / rect.height)
+        };
+      }
+
+      // フルスクリーン回転時: stageWrapの画面上の中心 = ウィンドウ中心
+      const cx = window.innerWidth  / 2;
+      const cy = window.innerHeight / 2;
+
+      // 画面座標 → 中心基準
+      let dx = e.clientX - cx;
+      let dy = e.clientY - cy;
+
+      // 逆回転 (-rot degrees)
+      const rad = -rot * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const rx = dx * cos - dy * sin;
+      const ry = dx * sin + dy * cos;
+
+      // 回転前のstageWrapサイズ(= stageW x stageH)に変換
+      return {
+        x: rx + stageW / 2,
+        y: ry + stageH / 2
+      };
+    }
+
+    // Dragging state
+    let drag = null;
+    const DRAG_THRESHOLD = 6; // ドラッグ開始までの最小移動距離(px)
+    let pendingDrag = null;   // ドラッグ確定前の候補
+
+    // ★ pointerdown を1つに統合
+    overlay.addEventListener("pointerdown", (e)=>{
+      if(e.button === 2) return; // 右クリック無視
+
+      const roleEl = e.target.closest("[data-role]");
+      const groupEl = e.target.closest("g[data-id]");
+
+      if(groupEl){
+        // 既存マーカー上をクリック → 選択 ＋ ドラッグ候補に登録
+        const id = groupEl.getAttribute("data-id");
+        selectedId = id;
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+
+        if(roleEl){
+          const role = roleEl.getAttribute("data-role");
+          const m = markers().find(mm=>mm.id===id);
+          if(m){
+            // ダブルタップ検出（bubble上のみ）
+            if(role === "bubble"){
+              const now = Date.now();
+              if(lastTapInfo && lastTapInfo.id === id && now - lastTapInfo.time < DBL_TAP_MS){
+                // ダブルタップ確定 → メモ編集ポップアップを開く
+                lastTapInfo = null;
+                pendingDrag = null;
+                openMemoPopup(id, e.clientX, e.clientY);
+                e.preventDefault();
+                return;
+              }
+              lastTapInfo = { id, time: Date.now() };
+            }
+            const p = svgPointFromEvent(e);
+            const _base = imgRatioToCanvasPx(m.x, m.y);
+            pendingDrag = {
+              id, role,
+              startX: p.x, startY: p.y,
+              baseX: _base.x, baseY: _base.y,
+              // baseDxDyはcanvas px単位（元画像ローカル×sc→回転）
+              baseDx: m.dx * imgRect.iw * imgRect.sc,
+              baseDy: m.dy * imgRect.ih * imgRect.sc,
+              pointerId: e.pointerId
+            };
+            overlay.setPointerCapture(e.pointerId);
+          }
+        }
+        e.preventDefault();
+      } else {
+        // 空白エリアをクリック → 新規マーカー追加
+        const p = svgPointFromEvent(e);
+        addMarker(p.x, p.y);
+        e.preventDefault();
+      }
+    });
+
+    overlay.addEventListener("pointermove", (e)=>{
+      // pendingDrag が一定距離動いたらドラッグ確定
+      if(pendingDrag && !drag){
+        const p = svgPointFromEvent(e);
+        const dist = Math.hypot(p.x - pendingDrag.startX, p.y - pendingDrag.startY);
+        if(dist >= DRAG_THRESHOLD){
+          drag = pendingDrag;
+          pendingDrag = null;
+        }
+      }
+      if(!drag) return;
+
+      const m = markers().find(mm=>mm.id===drag.id);
+      if(!m) return;
+      const p = svgPointFromEvent(e);
+      const rawDx = p.x - drag.startX;
+      const rawDy = p.y - drag.startY;
+
+      if(drag.role === "anchor"){
+        // アンカーはcanvas座標系のまま移動→canvasPxToImgRatioで変換
+        const newPx = {
+          x: clamp(drag.baseX + rawDx, 0, stageW),
+          y: clamp(drag.baseY + rawDy, 0, stageH),
+        };
+        const r = canvasPxToImgRatio(newPx.x, newPx.y);
+        m.x = clamp(r.x, 0, 1); m.y = clamp(r.y, 0, 1);
+      }else if(drag.role === "bubble"){
+        // 吹き出しオフセットは画像ローカル座標系なので、
+        // 通常モード回転中はcanvas差分を逆回転して画像ローカルに変換する
+        const nr = isFullscreen ? 0 : (normalRotation || 0);
+        let ddx = rawDx, ddy = rawDy;
+        if(nr !== 0){
+          const rad = -nr * Math.PI / 180;
+          const cos = Math.cos(rad), sin = Math.sin(rad);
+          ddx = rawDx * cos - rawDy * sin;
+          ddy = rawDx * sin + rawDy * cos;
+        }
+        // ddxはcanvas px。元画像ローカル単位に変換して比率で保存
+        const isc = imgRect.iw * imgRect.sc;
+        const ihc = imgRect.ih * imgRect.sc;
+        m.dx = clamp(drag.baseDx + ddx, -isc, isc) / isc;
+        m.dy = clamp(drag.baseDy + ddy, -ihc, ihc) / ihc;
+        m.bubbleMoved = true;
+      }
+      redrawOverlay();
+      redrawList();
+      saveStore();
+      e.preventDefault();
+    });
+
+    overlay.addEventListener("pointerup", (e)=>{
+      if(pendingDrag){
+        // ドラッグなしで離した → キャプチャ解放のみ
+        try{ overlay.releasePointerCapture(pendingDrag.pointerId); }catch(_){}
+        pendingDrag = null;
+      }
+      if(drag){
+        try{ overlay.releasePointerCapture(drag.pointerId); }catch(_){}
+        drag = null;
+        saveStore();
+      }
+      e.preventDefault();
+    });
+
+
+    // ダブルタップ/クリック検出（pointerdownベース）
+    let memoEditId = null;
+    let lastTapInfo = null; // { id, time }
+    const DBL_TAP_MS = 350;
+
+    function openMemoPopup(id, clientX, clientY){
+      const m = markers().find(mm=>mm.id===id);
+      if(!m) return;
+      memoEditId = id;
+
+      const popup = $("memoPopup");
+      const input = $("memoPopupInput");
+      input.value = m.memo || "";
+
+      // 吹き出しのビューポート座標を計算
+      const svgRect = overlay.getBoundingClientRect();
+      const bubblePx = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
+      const scaleX = svgRect.width  / stageW;
+      const scaleY = svgRect.height / stageH;
+      let px = svgRect.left + bubblePx.x * scaleX;
+      let py = svgRect.top  + bubblePx.y * scaleY + 50;
+
+      popup.style.display = "block";
+      const pw = popup.offsetWidth, ph = popup.offsetHeight;
+      px = Math.max(8, Math.min(window.innerWidth  - pw - 8, px));
+      py = Math.max(8, Math.min(window.innerHeight - ph - 8, py));
+      popup.style.left = px + "px";
+      popup.style.top  = py + "px";
+      setTimeout(()=>input.focus(), 50);
+    }
+
+    function closeMemoPopup(){
+      $("memoPopup").style.display = "none";
+      memoEditId = null;
+    }
+    $("memoPopupCancel").addEventListener("click", closeMemoPopup);
+    $("memoPopupSave").addEventListener("click", ()=>{
+      if(!memoEditId) return;
+      const m = markers().find(mm=>mm.id===memoEditId);
+      if(m){
+        m.memo = $("memoPopupInput").value;
+        saveStore();
+        redrawOverlay();
+        redrawList();
+      }
+      closeMemoPopup();
+    });
+    // Enterキー（Shift+Enterは改行）で保存
+    $("memoPopupInput").addEventListener("keydown", (e)=>{
+      if(e.key === "Enter" && !e.shiftKey){
+        e.preventDefault();
+        $("memoPopupSave").click();
+      }
+      if(e.key === "Escape") closeMemoPopup();
+    });
+    // ポップアップ外クリックで閉じる
+    document.addEventListener("pointerdown", (e)=>{
+      const popup = $("memoPopup");
+      if(popup.style.display !== "none" && !popup.contains(e.target)){
+        closeMemoPopup();
+      }
+    });
+
+    // List interactions
+    $("list").addEventListener("click", (e)=>{
+      const item = e.target.closest(".item[data-id]");
+      if(!item) return;
+      const id = item.dataset.id;
+      const act = e.target.closest("button")?.dataset?.act;
+      selectedId = id;
+      syncButtons();
+      redrawOverlay();
+      redrawList();
+
+      if(act === "delete"){
+        deleteSelected();
+      }else if(act === "editmemo"){
+        const btn = e.target.closest("button");
+        const rect = btn.getBoundingClientRect();
+        openMemoPopup(id, rect.left, rect.top);
+      }else if(act === "center"){
+        toast("選択しました（図面上で青枠表示）");
+      }
+    });
+
+    // Keyboard delete
+    window.addEventListener("keydown", (e)=>{
+      if(e.key === "Delete" || e.key === "Backspace"){
+        // テキスト入力中はマーカー削除しない
+        const tag = document.activeElement?.tagName;
+        if(tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+        if(selectedId){
+          deleteSelected();
+          e.preventDefault();
+        }
+      }
+    });
+
+    // Filter
+    $("filterVendor").addEventListener("change", ()=>{
+      filterVendor = $("filterVendor").value;
+      redrawList();
+    });
+
+    function syncButtons(){
+      $("btnDeleteSelected").disabled = !selectedId;
+      const fsDel = $("fsBtnDelete");
+      if(fsDel) fsDel.disabled = !selectedId;
+      const btnEM = $("btnEditMemo");
+      if(btnEM) btnEM.disabled = !selectedId;
+      const fsEM = $("fsBtnEditMemo");
+      if(fsEM) fsEM.disabled = !selectedId;
+    }
+
+    // -------------------- PNG Export --------------------
+    async function savePng(){
+      const scale = 2;
+      const out = document.createElement("canvas");
+      out.width  = stageW * scale;
+      out.height = stageH * scale;
+      const octx = out.getContext("2d");
+
+      // ── 背景 ──
+      octx.fillStyle = "#ffffff";
+      octx.fillRect(0, 0, out.width, out.height);
+      octx.drawImage(bgCanvas, 0, 0, out.width, out.height);
+
+      // ── マーカーをCanvas 2D APIで直接描画 ──
+      const arr = markers();
+      const sw = stageW * scale, sh = stageH * scale;
+      const bw = BUBBLE_W * scale, bh = BUBBLE_H * scale;
+
+      arr.forEach((m, idx) => {
+        const _a = imgRatioToCanvasPx(m.x, m.y);
+        const ax = _a.x * scale, ay = _a.y * scale;
+        const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
+        const bx = _b.x * scale, by = _b.y * scale;
+
+        const isSel = m.id === selectedId;
+
+        // 線
+        octx.beginPath();
+        octx.moveTo(ax, ay);
+        octx.lineTo(bx + bw/2, by + bh/2);
+        octx.strokeStyle = "rgba(17,24,39,0.65)";
+        octx.lineWidth = 2 * scale;
+        octx.stroke();
+
+        // アンカー円
+        octx.beginPath();
+        octx.arc(ax, ay, 7 * scale, 0, Math.PI * 2);
+        octx.fillStyle = "#dc2626";
+        octx.fill();
+        octx.strokeStyle = isSel ? "#2563eb" : "#ffffff";
+        octx.lineWidth = (isSel ? 3 : 2) * scale;
+        octx.stroke();
+
+        // 吹き出し背景
+        const r = 12 * scale;
+        octx.beginPath();
+        octx.moveTo(bx + r, by);
+        octx.lineTo(bx + bw - r, by);
+        octx.arcTo(bx + bw, by, bx + bw, by + r, r);
+        octx.lineTo(bx + bw, by + bh - r);
+        octx.arcTo(bx + bw, by + bh, bx + bw - r, by + bh, r);
+        octx.lineTo(bx + r, by + bh);
+        octx.arcTo(bx, by + bh, bx, by + bh - r, r);
+        octx.lineTo(bx, by + r);
+        octx.arcTo(bx, by, bx + r, by, r);
+        octx.closePath();
+        octx.fillStyle = "#ffffff";
+        octx.fill();
+        octx.strokeStyle = isSel ? "#2563eb" : "#e5e7eb";
+        octx.lineWidth = (isSel ? 2.5 : 1.5) * scale;
+        octx.stroke();
+
+        // タイトル
+        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        octx.fillStyle = "#111827";
+        octx.font = `bold ${12 * scale}px system-ui,sans-serif`;
+        octx.fillText(
+          title.length > 20 ? title.slice(0,20)+"…" : title,
+          bx + 10 * scale, by + 18 * scale
+        );
+
+        // メモ
+        const memo = (m.memo || "").trim();
+        const memoText = memo ? (memo.length > 22 ? memo.slice(0,22)+"…" : memo) : "（メモなし）";
+        octx.fillStyle = "#6b7280";
+        octx.font = `${11 * scale}px system-ui,sans-serif`;
+        octx.fillText(memoText, bx + 10 * scale, by + 34 * scale);
+      });
+
+      // ── ダウンロード ──
+      out.toBlob((blob) => {
+        if(!blob) return;
+        const a = document.createElement("a");
+        const key = activeKey().replace(/[:]/g,"_");
+        const ts  = new Date().toISOString().replace(/[:.]/g,"-");
+        a.download = `inspection_${key}_${ts}.png`;
+        a.href = URL.createObjectURL(blob);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }, "image/png");
+    }
+
+    // -------------------- PDF Handling (with CDN fallback) --------------------
+    let pdfjsLib = null;
+
+    async function loadPdfJs(){
+      if(pdfjsLib) return pdfjsLib;
+      // Try multiple CDNs (corporate networks sometimes block one)
+      const candidates = [
+        { js:"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", worker:"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js" },
+        { js:"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js", worker:"https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js" },
+        { js:"https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js", worker:"https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js" },
+      ];
+
+      for(const c of candidates){
+        try{
+          await loadScript(c.js);
+          if(window["pdfjsLib"]){
+            pdfjsLib = window["pdfjsLib"];
+            // Worker is often blocked on file:// or restricted environments.
+            // workerSrcを明示設定してfake worker警告を抑制
+            try{ pdfjsLib.GlobalWorkerOptions.workerSrc = c.worker; }catch(_){}
+            return pdfjsLib;
+          }
+        }catch(e){
+          console.warn("pdf.js failed:", c.js, e);
+        }
+      }
+      throw new Error("PDFライブラリ（pdf.js）の読み込みに失敗しました。ネットワーク制限の可能性があります。");
+    }
+
+    function loadScript(src){
+      return new Promise((resolve,reject)=>{
+        // prevent double-load of the same src
+        if(document.querySelector(`script[src="${src}"]`)) return resolve();
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = ()=>resolve();
+        s.onerror = ()=>reject(new Error("script load failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    function randomPdfId(){
+      return "pdf_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+    }
+
+    // PDFドキュメントをキャッシュ（ページ切替のたびに再読込しないように）
+    let cachedPdfDoc = null;
+    let cachedPdfFileRef = null;
+
+    async function getCachedPdfDoc(file){
+      // 同じファイルなら再利用、違うファイルなら再読込
+      if(cachedPdfDoc && cachedPdfFileRef === file) return cachedPdfDoc;
+      const lib = await loadPdfJs();
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const loadingTask = lib.getDocument({ data: bytes });
+      cachedPdfDoc = await loadingTask.promise;
+      cachedPdfFileRef = file;
+      return cachedPdfDoc;
+    }
+
+    async function renderPdfPageToDataUrl(file, pageNum){
+      const pdf = await getCachedPdfDoc(file);
+
+      const pageCount = pdf.numPages;
+      const p = clamp(pageNum, 1, pageCount);
+      const page = await pdf.getPage(p);
+
+      const vp1 = page.getViewport({ scale: 1 });
+
+      // PDFの1pt = 1/72インチ。建築図面を読める画質にするため
+      // 200DPI相当（scale = 200/72 ≈ 2.78）でレンダリングする。
+      // ただしcanvasが巨大になりすぎないよう長辺10000px上限を設ける。
+      const TARGET_DPI = 200;
+      const dpiScale  = TARGET_DPI / 72;
+      const baseMax   = Math.max(vp1.width, vp1.height);
+      const MAX_LONG  = 10000; // 長辺上限px
+      const scale     = clamp(dpiScale, 0.5, MAX_LONG / baseMax);
+      const viewport  = page.getViewport({ scale });
+
+      const c = document.createElement("canvas");
+      c.width  = Math.max(1, Math.floor(viewport.width));
+      c.height = Math.max(1, Math.floor(viewport.height));
+      const cctx = c.getContext("2d", { alpha: false });
+
+      cctx.fillStyle = "#ffffff";
+      cctx.fillRect(0, 0, c.width, c.height);
+
+      await page.render({ canvasContext: cctx, viewport, intent: "print" }).promise;
+      const dataURL = c.toDataURL("image/png");
+      return { dataURL, pageCount };
+    }
+
+    async function setPdfBackground(file){
+      const pdfId = randomPdfId();
+      const page = clamp(parseInt($("pageInput").value||"1",10), 1, 9999);
+      store.activeBg = { kind:"pdf", pdfId, page, pageCount: 1, pageCache: {} };
+      saveStore();
+      redrawBackground();
+      updatePageInfo();
+
+      try{
+        toast("PDFページ画像を生成しています…\n（図面が大きい場合、数秒かかります）");
+        const { dataURL, pageCount } = await renderPdfPageToDataUrl(file, page);
+        store.activeBg.pageCount = pageCount;
+        store.activeBg.pageCache[`${pdfId}:${page}`] = dataURL;
+        saveStore();
+        redrawBackground();
+        updatePageInfo();
+        toast("PDF読み込み完了。図面をクリックしてマーカーを追加できます。");
+        markers();
+        redrawOverlay();
+        redrawList();
+      }catch(e){
+        console.error(e);
+        // Keep pdf selected but show message on canvas
+        store.activeBg.pageCount = store.activeBg.pageCount || 1;
+        saveStore();
+        redrawBackground();
+        updatePageInfo();
+        toast("PDFの表示に失敗しました。\n原因：\n" + String(e.message||e) + "\n\n対策：\n・ネットワーク制限がある場合は別回線で試す\n・図面が巨大な場合は別ページを試す\n・それでもダメならエラー文を送ってください");
+      }
+    }
+
+    async function ensurePageRendered(page){
+      const bg = store.activeBg;
+      if(bg.kind !== "pdf") return;
+      const cacheKey = `${bg.pdfId}:${page}`;
+      if(bg.pageCache?.[cacheKey]) return;
+
+      if(!lastPdfFile){
+        toast("ページ画像が未生成です。もう一度PDFを選択してください（ページ画像生成のため）。");
+        return;
+      }
+      try{
+        toast("ページ画像を生成しています…");
+        const { dataURL, pageCount } = await renderPdfPageToDataUrl(lastPdfFile, page);
+        bg.pageCount = pageCount;
+        bg.pageCache[cacheKey] = dataURL;
+        saveStore();
+      }catch(e){
+        console.error(e);
+        toast("ページ画像生成に失敗しました。\n" + String(e.message||e));
+      }
+    }
+
+    function updatePageInfo(){
+      const bg = store.activeBg;
+      if(bg.kind === "pdf"){
+        $("pageInfo").textContent = `PDF: ${bg.page} / ${bg.pageCount || "?"}`;
+      }else{
+        $("pageInfo").textContent = "PDF未選択";
+      }
+      $("btnPrevPage").disabled = !(bg.kind==="pdf" && bg.page>1);
+      $("btnNextPage").disabled = !(bg.kind==="pdf" && bg.pageCount && bg.page<bg.pageCount);
+    }
+
+    let lastPdfFile = null;
+    $("pdfInput").addEventListener("change", async (e)=>{
+      const file = e.target.files?.[0];
+      if(!file) return;
+      lastPdfFile = file;
+      await setPdfBackground(file);
+    });
+
+    async function setPage(newPage){
+      const bg = store.activeBg;
+      if(bg.kind !== "pdf") return;
+      const p = clamp(newPage, 1, bg.pageCount || 9999);
+      bg.page = p;
+      $("pageInput").value = String(p);
+      saveStore();
+
+      await ensurePageRendered(p);
+      redrawBackground();
+
+      selectedId = null;
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      updatePageInfo();
+    }
+
+    $("pageInput").addEventListener("change", async ()=>{
+      const p = parseInt($("pageInput").value||"1",10);
+      await setPage(p);
+    });
+    $("btnPrevPage").addEventListener("click", async ()=>{
+      const bg = store.activeBg;
+      if(bg.kind!=="pdf") return;
+      await setPage(bg.page - 1);
+    });
+    $("btnNextPage").addEventListener("click", async ()=>{
+      const bg = store.activeBg;
+      if(bg.kind!=="pdf") return;
+      await setPage(bg.page + 1);
+    });
+
+    // -------------------- Buttons --------------------
+    $("btnSavePng").addEventListener("click", savePng);
+    $("btnDeleteSelected").addEventListener("click", ()=>{
+      deleteSelected();
+    });
+    $("btnEditMemo").addEventListener("click", ()=>{
+      if(!selectedId) return;
+      openMemoPopup(selectedId, window.innerWidth/2, window.innerHeight/2);
+    });
+    $("btnClearStorage").addEventListener("click", ()=>{
+      const ok = confirm("端末内の保存データを削除します。\n（マーカー・PDFページ画像キャッシュが消えます）\nよろしいですか？");
+      if(!ok) return;
+      localStorage.removeItem(STORAGE_KEY);
+      store = loadStore();
+      selectedId = null;
+      filterVendor = "";
+      $("filterVendor").value = "";
+      $("memoInput").value = "";
+      $("pageInput").value = "1";
+      lastPdfFile = null;
+      cachedPdfDoc = null;
+      cachedPdfFileRef = null;
+      $("pdfInput").value = "";  // ファイル入力をリセット（同じPDFを再選択できるように）
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      updatePageInfo();
+      toast("保存データを削除しました。");
+    });
+
+    // -------------------- Fullscreen --------------------
+    let isFullscreen = false;
+    let fsRotation = 0; // 0 | 90 | 180 | 270
+
+    const ROT_CLASSES = { 0:'', 90:'rot90', 180:'rot180', 270:'rot270' };
+
+    function applyRotationClass(){
+      stageWrap.classList.remove('rot90','rot180','rot270');
+      const cls = ROT_CLASSES[fsRotation];
+      if(cls) stageWrap.classList.add(cls);
+
+      setTimeout(()=>{
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const isSwapped = (fsRotation === 90 || fsRotation === 270);
+        stageW = Math.max(1, isSwapped ? vh : vw);
+        stageH = Math.max(1, isSwapped ? vw : vh);
+        bgCanvas.width  = stageW;
+        bgCanvas.height = stageH;
+        overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
+        redrawBackground();
+        redrawOverlay();
+        // 回転後もパネルは中央下に戻す
+        panelPos = null;
+        setPanelDefault();
+      }, 320);
+    }
+
+    function syncFsSelects(){
+      // メインのselectとfsのselectを同期
+      $("fsTypeSelect").value   = $("typeSelect").value;
+      $("fsVendorSelect").value = $("vendorSelect").value;
+    }
+    function updateFsInfo(){
+      const bg = store.activeBg;
+      $("fsPageInfo").textContent = bg.kind==="pdf" ? `${bg.page} / ${bg.pageCount||"?"}` : "-";
+      $("fsBtnPrev").disabled = !(bg.kind==="pdf" && bg.page>1);
+      $("fsBtnNext").disabled = !(bg.kind==="pdf" && bg.pageCount && bg.page<bg.pageCount);
+      $("fsMarkerCount").textContent = `指摘 ${markers().length}件`;
+    }
+
+    // ネイティブFullscreen APIのヘルパー（モバイル対応）
+    function requestNativeFs(){
+      const el = document.documentElement;
+      try{
+        if(el.requestFullscreen)            return el.requestFullscreen();
+        if(el.webkitRequestFullscreen)      return el.webkitRequestFullscreen(); // iOS Safari
+        if(el.mozRequestFullScreen)         return el.mozRequestFullScreen();
+      }catch(_){}
+    }
+    function exitNativeFs(){
+      try{
+        if(document.exitFullscreen)         return document.exitFullscreen();
+        if(document.webkitExitFullscreen)   return document.webkitExitFullscreen();
+        if(document.mozCancelFullScreen)    return document.mozCancelFullScreen();
+      }catch(_){}
+    }
+    function isNativeFs(){
+      return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    }
+
+    function enterFullscreen(){
+      isFullscreen = true;
+      // 通常モードの回転をフルスクリーンに引き継ぎ、通常モードはリセット
+      fsRotation = normalRotation;
+      normalRotation = 0;
+      panelPos = null;
+      stageWrap.classList.remove("rot90","rot180","rot270");
+      stageWrap.classList.add("fullscreen");
+      // 引き継いだ回転クラスを即時適用
+      const initCls = ROT_CLASSES[fsRotation];
+      if(initCls) stageWrap.classList.add(initCls);
+      $("fsPanel").classList.add("show");
+      $("btnFullscreen").textContent = "✕ 閉じる";
+      syncFsSelects();
+      updateFsInfo();
+      requestNativeFs();
+      setTimeout(()=>{
+        resizeStage();
+        setPanelDefault();
+      }, 200);
+    }
+
+    function exitFullscreen(){
+      isFullscreen = false;
+      // フルスクリーンの回転を通常モードに引き継ぎ
+      normalRotation = fsRotation;
+      fsRotation = 0;
+      stageWrap.classList.remove("fullscreen","rot90","rot180","rot270");
+      const _panel = $("fsPanel");
+      _panel.classList.remove("show");
+      _panel.style.left = "";
+      _panel.style.top  = "";
+      _panel.style.bottom = "";
+      _panel.style.transform = "";
+      panelPos = null;
+      $("btnFullscreen").textContent = "⛶ フルスクリーン";
+      if(isNativeFs()) exitNativeFs();
+      setTimeout(resizeStage, 50);
+    }
+
+    // ブラウザのEsc/スワイプでネイティブFSが終了したときにアプリ側も同期
+    document.addEventListener("fullscreenchange",       _onNativeFsChange);
+    document.addEventListener("webkitfullscreenchange", _onNativeFsChange);
+    document.addEventListener("mozfullscreenchange",    _onNativeFsChange);
+    function _onNativeFsChange(){
+      if(!isNativeFs() && isFullscreen){
+        // ネイティブFSだけ終了した → アプリのUIも閉じる
+        exitFullscreen();
+      }
+    }
+
+    $("btnFullscreen").addEventListener("click", ()=>{
+      isFullscreen ? exitFullscreen() : enterFullscreen();
+    });
+    $("btnExitFs").addEventListener("click", exitFullscreen);
+    $("fsBtnDelete").addEventListener("click", ()=>{
+      deleteSelected();
+    });
+    $("fsBtnEditMemo").addEventListener("click", ()=>{
+      if(!selectedId) return;
+      openMemoPopup(selectedId, window.innerWidth/2, window.innerHeight/2);
+    });
+
+    // 回転ボタン
+    // 通常モード回転ボタン
+    $("btnRotL").addEventListener("click", ()=>{
+      normalRotation = (normalRotation - 90 + 360) % 360;
+      redrawBackground();
+    });
+    $("btnRotR").addEventListener("click", ()=>{
+      normalRotation = (normalRotation + 90) % 360;
+      redrawBackground();
+    });
+
+    $("fsBtnRotL").addEventListener("click", ()=>{
+      fsRotation = (fsRotation - 90 + 360) % 360;
+      applyRotationClass();
+    });
+    $("fsBtnRotR").addEventListener("click", ()=>{
+      fsRotation = (fsRotation + 90) % 360;
+      applyRotationClass();
+    });
+
+    // フルスクリーン時のselectをメインと同期
+    $("fsTypeSelect").addEventListener("change", ()=>{
+      $("typeSelect").value = $("fsTypeSelect").value;
+    });
+    $("fsVendorSelect").addEventListener("change", ()=>{
+      $("vendorSelect").value = $("fsVendorSelect").value;
+    });
+
+    // フルスクリーン時のページ操作
+    $("fsBtnPrev").addEventListener("click", async ()=>{
+      const bg = store.activeBg;
+      if(bg.kind!=="pdf") return;
+      await setPage(bg.page - 1);
+      updateFsInfo();
+    });
+    $("fsBtnNext").addEventListener("click", async ()=>{
+      const bg = store.activeBg;
+      if(bg.kind!=="pdf") return;
+      await setPage(bg.page + 1);
+      updateFsInfo();
+    });
+
+
+
+    // Escキーでも閉じる
+    window.addEventListener("keydown", (e)=>{
+      if(e.key === "Escape" && isFullscreen){ exitFullscreen(); e.preventDefault(); }
+    });
+
+    // -------------------- Panel Drag --------------------
+    // パネル位置はビューポート基準(position:fixed)のpx
+    // panelPos=nullのとき = デフォルト中央下
+    let panelPos = null;
+    let panelDrag = null;
+    const fsPanel = $("fsPanel");
+
+    function setPanelDefault(){
+      // ビューポート中央下に配置
+      const panel = fsPanel;
+      const pw = panel.offsetWidth  || 600;
+      const ph = panel.offsetHeight || 80;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      panelPos = {
+        x: Math.round((vw - pw) / 2),
+        y: vh - ph - 24
+      };
+      applyPanelPos();
+    }
+
+    function applyPanelPos(){
+      if(!panelPos) return;
+      const panel = fsPanel;
+      const pw = panel.offsetWidth, ph = panel.offsetHeight;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      // 画面外にはみ出さないようにクランプ
+      const x = Math.max(0, Math.min(vw - pw, panelPos.x));
+      const y = Math.max(0, Math.min(vh - ph, panelPos.y));
+      panel.style.left      = x + "px";
+      panel.style.top       = y + "px";
+      panel.style.bottom    = "auto";
+      panel.style.transform = "none"; // 回転補正不要（body直下のfixed）
+    }
+
+    fsPanel.addEventListener("pointerdown", (e)=>{
+      if(e.target.tagName === "SELECT" || e.target.tagName === "BUTTON" || e.target.tagName === "OPTION") return;
+      if(!isFullscreen) return;
+      e.stopPropagation();
+
+      const rect = fsPanel.getBoundingClientRect();
+      panelDrag = {
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPanelX: panelPos ? panelPos.x : rect.left,
+        startPanelY: panelPos ? panelPos.y : rect.top,
+      };
+      if(!panelPos) panelPos = { x: rect.left, y: rect.top };
+      fsPanel.classList.add("dragging");
+      fsPanel.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    fsPanel.addEventListener("pointermove", (e)=>{
+      if(!panelDrag) return;
+      // position:fixed なので回転関係なくそのままビューポート座標で動く
+      panelPos = {
+        x: panelDrag.startPanelX + (e.clientX - panelDrag.startClientX),
+        y: panelDrag.startPanelY + (e.clientY - panelDrag.startClientY),
+      };
+      applyPanelPos();
+      e.preventDefault();
+    });
+
+    fsPanel.addEventListener("pointerup", (e)=>{
+      if(!panelDrag) return;
+      panelDrag = null;
+      fsPanel.classList.remove("dragging");
+      e.preventDefault();
+    });
+
+    // ウィンドウリサイズ時も中央下に戻す
+    window.addEventListener("resize", ()=>{
+      if(isFullscreen){ panelPos = null; setPanelDefault(); }
+    });
+
+        // -------------------- Boot --------------------
+    function boot(){
+      resizeStage();
+      // Ensure active key exists
+      markers();
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      updatePageInfo();
+      toast("起動しました。PDFを選択するか、背景なしでマーカー配置のテストができます。");
+    }
+    boot();
+  }); // DOMContentLoaded
+  </script>
+</body>
+</html>
