@@ -71,7 +71,26 @@
     #fsPanel .fs-field{display:flex;flex-direction:column;gap:2px}
     #fsPanel .sep{width:1px;height:38px;background:#334155;flex-shrink:0}
     #fsPanel .fs-count{font-size:12px;color:#64748b;white-space:nowrap}
+
+    /* Supabase クラウドパネル */
+    .cloud-panel{padding:12px 14px;margin-bottom:12px}
+    .cloud-panel h3{margin:0 0 8px 0;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .cloud-meta-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:10px 0}
+    .cloud-meta-row input{font-size:13px;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+    .cloud-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .cloud-list{margin-top:10px;border:1px solid var(--line);border-radius:12px;max-height:200px;overflow:auto}
+    .cloud-list-item{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px}
+    .cloud-list-item:last-child{border-bottom:none}
+    .cloud-list-item:hover{background:#f9fafb}
+    .cloud-list-item.sel{background:#eff6ff}
+    .cloud-list-item .cloud-list-meta{flex:1;min-width:0}
+    .cloud-list-item .cloud-list-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cloud-list-item .cloud-list-sub{font-size:11px;color:var(--muted)}
+    .tag.cloud-ok{border-color:#86efac;color:#166534;background:#f0fdf4}
+    .tag.cloud-warn{border-color:#fcd34d;color:#92400e;background:#fffbeb}
+    .tag.cloud-err{border-color:#fca5a5;color:#991b1b;background:#fef2f2}
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <div class="wrap">
@@ -94,6 +113,33 @@
         <button class="btn" id="btnEditMemo" disabled style="padding:7px 12px;font-size:13px">📝 メモ</button>
         <button class="btn danger" id="btnDeleteSelected" disabled style="padding:7px 12px;font-size:13px">🗑 削除</button>
         <button class="btn" id="btnClearStorage" style="padding:7px 12px;font-size:13px">⚠ データ消去</button>
+      </div>
+    </div>
+
+    <!-- ── Supabase クラウド ── -->
+    <div class="card cloud-panel">
+      <h3>
+        ☁ クラウド（Supabase）
+        <span class="tag" id="cloudStatus">未設定</span>
+        <span class="small" id="cloudCurrentId" style="font-weight:400"></span>
+      </h3>
+      <div class="cloud-meta-row">
+        <input id="inpTitle" type="text" placeholder="検査タイトル *" />
+        <input id="inpPropertyName" type="text" placeholder="物件名" />
+        <input id="inpSiteName" type="text" placeholder="現場名" />
+        <input id="inpBuildingName" type="text" placeholder="建物名" />
+        <input id="inpInspectedAt" type="date" />
+        <input id="inpInspectorName" type="text" placeholder="検査担当者" />
+      </div>
+      <div class="cloud-actions">
+        <button class="btn" id="btnSupabaseTest" type="button">Supabase接続確認</button>
+        <button class="btn ok" id="btnNewInspection" type="button">新規検査案件作成</button>
+        <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
+        <button class="btn" id="btnCloudLoad" type="button">クラウド読み込み</button>
+      </div>
+      <div class="small" style="margin-top:6px">保存済み検査案件一覧（行を選択して「クラウド読み込み」、または各行の読み込み）</div>
+      <div class="cloud-list" id="cloudInspectionList">
+        <div class="cloud-list-item" style="cursor:default;color:var(--muted)">接続設定後に一覧を取得できます</div>
       </div>
     </div>
 
@@ -288,6 +334,429 @@
         console.error(e);
         toast("マーカー保存に失敗しました。\n" + String(e));
       }
+    }
+
+    // -------------------- Supabase（検査案件・マーカーのクラウド保存） --------------------
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+
+    let supabaseClient = null;
+    let currentInspectionId = null;
+    let selectedCloudInspectionId = null;
+
+    function isSupabaseConfigured(){
+      const urlOk = SUPABASE_URL && !String(SUPABASE_URL).includes("YOUR_SUPABASE");
+      const keyOk = SUPABASE_ANON_KEY && !String(SUPABASE_ANON_KEY).includes("YOUR_SUPABASE");
+      return !!(urlOk && keyOk);
+    }
+
+    function isSupabaseSdkReady(){
+      return typeof window.supabase !== "undefined" && typeof window.supabase.createClient === "function";
+    }
+
+    function getSupabase(){
+      if(!isSupabaseSdkReady()){
+        throw new Error("Supabase SDKが読み込まれていません。ページを再読み込みしてください。");
+      }
+      if(!isSupabaseConfigured()){
+        throw new Error("SUPABASE_URL と SUPABASE_ANON_KEY を index.html 内で設定してください。");
+      }
+      if(!supabaseClient){
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      }
+      return supabaseClient;
+    }
+
+    function setCloudStatus(text, level){
+      const el = $("cloudStatus");
+      el.textContent = text;
+      el.classList.remove("cloud-ok","cloud-warn","cloud-err");
+      if(level === "ok") el.classList.add("cloud-ok");
+      else if(level === "warn") el.classList.add("cloud-warn");
+      else if(level === "err") el.classList.add("cloud-err");
+    }
+
+    function updateCloudCurrentIdLabel(){
+      const el = $("cloudCurrentId");
+      el.textContent = currentInspectionId
+        ? `（編集中: ${currentInspectionId.slice(0,8)}…）`
+        : "（新規・未保存）";
+    }
+
+    function showCloudError(title, err){
+      const parts = [];
+      if(err?.message) parts.push(err.message);
+      if(err?.details) parts.push(err.details);
+      if(err?.hint) parts.push("hint: " + err.hint);
+      if(err?.code) parts.push("code: " + err.code);
+      const msg = parts.length ? parts.join("\n") : String(err);
+      console.error(title, err);
+      toast("【エラー】" + title + "\n" + msg);
+      setCloudStatus("エラー", "err");
+    }
+
+    function activeBgForCloud(){
+      const bg = store.activeBg || { kind:"none" };
+      return { ...bg, pageCache:{} };
+    }
+
+    function markersByKeyForCloud(){
+      const out = {};
+      const src = store.markersByKey || {};
+      for(const [key, arr] of Object.entries(src)){
+        if(!Array.isArray(arr)) continue;
+        out[key] = arr.map(m=>({
+          id: m.id,
+          x: m.x, y: m.y, dx: m.dx, dy: m.dy,
+          type: m.type,
+          vendor: m.vendor,
+          memo: m.memo || "",
+          createdAt: m.createdAt,
+          bubbleMoved: !!m.bubbleMoved,
+        }));
+      }
+      return out;
+    }
+
+    function parseMarkerKey(key){
+      if(key === "template") return { page_number: 0, pdfId: null, markerKey: "template" };
+      const m = /^pdf:([^:]+):(\d+)$/.exec(key);
+      if(m) return { page_number: parseInt(m[2],10), pdfId: m[1], markerKey: key };
+      return { page_number: 1, pdfId: null, markerKey: key };
+    }
+
+    function markerKeyFromRow(row){
+      if(row.marker_data?.markerKey) return row.marker_data.markerKey;
+      const pdfId = row.marker_data?.pdfId;
+      if(pdfId != null && row.page_number > 0) return `pdf:${pdfId}:${row.page_number}`;
+      if(row.page_number === 0) return "template";
+      return "template";
+    }
+
+    function buildMarkerRows(inspectionId){
+      const rows = [];
+      const mbk = store.markersByKey || {};
+      for(const [key, arr] of Object.entries(mbk)){
+        if(!Array.isArray(arr)) continue;
+        const { page_number, pdfId, markerKey } = parseMarkerKey(key);
+        arr.forEach((m, idx)=>{
+          rows.push({
+            inspection_id: inspectionId,
+            drawing_id: null,
+            page_number,
+            local_marker_id: m.id,
+            x: Number(m.x),
+            y: Number(m.y),
+            dx: Number(m.dx),
+            dy: Number(m.dy),
+            type: m.type || "",
+            vendor_name: m.vendor || "",
+            vendor_status: "assigned",
+            floor_label: null,
+            memo: m.memo || "",
+            is_common: false,
+            is_vendor_unassigned: false,
+            bubble_moved: !!m.bubbleMoved,
+            sort_order: idx,
+            marker_data: {
+              markerKey,
+              pdfId,
+              createdAt: m.createdAt || Date.now(),
+              version: 1,
+            },
+          });
+        });
+      }
+      return rows;
+    }
+
+    function markerRowsToMarkersByKey(rows, settingsFallback){
+      if(rows && rows.length > 0){
+        const mbk = {};
+        rows.forEach(row=>{
+          const key = markerKeyFromRow(row);
+          if(!mbk[key]) mbk[key] = [];
+          const md = row.marker_data || {};
+          mbk[key].push({
+            id: row.local_marker_id || md.id || newId(),
+            x: Number(row.x),
+            y: Number(row.y),
+            dx: Number(row.dx),
+            dy: Number(row.dy),
+            type: row.type || "",
+            vendor: row.vendor_name || "",
+            memo: row.memo || "",
+            createdAt: md.createdAt || Date.now(),
+            bubbleMoved: !!row.bubble_moved,
+          });
+        });
+        return mbk;
+      }
+      if(settingsFallback && typeof settingsFallback === "object"){
+        return structuredClone(settingsFallback);
+      }
+      return {};
+    }
+
+    function readInspectionForm(){
+      const bg = store.activeBg || { kind:"none" };
+      const inspectedRaw = $("inpInspectedAt").value;
+      return {
+        title: ($("inpTitle").value || "").trim() || "無題の検査",
+        property_name: ($("inpPropertyName").value || "").trim() || null,
+        site_name: ($("inpSiteName").value || "").trim() || null,
+        building_name: ($("inpBuildingName").value || "").trim() || null,
+        inspected_at: inspectedRaw ? new Date(inspectedRaw + "T00:00:00").toISOString() : null,
+        inspector_name: ($("inpInspectorName").value || "").trim() || null,
+        current_page: bg.kind === "pdf" ? (bg.page || 1) : 1,
+        settings: {
+          version: 1,
+          activeBg: activeBgForCloud(),
+          markersByKey: markersByKeyForCloud(),
+          normalRotation: normalRotation || 0,
+        },
+        status: "draft",
+      };
+    }
+
+    function applyInspectionForm(insp){
+      $("inpTitle").value = insp.title || "";
+      $("inpPropertyName").value = insp.property_name || "";
+      $("inpSiteName").value = insp.site_name || "";
+      $("inpBuildingName").value = insp.building_name || "";
+      $("inpInspectorName").value = insp.inspector_name || "";
+      if(insp.inspected_at){
+        try{
+          $("inpInspectedAt").value = new Date(insp.inspected_at).toISOString().slice(0,10);
+        }catch(_){
+          $("inpInspectedAt").value = "";
+        }
+      }else{
+        $("inpInspectedAt").value = "";
+      }
+    }
+
+    function applyLoadedInspectionToStore(insp, markerRows){
+      const settings = insp.settings || {};
+      if(settings.activeBg){
+        const prevCache = store.activeBg?.pageCache;
+        store.activeBg = { ...settings.activeBg, pageCache: prevCache || {} };
+      }
+      store.markersByKey = markerRowsToMarkersByKey(
+        markerRows,
+        settings.markersByKey
+      );
+      if(insp.current_page && store.activeBg?.kind === "pdf"){
+        store.activeBg.page = insp.current_page;
+        $("pageInput").value = String(insp.current_page);
+      }
+      if(typeof settings.normalRotation === "number"){
+        normalRotation = settings.normalRotation;
+      }
+      store.version = 1;
+    }
+
+    function refreshUiAfterDataChange(){
+      selectedId = null;
+      saveStore();
+      updatePageInfo();
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      if(isFullscreen) updateFsInfo();
+      updateCloudCurrentIdLabel();
+    }
+
+    async function testSupabaseConnection(){
+      try{
+        if(!isSupabaseConfigured()){
+          setCloudStatus("未設定", "warn");
+          toast("【確認】SUPABASE_URL と SUPABASE_ANON_KEY を設定してください。");
+          return;
+        }
+        const sb = getSupabase();
+        const { error } = await sb.from("inspections").select("id").limit(1);
+        if(error) throw error;
+        setCloudStatus("接続OK", "ok");
+        toast("Supabase接続に成功しました。");
+        await refreshCloudInspectionList();
+      }catch(e){
+        showCloudError("Supabase接続確認", e);
+      }
+    }
+
+    async function createNewInspection(){
+      const ok = confirm(
+        "新規検査案件を開始します。\n未保存の変更はクラウドに残りませんが、端末内データは上書きされます。\nよろしいですか？"
+      );
+      if(!ok) return;
+      currentInspectionId = null;
+      selectedCloudInspectionId = null;
+      store = structuredClone(defaultStore);
+      normalRotation = 0;
+      selectedId = null;
+      filterVendor = "";
+      $("filterVendor").value = "";
+      $("memoInput").value = "";
+      $("inpTitle").value = "";
+      $("inpPropertyName").value = "";
+      $("inpSiteName").value = "";
+      $("inpBuildingName").value = "";
+      $("inpInspectedAt").value = "";
+      $("inpInspectorName").value = "";
+      refreshUiAfterDataChange();
+      toast("新規検査案件を開始しました。PDFを選択して指摘を追加できます。");
+    }
+
+    async function saveToCloud(){
+      try{
+        const sb = getSupabase();
+        const payload = readInspectionForm();
+        let inspectionId = currentInspectionId;
+
+        if(!inspectionId){
+          const { data, error } = await sb.from("inspections")
+            .insert(payload)
+            .select("id")
+            .single();
+          if(error) throw error;
+          inspectionId = data.id;
+          currentInspectionId = inspectionId;
+        }else{
+          const { error } = await sb.from("inspections")
+            .update(payload)
+            .eq("id", inspectionId);
+          if(error) throw error;
+        }
+
+        const { error: delErr } = await sb.from("markers")
+          .delete()
+          .eq("inspection_id", inspectionId);
+        if(delErr) throw delErr;
+
+        const markerRows = buildMarkerRows(inspectionId);
+        if(markerRows.length > 0){
+          const { error: insErr } = await sb.from("markers").insert(markerRows);
+          if(insErr) throw insErr;
+        }
+
+        saveStore();
+        setCloudStatus("保存済", "ok");
+        const n = markerRows.length;
+        toast(`クラウド保存しました。\n案件ID: ${inspectionId}\nマーカー: ${n}件`);
+        updateCloudCurrentIdLabel();
+        await refreshCloudInspectionList();
+      }catch(e){
+        showCloudError("クラウド保存", e);
+      }
+    }
+
+    async function loadFromCloud(inspectionId){
+      if(!inspectionId){
+        toast("【確認】一覧から案件を選択するか、行の「読込」を押してください。");
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const { data: insp, error: iErr } = await sb.from("inspections")
+          .select("*")
+          .eq("id", inspectionId)
+          .single();
+        if(iErr) throw iErr;
+
+        const { data: markerRows, error: mErr } = await sb.from("markers")
+          .select("*")
+          .eq("inspection_id", inspectionId)
+          .order("sort_order", { ascending: true });
+        if(mErr) throw mErr;
+
+        currentInspectionId = inspectionId;
+        selectedCloudInspectionId = inspectionId;
+        applyInspectionForm(insp);
+        applyLoadedInspectionToStore(insp, markerRows || []);
+        refreshUiAfterDataChange();
+
+        const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
+        toast(
+          `クラウド読み込み完了。\n` +
+          `${insp.title || "無題"}\nマーカー合計: ${n}件\n` +
+          `※図面PDFは端末で再選択してください。`
+        );
+        setCloudStatus("読込済", "ok");
+        renderCloudInspectionList(lastCloudListCache);
+      }catch(e){
+        showCloudError("クラウド読み込み", e);
+      }
+    }
+
+    let lastCloudListCache = [];
+
+    function renderCloudInspectionList(items){
+      const list = $("cloudInspectionList");
+      list.innerHTML = "";
+      if(!items || items.length === 0){
+        const empty = document.createElement("div");
+        empty.className = "cloud-list-item";
+        empty.style.cursor = "default";
+        empty.style.color = "var(--muted)";
+        empty.textContent = "保存済みの検査案件はありません";
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach(insp=>{
+        const div = document.createElement("div");
+        div.className = "cloud-list-item" + (insp.id === selectedCloudInspectionId ? " sel" : "");
+        div.dataset.id = insp.id;
+        const dt = insp.updated_at || insp.created_at;
+        const sub = [
+          insp.property_name,
+          insp.status,
+          dt ? new Date(dt).toLocaleString() : "",
+        ].filter(Boolean).join(" / ");
+        div.innerHTML = `
+          <div class="cloud-list-meta">
+            <div class="cloud-list-title">${escapeHtml(insp.title || "無題")}</div>
+            <div class="cloud-list-sub">${escapeHtml(sub)}</div>
+          </div>
+          <button class="btn" type="button" data-act="load-one" style="padding:6px 10px;font-size:12px">読込</button>
+        `;
+        div.addEventListener("click", (e)=>{
+          if(e.target.closest('button[data-act="load-one"]')) return;
+          selectedCloudInspectionId = insp.id;
+          renderCloudInspectionList(lastCloudListCache);
+        });
+        div.querySelector('[data-act="load-one"]').addEventListener("click", (e)=>{
+          e.stopPropagation();
+          loadFromCloud(insp.id);
+        });
+        list.appendChild(div);
+      });
+    }
+
+    async function refreshCloudInspectionList(){
+      if(!isSupabaseConfigured()) return;
+      try{
+        const sb = getSupabase();
+        const { data, error } = await sb.from("inspections")
+          .select("id, title, property_name, status, inspected_at, created_at, updated_at")
+          .order("updated_at", { ascending: false })
+          .limit(50);
+        if(error) throw error;
+        lastCloudListCache = data || [];
+        renderCloudInspectionList(lastCloudListCache);
+      }catch(e){
+        showCloudError("検査案件一覧の取得", e);
+      }
+    }
+
+    function initCloudUi(){
+      if(!isSupabaseConfigured()){
+        setCloudStatus("未設定", "warn");
+      }else{
+        setCloudStatus("設定済", "ok");
+      }
+      updateCloudCurrentIdLabel();
     }
 
     // -------------------- State --------------------
@@ -1226,6 +1695,13 @@
     });
 
     // -------------------- Buttons --------------------
+    $("btnSupabaseTest").addEventListener("click", ()=>{ testSupabaseConnection(); });
+    $("btnNewInspection").addEventListener("click", ()=>{ createNewInspection(); });
+    $("btnCloudSave").addEventListener("click", ()=>{ saveToCloud(); });
+    $("btnCloudLoad").addEventListener("click", ()=>{
+      loadFromCloud(selectedCloudInspectionId || currentInspectionId);
+    });
+
     $("btnSavePng").addEventListener("click", savePng);
     $("btnDeleteSelected").addEventListener("click", ()=>{
       deleteSelected();
@@ -1513,6 +1989,10 @@
       redrawList();
       syncButtons();
       updatePageInfo();
+      initCloudUi();
+      if(isSupabaseConfigured()){
+        refreshCloudInspectionList().catch(()=>{});
+      }
       toast("起動しました。PDFを選択するか、背景なしでマーカー配置のテストができます。");
     }
     boot();
