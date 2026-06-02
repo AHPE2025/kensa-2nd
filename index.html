@@ -315,6 +315,7 @@
         if(!obj || typeof obj !== "object") return structuredClone(defaultStore);
         if(!obj.markersByKey) obj.markersByKey = {};
         if(!obj.activeBg) obj.activeBg = { kind:"none" };
+        normalizeMarkersByKey(obj.markersByKey);
         return obj;
       }catch(e){
         console.error(e);
@@ -490,10 +491,13 @@
             bubbleMoved: !!row.bubble_moved,
           });
         });
+        normalizeMarkersByKey(mbk);
         return mbk;
       }
       if(settingsFallback && typeof settingsFallback === "object"){
-        return structuredClone(settingsFallback);
+        const mbk = structuredClone(settingsFallback);
+        normalizeMarkersByKey(mbk);
+        return mbk;
       }
       return {};
     }
@@ -546,6 +550,7 @@
         markerRows,
         settings.markersByKey
       );
+      normalizeAllMarkersInStore();
       if(insp.current_page && store.activeBg?.kind === "pdf"){
         store.activeBg.page = insp.current_page;
         $("pageInput").value = String(insp.current_page);
@@ -611,6 +616,7 @@
 
     async function saveToCloud(){
       try{
+        if(normalizeAllMarkersInStore()) saveStore();
         const sb = getSupabase();
         const payload = readInspectionForm();
         let inspectionId = currentInspectionId;
@@ -919,6 +925,116 @@
       };
     }
 
+    // 吹き出しオフセット（画像比率座標）。ピンと吹き出しが重ならないよう補正する
+    const DEFAULT_BUBBLE_DX = 0.08;
+    const DEFAULT_BUBBLE_DY = -0.04;
+    const MIN_BUBBLE_OFFSET_DIST = 0.03;
+    const PIN_VIS_R = 7;
+    const PIN_CLEAR_MARGIN = 5;
+    const BUBBLE_OFFSET_CANDIDATES = [
+      [0.08, -0.04],
+      [-0.14, -0.04],
+      [0.08, 0.07],
+      [-0.14, 0.07],
+      [0.08, -0.12],
+      [-0.14, -0.12],
+      [0.12, -0.06],
+      [-0.18, -0.06],
+    ];
+
+    function canUseCanvasOffsetCheck(){
+      return imgRect.iw > 10 && imgRect.ih > 10 && imgRect.sc > 0 && stageW > 1 && stageH > 1;
+    }
+
+    function bubbleOverlapsPin(m, dx, dy){
+      if(!canUseCanvasOffsetCheck()) return false;
+      const _a = imgRatioToCanvasPx(m.x, m.y);
+      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
+      const ax = _a.x, ay = _a.y;
+      const bx = _b.x, by = _b.y;
+      const pad = PIN_VIS_R + PIN_CLEAR_MARGIN;
+      return (
+        ax + pad > bx &&
+        ax - pad < bx + BUBBLE_W &&
+        ay + pad > by &&
+        ay - pad < by + BUBBLE_H
+      );
+    }
+
+    function bubbleMostlyOnStage(m, dx, dy){
+      if(!canUseCanvasOffsetCheck()) return true;
+      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
+      const margin = 8;
+      return (
+        _b.x >= -margin &&
+        _b.y >= -margin &&
+        _b.x + BUBBLE_W <= stageW + margin &&
+        _b.y + BUBBLE_H <= stageH + margin
+      );
+    }
+
+    function pickDefaultBubbleOffset(m){
+      const nearRight = m.x > 0.72;
+      const nearLeft = m.x < 0.28;
+      const nearTop = m.y < 0.15;
+      const nearBottom = m.y > 0.85;
+      const ordered = [...BUBBLE_OFFSET_CANDIDATES];
+      const tryList = nearRight
+        ? ordered.filter(([dx])=>dx < 0).concat(ordered.filter(([dx])=>dx >= 0))
+        : nearLeft
+          ? ordered.filter(([dx])=>dx > 0).concat(ordered.filter(([dx])=>dx <= 0))
+          : ordered;
+      const tryY = nearTop
+        ? [...tryList].sort((a,b)=>b[1] - a[1])
+        : nearBottom
+          ? [...tryList].sort((a,b)=>a[1] - b[1])
+          : tryList;
+      for(const [dx, dy] of tryY){
+        if(!bubbleOverlapsPin(m, dx, dy) && bubbleMostlyOnStage(m, dx, dy)){
+          return { dx, dy };
+        }
+      }
+      if(nearRight) return { dx: -0.14, dy: DEFAULT_BUBBLE_DY };
+      if(nearTop) return { dx: DEFAULT_BUBBLE_DX, dy: 0.07 };
+      if(nearBottom) return { dx: DEFAULT_BUBBLE_DX, dy: -0.12 };
+      return { dx: DEFAULT_BUBBLE_DX, dy: DEFAULT_BUBBLE_DY };
+    }
+
+    function isMarkerOffsetInvalid(m){
+      const dx = Number(m.dx);
+      const dy = Number(m.dy);
+      if(!Number.isFinite(dx) || !Number.isFinite(dy)) return true;
+      if(Math.hypot(dx, dy) < MIN_BUBBLE_OFFSET_DIST) return true;
+      if(canUseCanvasOffsetCheck()) return bubbleOverlapsPin(m, dx, dy);
+      return false;
+    }
+
+    /** @returns {boolean} 補正した場合 true */
+    function normalizeMarkerOffset(m){
+      if(m.bubbleMoved && !isMarkerOffsetInvalid(m)) return false;
+      const { dx, dy } = pickDefaultBubbleOffset(m);
+      const changed = m.dx !== dx || m.dy !== dy;
+      m.dx = dx;
+      m.dy = dy;
+      return changed;
+    }
+
+    function normalizeMarkersByKey(mbk){
+      if(!mbk || typeof mbk !== "object") return false;
+      let changed = false;
+      for(const arr of Object.values(mbk)){
+        if(!Array.isArray(arr)) continue;
+        arr.forEach(m=>{
+          if(normalizeMarkerOffset(m)) changed = true;
+        });
+      }
+      return changed;
+    }
+
+    function normalizeAllMarkersInStore(){
+      return normalizeMarkersByKey(store.markersByKey);
+    }
+
     function redrawBackground(){
       const bg = store.activeBg;
       if(bg?.kind === "pdf"){
@@ -975,27 +1091,24 @@
     function newId(){
       return "m_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
     }
-    function defaultBubbleOffset(){ return { dx: 24, dy: -52 }; }
 
     function addMarker(x,y){
       // 座標はPDF画像内の比率（0〜1）で保存する。
       // canvas全体ではなく「画像が表示されている領域」基準にすることで
       // フルスクリーン切替後もずれない。
       const ratio = canvasPxToImgRatio(x, y);
-      // 吹き出しオフセットも画像サイズ基準の比率で保存
-      const off = defaultBubbleOffset();
       const m = {
         id: newId(),
         x: ratio.x, y: ratio.y, // anchor (canonical image ratio)
-        // dx/dyも元画像サイズ基準の比率で保存
-        dx: off.dx / (imgRect.iw * imgRect.sc),
-        dy: off.dy / (imgRect.ih * imgRect.sc),
+        dx: DEFAULT_BUBBLE_DX,
+        dy: DEFAULT_BUBBLE_DY,
         type: $("typeSelect").value,
         vendor: $("vendorSelect").value,
         memo: $("memoInput").value || "",
         createdAt: Date.now(),
-        bubbleMoved: false, // if user drags bubble, don't auto-move this bubble unless re-run manual
+        bubbleMoved: false,
       };
+      normalizeMarkerOffset(m);
       markers().push(m);
       selectedId = m.id;
       saveStore();
@@ -1030,6 +1143,12 @@
       while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
 
       const arr = markers();
+      let offsetFixed = false;
+      arr.forEach(m=>{
+        if(normalizeMarkerOffset(m)) offsetFixed = true;
+      });
+      if(offsetFixed) saveStore();
+
       // background click target (so clicks not swallowed by elements)
       const hit = svgEl("rect", { x:0,y:0,width:stageW,height:stageH, fill:"transparent", "pointer-events":"all" });
       overlay.appendChild(hit);
@@ -1047,18 +1166,15 @@
         // 線の終点は吹き出しの中心（回転しても常にここに繋がる）
         const linex2 = bx + BUBBLE_W / 2;
         const liney2 = by + BUBBLE_H / 2;
-        const line = svgEl("line", { x1: ax, y1: ay, x2: linex2, y2: liney2, stroke: "#111827", "stroke-width": 2, "stroke-opacity": 0.65 });
+        const line = svgEl("line", {
+          x1: ax, y1: ay, x2: linex2, y2: liney2,
+          stroke: isSel ? "#2563eb" : "#111827",
+          "stroke-width": isSel ? 2.5 : 2,
+          "stroke-opacity": isSel ? 0.85 : 0.65,
+        });
         group.appendChild(line);
 
-        // anchor point (draggable)
-        const anchor = svgEl("circle", { cx: ax, cy: ay, r: 7, fill: "#dc2626", stroke: isSel? "#2563eb":"#ffffff", "stroke-width": isSel? 3:2, cursor:"grab" });
-        if(isSel) anchor.classList.add("sel");
-        anchor.setAttribute("data-role","anchor");
-        group.appendChild(anchor);
-
-        // bubble (draggable)
-        // 逆回転はフルスクリーン時のみ（CSSでstageWrap全体が回転するため）
-        // 通常モードはcanvasだけが回転でSVGは回転しないので逆回転不要
+        // bubble（先に描画し、ピンを上に重ねて常に見えるようにする）
         const rot = isFullscreen ? fsRotation : 0;
         const bcx = BUBBLE_W / 2, bcy = BUBBLE_H / 2;
         const bubbleTransform = rot === 0
@@ -1081,6 +1197,18 @@
         bubbleG.appendChild(t2);
 
         group.appendChild(bubbleG);
+
+        // anchor point（吹き出しより手前＝上に描画）
+        const anchor = svgEl("circle", {
+          cx: ax, cy: ay, r: isSel ? 8 : 7,
+          fill: "#dc2626",
+          stroke: isSel ? "#2563eb" : "#ffffff",
+          "stroke-width": isSel ? 3.5 : 2,
+          cursor: "grab",
+        });
+        if(isSel) anchor.classList.add("sel");
+        anchor.setAttribute("data-role","anchor");
+        group.appendChild(anchor);
 
         overlay.appendChild(group);
       });
@@ -1403,6 +1531,7 @@
 
     // -------------------- PNG Export --------------------
     async function savePng(){
+      if(normalizeAllMarkersInStore()) saveStore();
       const scale = 2;
       const out = document.createElement("canvas");
       out.width  = stageW * scale;
@@ -1420,6 +1549,7 @@
       const bw = BUBBLE_W * scale, bh = BUBBLE_H * scale;
 
       arr.forEach((m, idx) => {
+        normalizeMarkerOffset(m);
         const _a = imgRatioToCanvasPx(m.x, m.y);
         const ax = _a.x * scale, ay = _a.y * scale;
         const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
@@ -1431,20 +1561,11 @@
         octx.beginPath();
         octx.moveTo(ax, ay);
         octx.lineTo(bx + bw/2, by + bh/2);
-        octx.strokeStyle = "rgba(17,24,39,0.65)";
-        octx.lineWidth = 2 * scale;
+        octx.strokeStyle = isSel ? "rgba(37,99,235,0.85)" : "rgba(17,24,39,0.65)";
+        octx.lineWidth = (isSel ? 2.5 : 2) * scale;
         octx.stroke();
 
-        // アンカー円
-        octx.beginPath();
-        octx.arc(ax, ay, 7 * scale, 0, Math.PI * 2);
-        octx.fillStyle = "#dc2626";
-        octx.fill();
-        octx.strokeStyle = isSel ? "#2563eb" : "#ffffff";
-        octx.lineWidth = (isSel ? 3 : 2) * scale;
-        octx.stroke();
-
-        // 吹き出し背景
+        // 吹き出し背景（ピンより先に描画）
         const r = 12 * scale;
         octx.beginPath();
         octx.moveTo(bx + r, by);
@@ -1478,6 +1599,15 @@
         octx.fillStyle = "#6b7280";
         octx.font = `${11 * scale}px system-ui,sans-serif`;
         octx.fillText(memoText, bx + 10 * scale, by + 34 * scale);
+
+        // アンカー円（吹き出しの上に描画してピンが隠れないようにする）
+        octx.beginPath();
+        octx.arc(ax, ay, (isSel ? 8 : 7) * scale, 0, Math.PI * 2);
+        octx.fillStyle = "#dc2626";
+        octx.fill();
+        octx.strokeStyle = isSel ? "#2563eb" : "#ffffff";
+        octx.lineWidth = (isSel ? 3.5 : 2) * scale;
+        octx.stroke();
       });
 
       // ── ダウンロード ──
