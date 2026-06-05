@@ -344,6 +344,9 @@
     let supabaseClient = null;
     let currentInspectionId = null;
     let selectedCloudInspectionId = null;
+    let currentDrawingId = null;
+    let currentDrawingStoragePath = null;
+    const DRAWING_BUCKET = "inspection-drawings";
 
     function isSupabaseConfigured(){
       const urlOk = SUPABASE_URL && !String(SUPABASE_URL).includes("YOUR_SUPABASE");
@@ -396,6 +399,28 @@
       setCloudStatus("エラー", "err");
     }
 
+    function toSafeFileName(name){
+      const src = String(name || "drawing.pdf");
+      const base = src.replace(/\.pdf$/i, "");
+      const normalized = base.normalize("NFKC");
+      const safe = normalized
+        .replace(/[\\\/:*?"<>|]/g, "_")
+        .replace(/\s+/g, "_")
+        .replace(/[^\w.-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return (safe || "drawing") + ".pdf";
+    }
+
+    function nowStamp(){
+      return new Date().toISOString().replace(/[-:.TZ]/g, "");
+    }
+
+    function resolvePdfIdentity(bg){
+      if(!bg || bg.kind !== "pdf") return null;
+      return bg.drawingId || bg.pdfId || null;
+    }
+
     function activeBgForCloud(){
       const bg = store.activeBg || { kind:"none" };
       return { ...bg, pageCache:{} };
@@ -427,6 +452,8 @@
     }
 
     function markerKeyFromRow(row){
+      if(row.drawing_id && row.page_number > 0) return `pdf:${row.drawing_id}:${row.page_number}`;
+      if(row.marker_data?.drawingId && row.page_number > 0) return `pdf:${row.marker_data.drawingId}:${row.page_number}`;
       if(row.marker_data?.markerKey) return row.marker_data.markerKey;
       const pdfId = row.marker_data?.pdfId;
       if(pdfId != null && row.page_number > 0) return `pdf:${pdfId}:${row.page_number}`;
@@ -434,16 +461,37 @@
       return "template";
     }
 
+    function remapMarkersPdfIdentity(oldId, newId){
+      if(!oldId || !newId || oldId === newId) return;
+      const mbk = store.markersByKey || {};
+      const entries = Object.entries(mbk);
+      entries.forEach(([key, arr])=>{
+        const m = /^pdf:([^:]+):(\d+)$/.exec(key);
+        if(!m) return;
+        if(m[1] !== String(oldId)) return;
+        const nextKey = `pdf:${newId}:${m[2]}`;
+        if(!Array.isArray(mbk[nextKey])) mbk[nextKey] = [];
+        if(Array.isArray(arr)) mbk[nextKey].push(...arr);
+        delete mbk[key];
+      });
+    }
+
     function buildMarkerRows(inspectionId){
       const rows = [];
       const mbk = store.markersByKey || {};
+      const bg = store.activeBg || { kind:"none" };
+      const activeDrawingId = bg.kind === "pdf" ? (bg.drawingId || currentDrawingId || null) : null;
+      const activePdfIdentity = resolvePdfIdentity(bg);
       for(const [key, arr] of Object.entries(mbk)){
         if(!Array.isArray(arr)) continue;
         const { page_number, pdfId, markerKey } = parseMarkerKey(key);
+        const markerDrawingId = (pdfId && activeDrawingId && pdfId === activePdfIdentity)
+          ? activeDrawingId
+          : (pdfId === activeDrawingId ? activeDrawingId : null);
         arr.forEach((m, idx)=>{
           rows.push({
             inspection_id: inspectionId,
-            drawing_id: null,
+            drawing_id: markerDrawingId,
             page_number,
             local_marker_id: m.id,
             x: Number(m.x),
@@ -461,6 +509,7 @@
             sort_order: idx,
             marker_data: {
               markerKey,
+              drawingId: markerDrawingId,
               pdfId,
               createdAt: m.createdAt || Date.now(),
               version: 1,
@@ -512,6 +561,9 @@
         building_name: ($("inpBuildingName").value || "").trim() || null,
         inspected_at: inspectedRaw ? new Date(inspectedRaw + "T00:00:00").toISOString() : null,
         inspector_name: ($("inpInspectorName").value || "").trim() || null,
+        current_drawing_id: (bg.kind === "pdf")
+          ? (bg.drawingId || currentDrawingId || null)
+          : null,
         current_page: bg.kind === "pdf" ? (bg.page || 1) : 1,
         settings: {
           version: 1,
@@ -546,6 +598,13 @@
         const prevCache = store.activeBg?.pageCache;
         store.activeBg = { ...settings.activeBg, pageCache: prevCache || {} };
       }
+      if(insp.current_drawing_id){
+        currentDrawingId = insp.current_drawing_id;
+        if(store.activeBg?.kind === "pdf"){
+          store.activeBg.drawingId = insp.current_drawing_id;
+          store.activeBg.pdfId = String(insp.current_drawing_id);
+        }
+      }
       store.markersByKey = markerRowsToMarkersByKey(
         markerRows,
         settings.markersByKey
@@ -573,6 +632,187 @@
       updateCloudCurrentIdLabel();
     }
 
+    async function uploadPdfToSupabase(file){
+      const inspectionId = currentInspectionId;
+      if(!inspectionId) throw new Error("inspection_id が未確定です。先に案件を作成してください。");
+      if(!file) throw new Error("PDFファイルが選択されていません。");
+      const sb = getSupabase();
+      const safeName = toSafeFileName(file.name || "drawing.pdf");
+      const storagePath = `inspections/${inspectionId}/drawings/${nowStamp()}_${safeName}`;
+      const uploadRes = await sb.storage.from(DRAWING_BUCKET).upload(storagePath, file, {
+        contentType: file.type || "application/pdf",
+        upsert: false,
+      });
+      if(uploadRes.error) throw uploadRes.error;
+      return storagePath;
+    }
+
+    async function saveDrawingRecord(file, storagePath, pdfMeta){
+      const inspectionId = currentInspectionId;
+      if(!inspectionId) throw new Error("inspection_id が未確定です。");
+      const sb = getSupabase();
+      const insertPayload = {
+        inspection_id: inspectionId,
+        file_name: file?.name || "drawing.pdf",
+        mime_type: file?.type || "application/pdf",
+        storage_path: storagePath,
+        pdf_id: String(pdfMeta?.pdf_id || ""),
+        page_count: Number(pdfMeta?.page_count || 1),
+        width: Number(pdfMeta?.width || 0),
+        height: Number(pdfMeta?.height || 0),
+        metadata: pdfMeta?.metadata || {},
+      };
+      const { data, error } = await sb.from("drawings")
+        .insert(insertPayload)
+        .select("id")
+        .single();
+      if(error) throw error;
+      return data.id;
+    }
+
+    async function ensureCloudDrawingSaved(){
+      const bg = store.activeBg || { kind:"none" };
+      if(bg.kind !== "pdf") return null;
+      if(bg.drawingId || currentDrawingId) return bg.drawingId || currentDrawingId;
+      if(!lastPdfFile) return null;
+      if(!currentInspectionId){
+        throw new Error("案件IDがありません。先に案件情報を保存してください。");
+      }
+
+      const pdf = await getCachedPdfDoc(lastPdfFile);
+      const first = await pdf.getPage(1);
+      const vp = first.getViewport({ scale: 1 });
+      const tempPdfId = resolvePdfIdentity(bg) || randomPdfId();
+      const pdfMeta = {
+        pdf_id: tempPdfId,
+        page_count: Number(pdf.numPages || 1),
+        width: Number(vp.width || 0),
+        height: Number(vp.height || 0),
+        metadata: {
+          source: "web",
+          uploaded_at: new Date().toISOString(),
+        },
+      };
+
+      const storagePath = await uploadPdfToSupabase(lastPdfFile);
+      const drawingId = await saveDrawingRecord(lastPdfFile, storagePath, pdfMeta);
+
+      const sb = getSupabase();
+      const { error: upErr } = await sb.from("inspections")
+        .update({ current_drawing_id: drawingId })
+        .eq("id", currentInspectionId);
+      if(upErr) throw upErr;
+
+      currentDrawingId = drawingId;
+      currentDrawingStoragePath = storagePath;
+      if(store.activeBg?.kind === "pdf"){
+        const oldIdentity = resolvePdfIdentity(store.activeBg);
+        remapMarkersPdfIdentity(oldIdentity, String(drawingId));
+        store.activeBg.drawingId = drawingId;
+        store.activeBg.pdfId = String(drawingId);
+      }
+      saveStore();
+      return drawingId;
+    }
+
+    async function loadPdfFromSupabaseDrawing(drawingId, targetPage){
+      const sb = getSupabase();
+      const { data: drawing, error: dErr } = await sb.from("drawings")
+        .select("*")
+        .eq("id", drawingId)
+        .single();
+      if(dErr) throw dErr;
+      if(!drawing?.storage_path){
+        throw new Error("drawings.storage_path が未設定です。");
+      }
+
+      const dlRes = await sb.storage.from(DRAWING_BUCKET).download(drawing.storage_path);
+      if(dlRes.error) throw dlRes.error;
+      const blob = dlRes.data;
+      if(!blob) throw new Error("StorageからPDFを取得できませんでした。");
+
+      const fileLike = new File([blob], drawing.file_name || "drawing.pdf", {
+        type: drawing.mime_type || "application/pdf"
+      });
+      lastPdfFile = fileLike;
+      currentDrawingId = drawing.id;
+      currentDrawingStoragePath = drawing.storage_path;
+      const startPage = Number.isFinite(targetPage) ? Number(targetPage) : 1;
+      await setPdfBackground(fileLike, {
+        pdfId: String(drawing.id),
+        drawingId: drawing.id,
+        page: startPage,
+        silent: true,
+        rethrowOnError: true,
+      });
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      return drawing;
+    }
+
+    async function saveMarkersToCloud(inspectionId){
+      const sb = getSupabase();
+      const { error: delErr } = await sb.from("markers")
+        .delete()
+        .eq("inspection_id", inspectionId);
+      if(delErr) throw delErr;
+      const markerRows = buildMarkerRows(inspectionId);
+      if(markerRows.length > 0){
+        const { error: insErr } = await sb.from("markers").insert(markerRows);
+        if(insErr) throw insErr;
+      }
+      return markerRows.length;
+    }
+
+    async function loadInspectionWithDrawingAndMarkers(inspectionId){
+      if(!inspectionId){
+        toast("【確認】一覧から案件を選択するか、行の「読込」を押してください。");
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const { data: insp, error: iErr } = await sb.from("inspections")
+          .select("*")
+          .eq("id", inspectionId)
+          .single();
+        if(iErr) throw iErr;
+
+        const { data: markerRows, error: mErr } = await sb.from("markers")
+          .select("*")
+          .eq("inspection_id", inspectionId)
+          .order("sort_order", { ascending: true });
+        if(mErr) throw mErr;
+
+        currentInspectionId = inspectionId;
+        selectedCloudInspectionId = inspectionId;
+        currentDrawingId = insp.current_drawing_id || null;
+        if(!currentDrawingId) currentDrawingStoragePath = null;
+        applyInspectionForm(insp);
+        applyLoadedInspectionToStore(insp, markerRows || []);
+
+        if(insp.current_drawing_id){
+          try{
+            await loadPdfFromSupabaseDrawing(insp.current_drawing_id, insp.current_page || 1);
+            if(store.activeBg?.kind === "pdf"){
+              store.activeBg.kind = "pdf";
+            }
+          }catch(e){
+            showCloudError("PDF図面の復元", e);
+            toast("PDFの復元に失敗しました。再アップロードしてください");
+          }
+        }
+
+        refreshUiAfterDataChange();
+        const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
+        toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件`);
+        setCloudStatus("読込済", "ok");
+        renderCloudInspectionList(lastCloudListCache);
+      }catch(e){
+        showCloudError("クラウド読み込み", e);
+      }
+    }
+
     async function testSupabaseConnection(){
       try{
         if(!isSupabaseConfigured()){
@@ -598,6 +838,8 @@
       if(!ok) return;
       currentInspectionId = null;
       selectedCloudInspectionId = null;
+      currentDrawingId = null;
+      currentDrawingStoragePath = null;
       store = structuredClone(defaultStore);
       normalRotation = 0;
       selectedId = null;
@@ -618,7 +860,7 @@
       try{
         if(normalizeAllMarkersInStore()) saveStore();
         const sb = getSupabase();
-        const payload = readInspectionForm();
+        let payload = readInspectionForm();
         let inspectionId = currentInspectionId;
 
         if(!inspectionId){
@@ -629,27 +871,19 @@
           if(error) throw error;
           inspectionId = data.id;
           currentInspectionId = inspectionId;
-        }else{
-          const { error } = await sb.from("inspections")
-            .update(payload)
-            .eq("id", inspectionId);
-          if(error) throw error;
         }
 
-        const { error: delErr } = await sb.from("markers")
-          .delete()
-          .eq("inspection_id", inspectionId);
-        if(delErr) throw delErr;
+        await ensureCloudDrawingSaved();
+        payload = readInspectionForm();
+        const { error: updErr } = await sb.from("inspections")
+          .update(payload)
+          .eq("id", inspectionId);
+        if(updErr) throw updErr;
 
-        const markerRows = buildMarkerRows(inspectionId);
-        if(markerRows.length > 0){
-          const { error: insErr } = await sb.from("markers").insert(markerRows);
-          if(insErr) throw insErr;
-        }
+        const n = await saveMarkersToCloud(inspectionId);
 
         saveStore();
         setCloudStatus("保存済", "ok");
-        const n = markerRows.length;
         toast(`クラウド保存しました。\n案件ID: ${inspectionId}\nマーカー: ${n}件`);
         updateCloudCurrentIdLabel();
         await refreshCloudInspectionList();
@@ -659,41 +893,7 @@
     }
 
     async function loadFromCloud(inspectionId){
-      if(!inspectionId){
-        toast("【確認】一覧から案件を選択するか、行の「読込」を押してください。");
-        return;
-      }
-      try{
-        const sb = getSupabase();
-        const { data: insp, error: iErr } = await sb.from("inspections")
-          .select("*")
-          .eq("id", inspectionId)
-          .single();
-        if(iErr) throw iErr;
-
-        const { data: markerRows, error: mErr } = await sb.from("markers")
-          .select("*")
-          .eq("inspection_id", inspectionId)
-          .order("sort_order", { ascending: true });
-        if(mErr) throw mErr;
-
-        currentInspectionId = inspectionId;
-        selectedCloudInspectionId = inspectionId;
-        applyInspectionForm(insp);
-        applyLoadedInspectionToStore(insp, markerRows || []);
-        refreshUiAfterDataChange();
-
-        const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
-        toast(
-          `クラウド読み込み完了。\n` +
-          `${insp.title || "無題"}\nマーカー合計: ${n}件\n` +
-          `※図面PDFは端末で再選択してください。`
-        );
-        setCloudStatus("読込済", "ok");
-        renderCloudInspectionList(lastCloudListCache);
-      }catch(e){
-        showCloudError("クラウド読み込み", e);
-      }
+      await loadInspectionWithDrawingAndMarkers(inspectionId);
     }
 
     let lastCloudListCache = [];
@@ -778,8 +978,9 @@
 
     function activeKey(){
       const bg = store.activeBg;
-      if(bg?.kind === "pdf" && bg.pdfId && bg.page){
-        return `pdf:${bg.pdfId}:${bg.page}`;
+      const pdfIdentity = resolvePdfIdentity(bg);
+      if(bg?.kind === "pdf" && pdfIdentity && bg.page){
+        return `pdf:${pdfIdentity}:${bg.page}`;
       }
       return "template";
     }
@@ -1038,7 +1239,8 @@
     function redrawBackground(){
       const bg = store.activeBg;
       if(bg?.kind === "pdf"){
-        const cacheKey = `${bg.pdfId}:${bg.page}`;
+        const pdfIdentity = resolvePdfIdentity(bg);
+        const cacheKey = `${pdfIdentity}:${bg.page}`;
         const dataURL = bg.pageCache?.[cacheKey];
         if(dataURL){
           const img = new Image();
@@ -1719,23 +1921,29 @@
       return { dataURL, pageCount };
     }
 
-    async function setPdfBackground(file){
-      const pdfId = randomPdfId();
-      const page = clamp(parseInt($("pageInput").value||"1",10), 1, 9999);
-      store.activeBg = { kind:"pdf", pdfId, page, pageCount: 1, pageCache: {} };
+    async function setPdfBackground(file, opts = {}){
+      const pdfId = String(opts.pdfId || randomPdfId());
+      const drawingId = opts.drawingId || null;
+      const page = clamp(parseInt(String(opts.page || $("pageInput").value || "1"),10), 1, 9999);
+      store.activeBg = { kind:"pdf", pdfId, drawingId, page, pageCount: 1, pageCache: {} };
       saveStore();
       redrawBackground();
       updatePageInfo();
 
       try{
-        toast("PDFページ画像を生成しています…\n（図面が大きい場合、数秒かかります）");
+        if(!opts.silent){
+          toast("PDFページ画像を生成しています…\n（図面が大きい場合、数秒かかります）");
+        }
         const { dataURL, pageCount } = await renderPdfPageToDataUrl(file, page);
+        const cacheIdentity = resolvePdfIdentity(store.activeBg);
         store.activeBg.pageCount = pageCount;
-        store.activeBg.pageCache[`${pdfId}:${page}`] = dataURL;
+        store.activeBg.pageCache[`${cacheIdentity}:${page}`] = dataURL;
         saveStore();
         redrawBackground();
         updatePageInfo();
-        toast("PDF読み込み完了。図面をクリックしてマーカーを追加できます。");
+        if(!opts.silent){
+          toast("PDF読み込み完了。図面をクリックしてマーカーを追加できます。");
+        }
         markers();
         redrawOverlay();
         redrawList();
@@ -1747,13 +1955,19 @@
         redrawBackground();
         updatePageInfo();
         toast("PDFの表示に失敗しました。\n原因：\n" + String(e.message||e) + "\n\n対策：\n・ネットワーク制限がある場合は別回線で試す\n・図面が巨大な場合は別ページを試す\n・それでもダメならエラー文を送ってください");
+        if(opts.rethrowOnError) throw e;
       }
     }
 
     async function ensurePageRendered(page){
       const bg = store.activeBg;
       if(bg.kind !== "pdf") return;
-      const cacheKey = `${bg.pdfId}:${page}`;
+      const pdfIdentity = resolvePdfIdentity(bg);
+      if(!pdfIdentity){
+        toast("PDF識別子がありません。PDFを再選択してください。");
+        return;
+      }
+      const cacheKey = `${pdfIdentity}:${page}`;
       if(bg.pageCache?.[cacheKey]) return;
 
       if(!lastPdfFile){
@@ -1788,6 +2002,8 @@
       const file = e.target.files?.[0];
       if(!file) return;
       lastPdfFile = file;
+      currentDrawingId = null;
+      currentDrawingStoragePath = null;
       await setPdfBackground(file);
     });
 
@@ -1851,6 +2067,8 @@
       $("memoInput").value = "";
       $("pageInput").value = "1";
       lastPdfFile = null;
+      currentDrawingId = null;
+      currentDrawingStoragePath = null;
       cachedPdfDoc = null;
       cachedPdfFileRef = null;
       $("pdfInput").value = "";  // ファイル入力をリセット（同じPDFを再選択できるように）
