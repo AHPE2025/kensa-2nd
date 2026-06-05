@@ -99,6 +99,56 @@
     .mapping-row input[type="checkbox"]{width:16px;height:16px}
     .mapping-state{font-size:11px;color:var(--muted);white-space:nowrap}
     .vendor-state{font-size:11px;color:#334155;background:#f8fafc;border:1px solid #dbeafe;border-radius:8px;padding:5px 8px;white-space:nowrap}
+    .legacy-input-note{font-size:11px;color:#6b7280;padding:4px 8px;border:1px dashed #d1d5db;border-radius:10px;background:#f9fafb}
+    #quickMarkerEditor{
+      position:absolute;
+      z-index:1200;
+      display:none;
+      width:min(360px, calc(100% - 12px));
+      background:#fff;
+      border:1px solid #dbe1ea;
+      border-radius:14px;
+      box-shadow:0 10px 26px rgba(15,23,42,.18);
+      padding:10px;
+      touch-action:manipulation;
+    }
+    #quickMarkerEditor .qe-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+    #quickMarkerEditor .qe-label{font-size:11px;color:#475569;font-weight:700}
+    #quickTypeChips{display:flex;gap:6px;flex-wrap:wrap}
+    #quickTypeChips .type-chip{
+      border:1px solid #cbd5e1;
+      background:#f8fafc;
+      color:#0f172a;
+      border-radius:999px;
+      font-size:13px;
+      font-weight:700;
+      padding:8px 12px;
+      min-height:38px;
+      cursor:pointer;
+    }
+    #quickTypeChips .type-chip.active{
+      background:#2563eb;
+      color:#fff;
+      border-color:#2563eb;
+    }
+    #quickMarkerEditor select,#quickMarkerEditor input{
+      width:100%;
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      font-size:14px;
+      padding:9px 10px;
+      min-height:40px;
+      background:#fff;
+    }
+    #quickMarkerEditor .qe-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
+    #quickMarkerEditor .qe-actions .btn{padding:10px 14px;min-height:42px}
+    #quickMarkerEditor .qe-vendor-row{display:flex;gap:6px;align-items:stretch}
+    #quickMarkerEditor .qe-vendor-row select{flex:1}
+    @media (max-width: 900px){
+      #quickMarkerEditor{width:min(400px, calc(100% - 10px));padding:11px}
+      #quickTypeChips .type-chip{font-size:14px;min-height:40px;padding:8px 13px}
+      #quickMarkerEditor .qe-actions .btn{min-width:90px}
+    }
     @media (max-width: 860px){
       .mapping-grid{grid-template-columns:1fr auto;gap:6px}
       .mapping-head{display:none}
@@ -212,13 +262,43 @@
               <button class="btn" id="btnRotR" title="右90°回転" style="padding:7px 11px;font-size:16px">↻</button>
             </div>
           </div>
-          <span class="small" style="white-space:nowrap;align-self:center">図面をタップ→マーカー追加</span>
+          <span class="legacy-input-note" style="white-space:nowrap;align-self:center">新規入力は図面上ポップアップで行います</span>
         </div>
 
         <!-- 図面ステージ（横画面デフォルト） -->
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <canvas id="bg"></canvas>
           <svg id="overlay"></svg>
+          <div id="quickMarkerEditor">
+            <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
+            <div class="qe-row" id="quickTypeChips"></div>
+            <div class="qe-row">
+              <div style="width:100%">
+                <div class="qe-label">指摘種別</div>
+                <select id="quickMarkerType"></select>
+              </div>
+            </div>
+            <div class="qe-row">
+              <div style="width:100%">
+                <div class="qe-label">業者</div>
+                <div class="qe-vendor-row">
+                  <select id="quickMarkerVendor"></select>
+                  <button class="btn" id="quickMarkerVendorClear" type="button">クリア</button>
+                </div>
+              </div>
+            </div>
+            <div class="qe-row">
+              <div style="width:100%">
+                <div class="qe-label">メモ（任意）</div>
+                <input id="quickMarkerMemo" type="text" placeholder="メモを入力" />
+              </div>
+            </div>
+            <div class="qe-actions">
+              <button class="btn danger" id="quickMarkerDelete" type="button">削除</button>
+              <button class="btn" id="quickMarkerCancel" type="button">キャンセル</button>
+              <button class="btn primary" id="quickMarkerSave" type="button">保存</button>
+            </div>
+          </div>
           <button class="fs-btn" id="btnFullscreen">⛶ フルスクリーン</button>
         </div>
 
@@ -249,17 +329,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <!-- メモ編集ポップアップ -->
-  <div id="memoPopup" style="display:none;position:fixed;z-index:3000;background:#1e293b;border:1px solid #334155;border-radius:16px;padding:14px;box-shadow:0 8px 32px rgba(0,0,0,.5);min-width:260px;">
-    <div style="font-size:11px;color:#94a3b8;margin-bottom:6px">メモを編集</div>
-    <textarea id="memoPopupInput" rows="3" style="width:100%;background:#0f172a;color:#f1f5f9;border:1px solid #334155;border-radius:10px;padding:8px;font-size:14px;resize:vertical;box-sizing:border-box;" placeholder="メモを入力…"></textarea>
-    <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
-      <button id="memoPopupCancel" class="btn" style="background:#334155;color:#f1f5f9;border-color:#475569;padding:7px 14px">キャンセル</button>
-      <button id="memoPopupSave" class="btn primary" style="padding:7px 14px">保存</button>
-    </div>
-  </div>
-
-  <!-- メモ編集ポップアップ -->
   <!-- フルスクリーン操作パネル - body直下でposition:fixed -->
   <div id="fsPanel">
     <div id="fsPanelHandle" title="ドラッグで移動"></div>
@@ -674,6 +743,7 @@
     }
 
     function refreshUiAfterDataChange(){
+      closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       selectedId = null;
       saveStore();
       updatePageInfo();
@@ -1077,6 +1147,8 @@
       const html = list.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
       $("typeSelect").innerHTML = html;
       $("fsTypeSelect").innerHTML = html;
+      const quickType = $("quickMarkerType");
+      if(quickType) quickType.innerHTML = html;
     }
 
     function renderVendorSelects(){
@@ -1086,6 +1158,12 @@
       const vendorHtml = activeVendors.map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`).join("");
       $("vendorSelect").innerHTML = vendorHtml;
       $("fsVendorSelect").innerHTML = vendorHtml;
+      const quickVendor = $("quickMarkerVendor");
+      if(quickVendor){
+        quickVendor.innerHTML = [`<option value="">未選択</option>`]
+          .concat(activeVendors.filter(v=>v.name !== "業者未定").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
+          .join("");
+      }
       const filterHtml = [`<option value="">全て</option>`]
         .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
         .join("");
@@ -1450,7 +1528,7 @@
         marker.vendor_source = "manual";
         marker.vendor_manual_override = true;
         marker.is_common = false;
-        marker.is_vendor_unassigned = false;
+        marker.is_vendor_unassigned = !(marker.vendor_name || marker.vendor);
         marker.vendor_name = marker.vendor_name || marker.vendor || "";
         marker.vendor = marker.vendor_name;
         if(!marker.vendor_id){
@@ -1528,6 +1606,9 @@
     const ctx = bgCanvas.getContext("2d");
     const overlay = $("overlay");
     const stageWrap = $("stageWrap");
+    const quickMarkerEditor = $("quickMarkerEditor");
+    const QUICK_TYPE_CHIP_ORDER = ["共通","傷","汚れ","建具","設備","補修","その他"];
+    let quickEditorState = null;
 
     function resizeStage(){
       // devicePixelRatioを考慮してcanvasを物理ピクセルサイズで確保する
@@ -1823,60 +1904,267 @@
       }
     }
 
+    function getMarkerById(markerId){
+      if(!markerId) return null;
+      for(const arr of Object.values(store.markersByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        const found = arr.find(m=>m.id === markerId);
+        if(found) return found;
+      }
+      return null;
+    }
+
+    function renderQuickTypeChips(selectedType){
+      const host = $("quickTypeChips");
+      if(!host) return;
+      const set = new Set();
+      const categories = inspectionCategories.length ? inspectionCategories : FALLBACK_CATEGORIES;
+      QUICK_TYPE_CHIP_ORDER.forEach(v=>set.add(v));
+      categories.forEach(c=>set.add(c.name));
+      const chips = [...set];
+      host.innerHTML = chips.map(name=>`<button type="button" class="type-chip ${name === selectedType ? "active" : ""}" data-type="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join("");
+    }
+
+    function updateQuickEditorUiFromDraft(){
+      if(!quickEditorState) return;
+      const d = quickEditorState.draft;
+      $("quickMarkerType").value = d.type || "共通";
+      $("quickMarkerVendor").value = d.vendor_name || "";
+      $("quickMarkerMemo").value = d.memo || "";
+      renderQuickTypeChips(d.type || "共通");
+    }
+
+    function applyQuickEditorCategoryChange(categoryName, marker){
+      if(!marker) return false;
+      marker.type = categoryName || "共通";
+      if(marker.vendor_manual_override) return false;
+      if(categoryName === "共通"){
+        marker.vendor_name = "";
+        marker.vendor_id = null;
+        marker.vendor = "";
+        marker.vendor_source = "common";
+        marker.is_common = true;
+        marker.is_vendor_unassigned = false;
+        marker.original_auto_vendor_id = "ALL_VENDORS";
+        marker.original_auto_vendor_name = "全業者";
+        return true;
+      }
+      const vendor = getDefaultVendorForCategory(categoryName);
+      if(vendor.source === "unassigned" || vendor.name === "業者未定"){
+        marker.vendor_name = "";
+        marker.vendor_id = null;
+        marker.vendor = "";
+        marker.vendor_source = "unassigned";
+        marker.is_vendor_unassigned = true;
+        marker.is_common = false;
+        return true;
+      }
+      marker.vendor_name = vendor.name || "";
+      marker.vendor_id = vendor.id || null;
+      marker.vendor = vendor.name || "";
+      marker.vendor_source = "auto";
+      marker.is_common = false;
+      marker.is_vendor_unassigned = !vendor.name;
+      marker.original_auto_vendor_id = vendor.id || null;
+      marker.original_auto_vendor_name = vendor.name || "";
+      return true;
+    }
+
+    function clearMarkerVendor(marker){
+      if(!marker) return;
+      marker.vendor_name = "";
+      marker.vendor_id = null;
+      marker.vendor = "";
+      marker.vendor_manual_override = true;
+      marker.vendor_source = "manual";
+      marker.is_common = false;
+      marker.is_vendor_unassigned = true;
+    }
+
+    function positionQuickEditorNearMarker(marker){
+      if(!marker || !quickMarkerEditor || quickMarkerEditor.style.display === "none") return;
+      const anchor = imgRatioToCanvasPx(marker.x, marker.y);
+      const editorW = quickMarkerEditor.offsetWidth || 320;
+      const editorH = quickMarkerEditor.offsetHeight || 240;
+      const margin = 8;
+      let left = anchor.x + 14;
+      let top = anchor.y + 14;
+      if(left + editorW > stageW - margin){
+        left = anchor.x - editorW - 14;
+      }
+      if(top + editorH > stageH - margin){
+        top = anchor.y - editorH - 14;
+      }
+      left = clamp(left, margin, Math.max(margin, stageW - editorW - margin));
+      top = clamp(top, margin, Math.max(margin, stageH - editorH - margin));
+      quickMarkerEditor.style.left = `${left}px`;
+      quickMarkerEditor.style.top = `${top}px`;
+    }
+
+    function openQuickMarkerEditor(marker, options = {}){
+      if(!marker) return;
+      const isNew = options.isNew === true;
+      closeQuickMarkerEditor({ keepDraft: false });
+      quickEditorState = {
+        markerId: marker.id,
+        isNew,
+        draft: {
+          type: marker.type || "共通",
+          vendor_name: marker.vendor_name || marker.vendor || "",
+          memo: marker.memo || "",
+          vendor_manual_override: !!marker.vendor_manual_override,
+          vendor_source: marker.vendor_source || "auto",
+        }
+      };
+      quickMarkerEditor.style.display = "block";
+      updateQuickEditorUiFromDraft();
+      positionQuickEditorNearMarker(marker);
+      setTimeout(()=>{ try{ $("quickMarkerMemo").focus(); }catch(_){} }, 0);
+    }
+
+    function closeQuickMarkerEditor(options = {}){
+      const state = quickEditorState;
+      if(state && state.isNew && !options.keepDraft){
+        deleteMarkerById(state.markerId, { skipCloseEditor: true });
+      }
+      quickEditorState = null;
+      if(quickMarkerEditor) quickMarkerEditor.style.display = "none";
+      if(!options.suppressSync){
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+        syncSelectorsFromSelectedMarker();
+      }
+    }
+
+    function createDraftMarkerAt(x, y){
+      const ratio = canvasPxToImgRatio(x, y);
+      const m = {
+        id: newId(),
+        x: ratio.x, y: ratio.y,
+        dx: DEFAULT_BUBBLE_DX,
+        dy: DEFAULT_BUBBLE_DY,
+        type: "共通",
+        vendor: "",
+        vendor_id: null,
+        vendor_name: "",
+        vendor_source: "common",
+        vendor_manual_override: false,
+        original_auto_vendor_id: "ALL_VENDORS",
+        original_auto_vendor_name: "全業者",
+        is_common: true,
+        is_vendor_unassigned: false,
+        memo: "",
+        createdAt: Date.now(),
+        bubbleMoved: false,
+      };
+      normalizeMarkerOffset(m);
+      markers().push(m);
+      selectedId = m.id;
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      openQuickMarkerEditor(m, { isNew: true });
+      return m;
+    }
+
+    function saveQuickMarkerEditor(){
+      if(!quickEditorState) return;
+      const marker = getMarkerById(quickEditorState.markerId);
+      if(!marker){
+        closeQuickMarkerEditor({ suppressSync: true });
+        return;
+      }
+      const d = quickEditorState.draft;
+      marker.type = d.type || "共通";
+      marker.memo = d.memo || "";
+      if(marker.type === "共通"){
+        marker.vendor = d.vendor_name || "全業者";
+        marker.vendor_name = d.vendor_name || "全業者";
+        marker.vendor_id = marker.vendor_name ? (getVendorRecordByName(marker.vendor_name)?.id || "ALL_VENDORS") : null;
+        marker.vendor_source = "common";
+        marker.vendor_manual_override = false;
+        marker.is_common = true;
+        marker.is_vendor_unassigned = false;
+        marker.original_auto_vendor_id = "ALL_VENDORS";
+        marker.original_auto_vendor_name = "全業者";
+      }else if(!d.vendor_name){
+        marker.vendor = "";
+        marker.vendor_name = "";
+        marker.vendor_id = null;
+        marker.vendor_source = d.vendor_manual_override ? "manual" : "unassigned";
+        marker.vendor_manual_override = !!d.vendor_manual_override;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = true;
+      }else{
+        const vendor = getVendorRecordByName(d.vendor_name);
+        marker.vendor = d.vendor_name;
+        marker.vendor_name = d.vendor_name;
+        marker.vendor_id = vendor?.id || null;
+        marker.vendor_source = d.vendor_manual_override ? "manual" : "auto";
+        marker.vendor_manual_override = !!d.vendor_manual_override;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = false;
+        if(!d.vendor_manual_override){
+          marker.original_auto_vendor_id = marker.vendor_id;
+          marker.original_auto_vendor_name = marker.vendor_name;
+        }
+      }
+      normalizeMarkerVendorState(marker);
+      quickEditorState = null;
+      quickMarkerEditor.style.display = "none";
+      selectedId = marker.id;
+      saveStore();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      if(isFullscreen) updateFsInfo();
+    }
+
+    function deleteMarkerById(markerId, options = {}){
+      if(!markerId) return false;
+      let deleted = false;
+      for(const [key, arr] of Object.entries(store.markersByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        const idx = arr.findIndex(m=>m.id === markerId);
+        if(idx >= 0){
+          arr.splice(idx, 1);
+          if(arr.length === 0) store.markersByKey[key] = [];
+          deleted = true;
+          break;
+        }
+      }
+      if(!deleted) return false;
+      if(selectedId === markerId) selectedId = null;
+      if(quickEditorState && quickEditorState.markerId === markerId){
+        quickEditorState = null;
+        quickMarkerEditor.style.display = "none";
+      }
+      saveStore();
+      if(!options.skipCloseEditor){
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+        syncSelectorsFromSelectedMarker();
+      }
+      if(isFullscreen) updateFsInfo();
+      return true;
+    }
+
     // -------------------- Marker Model --------------------
     function newId(){
       return "m_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
     }
 
     function addMarker(x,y){
-      // 座標はPDF画像内の比率（0〜1）で保存する。
-      // canvas全体ではなく「画像が表示されている領域」基準にすることで
-      // フルスクリーン切替後もずれない。
-      const ratio = canvasPxToImgRatio(x, y);
-      const m = {
-        id: newId(),
-        x: ratio.x, y: ratio.y, // anchor (canonical image ratio)
-        dx: DEFAULT_BUBBLE_DX,
-        dy: DEFAULT_BUBBLE_DY,
-        type: $("typeSelect").value,
-        vendor: "",
-        vendor_id: null,
-        vendor_name: "",
-        vendor_source: "auto",
-        vendor_manual_override: false,
-        original_auto_vendor_id: null,
-        original_auto_vendor_name: null,
-        is_common: false,
-        is_vendor_unassigned: false,
-        memo: $("memoInput").value || "",
-        createdAt: Date.now(),
-        bubbleMoved: false,
-      };
-      applyDefaultVendorByCategory(m.type, m, true);
-      normalizeMarkerOffset(m);
-      markers().push(m);
-      selectedId = m.id;
-      saveStore();
-      redrawOverlay();
-      redrawList();
-      syncButtons();
-      syncSelectorsFromSelectedMarker();
-      updateVendorStateLabel(m);
+      createDraftMarkerAt(x, y);
     }
 
     function deleteSelected(){
       if(!selectedId) return;
-      const arr = markers();
-      const idx = arr.findIndex(m=>m.id===selectedId);
-      if(idx>=0){
-        arr.splice(idx,1);
-        selectedId = null;
-        saveStore();
-        redrawOverlay();
-        redrawList();
-        syncButtons();
-        syncSelectorsFromSelectedMarker();
-      }
+      deleteMarkerById(selectedId);
     }
 
 
@@ -1934,7 +2222,7 @@
         const bubble = svgEl("rect", { x:0,y:0,width:BUBBLE_W,height:BUBBLE_H, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
         bubbleG.appendChild(bubble);
 
-        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
+        const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
         const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827" });
         t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
         bubbleG.appendChild(t1);
@@ -1960,6 +2248,14 @@
 
         overlay.appendChild(group);
       });
+      if(quickEditorState){
+        const target = getMarkerById(quickEditorState.markerId);
+        if(target){
+          positionQuickEditorNearMarker(target);
+        }else{
+          closeQuickMarkerEditor({ suppressSync: true });
+        }
+      }
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
     }
@@ -1984,7 +2280,7 @@
         const div = document.createElement("div");
         div.className = "item" + (m.id===selectedId ? " sel" : "");
         div.dataset.id = m.id;
-        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
+        const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
         const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>38? m.memo.slice(0,38)+"…" : m.memo) : "なし"} / 作成：${new Date(m.createdAt).toLocaleString()}`;
         div.innerHTML = `
           <div class="meta">
@@ -1993,7 +2289,7 @@
           </div>
           <div class="act">
             <button class="btn" data-act="center" style="padding:8px 10px;border-radius:10px">表示</button>
-            <button class="btn" data-act="editmemo" style="padding:8px 10px;border-radius:10px">📝</button>
+            <button class="btn" data-act="editmemo" style="padding:8px 10px;border-radius:10px">編集</button>
             <button class="btn danger" data-act="delete" style="padding:8px 10px;border-radius:10px">削除</button>
           </div>
         `;
@@ -2063,19 +2359,6 @@
           const role = roleEl.getAttribute("data-role");
           const m = markers().find(mm=>mm.id===id);
           if(m){
-            // ダブルタップ検出（bubble上のみ）
-            if(role === "bubble"){
-              const now = Date.now();
-              if(lastTapInfo && lastTapInfo.id === id && now - lastTapInfo.time < DBL_TAP_MS){
-                // ダブルタップ確定 → メモ編集ポップアップを開く
-                lastTapInfo = null;
-                pendingDrag = null;
-                openMemoPopup(id, e.clientX, e.clientY);
-                e.preventDefault();
-                return;
-              }
-              lastTapInfo = { id, time: Date.now() };
-            }
             const p = svgPointFromEvent(e);
             const _base = imgRatioToCanvasPx(m.x, m.y);
             pendingDrag = {
@@ -2092,9 +2375,10 @@
         }
         e.preventDefault();
       } else {
-        // 空白エリアをクリック → 新規マーカー追加
+        // 空白エリアをクリック → 仮ピン作成してクイック編集
+        closeQuickMarkerEditor({ keepDraft: false });
         const p = svgPointFromEvent(e);
-        addMarker(p.x, p.y);
+        createDraftMarkerAt(p.x, p.y);
         e.preventDefault();
       }
     });
@@ -2151,9 +2435,16 @@
 
     overlay.addEventListener("pointerup", (e)=>{
       if(pendingDrag){
+        const tapped = { ...pendingDrag };
         // ドラッグなしで離した → キャプチャ解放のみ
         try{ overlay.releasePointerCapture(pendingDrag.pointerId); }catch(_){}
         pendingDrag = null;
+        if(!drag && (tapped.role === "bubble" || tapped.role === "anchor")){
+          const marker = markers().find(mm=>mm.id===tapped.id);
+          if(marker){
+            openQuickMarkerEditor(marker, { isNew: false });
+          }
+        }
       }
       if(drag){
         try{ overlay.releasePointerCapture(drag.pointerId); }catch(_){}
@@ -2164,67 +2455,59 @@
     });
 
 
-    // ダブルタップ/クリック検出（pointerdownベース）
-    let memoEditId = null;
-    let lastTapInfo = null; // { id, time }
-    const DBL_TAP_MS = 350;
-
-    function openMemoPopup(id, clientX, clientY){
-      const m = markers().find(mm=>mm.id===id);
-      if(!m) return;
-      memoEditId = id;
-
-      const popup = $("memoPopup");
-      const input = $("memoPopupInput");
-      input.value = m.memo || "";
-
-      // 吹き出しのビューポート座標を計算
-      const svgRect = overlay.getBoundingClientRect();
-      const bubblePx = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
-      const scaleX = svgRect.width  / stageW;
-      const scaleY = svgRect.height / stageH;
-      let px = svgRect.left + bubblePx.x * scaleX;
-      let py = svgRect.top  + bubblePx.y * scaleY + 50;
-
-      popup.style.display = "block";
-      const pw = popup.offsetWidth, ph = popup.offsetHeight;
-      px = Math.max(8, Math.min(window.innerWidth  - pw - 8, px));
-      py = Math.max(8, Math.min(window.innerHeight - ph - 8, py));
-      popup.style.left = px + "px";
-      popup.style.top  = py + "px";
-      setTimeout(()=>input.focus(), 50);
-    }
-
-    function closeMemoPopup(){
-      $("memoPopup").style.display = "none";
-      memoEditId = null;
-    }
-    $("memoPopupCancel").addEventListener("click", closeMemoPopup);
-    $("memoPopupSave").addEventListener("click", ()=>{
-      if(!memoEditId) return;
-      const m = markers().find(mm=>mm.id===memoEditId);
-      if(m){
-        m.memo = $("memoPopupInput").value;
-        saveStore();
-        redrawOverlay();
-        redrawList();
-      }
-      closeMemoPopup();
+    $("quickTypeChips").addEventListener("click", (e)=>{
+      const chip = e.target.closest(".type-chip");
+      if(!chip || !quickEditorState) return;
+      quickEditorState.draft.type = chip.dataset.type || "共通";
+      applyQuickEditorCategoryChange(quickEditorState.draft.type, quickEditorState.draft);
+      updateQuickEditorUiFromDraft();
     });
-    // Enterキー（Shift+Enterは改行）で保存
-    $("memoPopupInput").addEventListener("keydown", (e)=>{
-      if(e.key === "Enter" && !e.shiftKey){
+    $("quickMarkerType").addEventListener("change", ()=>{
+      if(!quickEditorState) return;
+      quickEditorState.draft.type = $("quickMarkerType").value || "共通";
+      applyQuickEditorCategoryChange(quickEditorState.draft.type, quickEditorState.draft);
+      updateQuickEditorUiFromDraft();
+    });
+    $("quickMarkerVendor").addEventListener("change", ()=>{
+      if(!quickEditorState) return;
+      quickEditorState.draft.vendor_name = $("quickMarkerVendor").value || "";
+      quickEditorState.draft.vendor_manual_override = true;
+      quickEditorState.draft.vendor_source = quickEditorState.draft.vendor_name ? "manual" : "manual";
+      quickEditorState.draft.is_common = false;
+    });
+    $("quickMarkerVendorClear").addEventListener("click", ()=>{
+      if(!quickEditorState) return;
+      clearMarkerVendor(quickEditorState.draft);
+      updateQuickEditorUiFromDraft();
+    });
+    $("quickMarkerMemo").addEventListener("input", ()=>{
+      if(!quickEditorState) return;
+      quickEditorState.draft.memo = $("quickMarkerMemo").value || "";
+    });
+    $("quickMarkerSave").addEventListener("click", ()=>{ saveQuickMarkerEditor(); });
+    $("quickMarkerCancel").addEventListener("click", ()=>{
+      closeQuickMarkerEditor({ keepDraft: false });
+    });
+    $("quickMarkerDelete").addEventListener("click", ()=>{
+      if(!quickEditorState) return;
+      deleteMarkerById(quickEditorState.markerId);
+    });
+    $("quickMarkerMemo").addEventListener("keydown", (e)=>{
+      if(e.key === "Enter"){
         e.preventDefault();
-        $("memoPopupSave").click();
+        saveQuickMarkerEditor();
       }
-      if(e.key === "Escape") closeMemoPopup();
+      if(e.key === "Escape"){
+        e.preventDefault();
+        closeQuickMarkerEditor({ keepDraft: false });
+      }
     });
-    // ポップアップ外クリックで閉じる
     document.addEventListener("pointerdown", (e)=>{
-      const popup = $("memoPopup");
-      if(popup.style.display !== "none" && !popup.contains(e.target)){
-        closeMemoPopup();
-      }
+      if(!quickEditorState) return;
+      if(quickMarkerEditor.contains(e.target)) return;
+      if(e.target.closest("g[data-id]")) return;
+      if(e.target.closest("#overlay")) return;
+      closeQuickMarkerEditor({ keepDraft: false });
     });
 
     // List interactions
@@ -2240,11 +2523,10 @@
       syncSelectorsFromSelectedMarker();
 
       if(act === "delete"){
-        deleteSelected();
+        deleteMarkerById(id);
       }else if(act === "editmemo"){
-        const btn = e.target.closest("button");
-        const rect = btn.getBoundingClientRect();
-        openMemoPopup(id, rect.left, rect.top);
+        const m = markers().find(mm=>mm.id===id);
+        if(m) openQuickMarkerEditor(m, { isNew: false });
       }else if(act === "center"){
         toast("選択しました（図面上で青枠表示）");
       }
@@ -2272,32 +2554,14 @@
     $("typeSelect").addEventListener("change", ()=>{
       const categoryName = $("typeSelect").value;
       $("fsTypeSelect").value = categoryName;
-      const m = markers().find(mm=>mm.id===selectedId);
-      if(m){
-        m.type = categoryName;
-        applyDefaultVendorByCategory(categoryName, m, false);
-        saveStore();
-        redrawOverlay();
-        redrawList();
-        syncSelectorsFromSelectedMarker();
-      }else{
-        applyDefaultVendorByCategory(categoryName, null, true);
-      }
+      applyDefaultVendorByCategory(categoryName, null, true);
       if(isFullscreen) updateFsInfo();
     });
 
     $("vendorSelect").addEventListener("change", ()=>{
       const selectedVendorName = $("vendorSelect").value;
       $("fsVendorSelect").value = selectedVendorName;
-      const m = markers().find(mm=>mm.id===selectedId);
-      if(m){
-        markVendorManualOverride(m);
-        saveStore();
-        redrawOverlay();
-        redrawList();
-      }else{
-        updateVendorStateLabel();
-      }
+      updateVendorStateLabel();
     });
 
     function syncButtons(){
@@ -2654,7 +2918,8 @@
     });
     $("btnEditMemo").addEventListener("click", ()=>{
       if(!selectedId) return;
-      openMemoPopup(selectedId, window.innerWidth/2, window.innerHeight/2);
+      const m = markers().find(mm=>mm.id===selectedId);
+      if(m) openQuickMarkerEditor(m, { isNew: false });
     });
     $("btnClearStorage").addEventListener("click", ()=>{
       const ok = confirm("端末内の保存データを削除します。\n（マーカー・PDFページ画像キャッシュが消えます）\nよろしいですか？");
@@ -2801,7 +3066,8 @@
     });
     $("fsBtnEditMemo").addEventListener("click", ()=>{
       if(!selectedId) return;
-      openMemoPopup(selectedId, window.innerWidth/2, window.innerHeight/2);
+      const m = markers().find(mm=>mm.id===selectedId);
+      if(m) openQuickMarkerEditor(m, { isNew: false });
     });
 
     // 回転ボタン
