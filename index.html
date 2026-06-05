@@ -89,6 +89,22 @@
     .tag.cloud-ok{border-color:#86efac;color:#166534;background:#f0fdf4}
     .tag.cloud-warn{border-color:#fcd34d;color:#92400e;background:#fffbeb}
     .tag.cloud-err{border-color:#fca5a5;color:#991b1b;background:#fef2f2}
+    .mapping-panel{display:none;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f8fafc}
+    .mapping-panel.open{display:block}
+    .mapping-grid{display:grid;grid-template-columns:minmax(80px,1fr) auto minmax(140px,1.2fr) auto;gap:8px;align-items:center}
+    .mapping-head{font-size:12px;font-weight:700;color:#334155;padding-bottom:4px;border-bottom:1px dashed #cbd5e1}
+    .mapping-row{padding:6px 0;border-bottom:1px solid #e2e8f0}
+    .mapping-row:last-child{border-bottom:none}
+    .mapping-row select{width:100%;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:7px 9px;background:#fff}
+    .mapping-row input[type="checkbox"]{width:16px;height:16px}
+    .mapping-state{font-size:11px;color:var(--muted);white-space:nowrap}
+    .vendor-state{font-size:11px;color:#334155;background:#f8fafc;border:1px solid #dbeafe;border-radius:8px;padding:5px 8px;white-space:nowrap}
+    @media (max-width: 860px){
+      .mapping-grid{grid-template-columns:1fr auto;gap:6px}
+      .mapping-head{display:none}
+      .mapping-row{display:grid;grid-template-columns:1fr auto;gap:6px}
+      .mapping-row .mapping-full{grid-column:1 / -1}
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -136,10 +152,22 @@
         <button class="btn ok" id="btnNewInspection" type="button">新規検査案件作成</button>
         <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn" id="btnCloudLoad" type="button">クラウド読み込み</button>
+        <button class="btn" id="btnToggleMappingPanel" type="button">指摘種別・業者紐づけ設定</button>
       </div>
       <div class="small" style="margin-top:6px">保存済み検査案件一覧（行を選択して「クラウド読み込み」、または各行の読み込み）</div>
       <div class="cloud-list" id="cloudInspectionList">
         <div class="cloud-list-item" style="cursor:default;color:var(--muted)">接続設定後に一覧を取得できます</div>
+      </div>
+      <div class="mapping-panel" id="mappingPanel">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <strong style="font-size:13px">指摘種別ごとの標準担当業者</strong>
+          <span class="small" id="mappingPanelStatus">未保存の変更はありません</span>
+        </div>
+        <div id="mappingSettingsList"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" id="btnSaveMappings" type="button">紐づけ設定を保存</button>
+          <button class="btn" id="btnReloadMappings" type="button">再読み込み</button>
+        </div>
       </div>
     </div>
 
@@ -171,6 +199,7 @@
               <option value="クリーニング">クリーニング</option>
               <option value="その他">その他</option>
             </select>
+            <span id="vendorStateLabel" class="vendor-state">自動：-</span>
           </div>
           <div class="field" style="min-width:200px;flex:2">
             <label>メモ（任意）</label>
@@ -436,6 +465,14 @@
           x: m.x, y: m.y, dx: m.dx, dy: m.dy,
           type: m.type,
           vendor: m.vendor,
+          vendor_id: m.vendor_id || null,
+          vendor_name: m.vendor_name || m.vendor || "",
+          vendor_source: m.vendor_source || "auto",
+          vendor_manual_override: !!m.vendor_manual_override,
+          original_auto_vendor_id: m.original_auto_vendor_id || null,
+          original_auto_vendor_name: m.original_auto_vendor_name || null,
+          is_common: !!m.is_common,
+          is_vendor_unassigned: !!m.is_vendor_unassigned,
           memo: m.memo || "",
           createdAt: m.createdAt,
           bubbleMoved: !!m.bubbleMoved,
@@ -499,12 +536,12 @@
             dx: Number(m.dx),
             dy: Number(m.dy),
             type: m.type || "",
-            vendor_name: m.vendor || "",
-            vendor_status: "assigned",
+            vendor_name: m.vendor_name || m.vendor || "",
+            vendor_status: m.vendor_source || "assigned",
             floor_label: null,
             memo: m.memo || "",
-            is_common: false,
-            is_vendor_unassigned: false,
+            is_common: !!m.is_common,
+            is_vendor_unassigned: !!m.is_vendor_unassigned,
             bubble_moved: !!m.bubbleMoved,
             sort_order: idx,
             marker_data: {
@@ -512,6 +549,14 @@
               drawingId: markerDrawingId,
               pdfId,
               createdAt: m.createdAt || Date.now(),
+              vendor_id: m.vendor_id || null,
+              vendor_name: m.vendor_name || m.vendor || "",
+              vendor_source: m.vendor_source || "auto",
+              vendor_manual_override: !!m.vendor_manual_override,
+              original_auto_vendor_id: m.original_auto_vendor_id || null,
+              original_auto_vendor_name: m.original_auto_vendor_name || null,
+              is_common: !!m.is_common,
+              is_vendor_unassigned: !!m.is_vendor_unassigned,
               version: 1,
             },
           });
@@ -534,7 +579,15 @@
             dx: Number(row.dx),
             dy: Number(row.dy),
             type: row.type || "",
-            vendor: row.vendor_name || "",
+            vendor: row.vendor_name || md.vendor_name || "",
+            vendor_id: md.vendor_id || null,
+            vendor_name: row.vendor_name || md.vendor_name || "",
+            vendor_source: md.vendor_source || row.vendor_status || "auto",
+            vendor_manual_override: !!md.vendor_manual_override,
+            original_auto_vendor_id: md.original_auto_vendor_id || null,
+            original_auto_vendor_name: md.original_auto_vendor_name || null,
+            is_common: !!row.is_common || !!md.is_common,
+            is_vendor_unassigned: !!row.is_vendor_unassigned || !!md.is_vendor_unassigned,
             memo: row.memo || "",
             createdAt: md.createdAt || Date.now(),
             bubbleMoved: !!row.bubble_moved,
@@ -628,6 +681,7 @@
       redrawOverlay();
       redrawList();
       syncButtons();
+      syncSelectorsFromSelectedMarker();
       if(isFullscreen) updateFsInfo();
       updateCloudCurrentIdLabel();
     }
@@ -825,6 +879,7 @@
         if(error) throw error;
         setCloudStatus("接続OK", "ok");
         toast("Supabase接続に成功しました。");
+        await loadCategoryVendorMappings();
         await refreshCloudInspectionList();
       }catch(e){
         showCloudError("Supabase接続確認", e);
@@ -963,6 +1018,484 @@
         setCloudStatus("設定済", "ok");
       }
       updateCloudCurrentIdLabel();
+    }
+
+    // -------------------- Category / Vendor Mapping --------------------
+    const FALLBACK_CATEGORIES = [
+      { id: "fallback-cat-kizu", name: "傷", default_vendor_id: "fallback-vendor-daiku", default_vendor_name: "大工", auto_assign_enabled: true, display_order: 10, status: "active" },
+      { id: "fallback-cat-yogore", name: "汚れ", default_vendor_id: "fallback-vendor-cross", default_vendor_name: "クロス", auto_assign_enabled: true, display_order: 20, status: "active" },
+      { id: "fallback-cat-tategu", name: "建具", default_vendor_id: "fallback-vendor-tategu", default_vendor_name: "建具", auto_assign_enabled: true, display_order: 30, status: "active" },
+      { id: "fallback-cat-setsubi", name: "設備", default_vendor_id: "fallback-vendor-setsubi", default_vendor_name: "設備", auto_assign_enabled: true, display_order: 40, status: "active" },
+      { id: "fallback-cat-hoshu", name: "補修", default_vendor_id: "fallback-vendor-daiku", default_vendor_name: "大工", auto_assign_enabled: true, display_order: 50, status: "active" },
+      { id: "fallback-cat-common", name: "共通", default_vendor_id: "ALL_VENDORS", default_vendor_name: "全業者", auto_assign_enabled: true, display_order: 60, status: "active" },
+      { id: "fallback-cat-other", name: "その他", default_vendor_id: "fallback-vendor-other", default_vendor_name: "その他", auto_assign_enabled: true, display_order: 70, status: "active" },
+    ];
+    const FALLBACK_VENDORS = [
+      { id: "ALL_VENDORS", name: "全業者", display_order: 0, status: "active" },
+      { id: "fallback-vendor-daiku", name: "大工", display_order: 10, status: "active" },
+      { id: "fallback-vendor-cross", name: "クロス", display_order: 20, status: "active" },
+      { id: "fallback-vendor-tategu", name: "建具", display_order: 30, status: "active" },
+      { id: "fallback-vendor-setsubi", name: "設備", display_order: 40, status: "active" },
+      { id: "fallback-vendor-denki", name: "電気", display_order: 50, status: "active" },
+      { id: "fallback-vendor-clean", name: "クリーニング", display_order: 60, status: "active" },
+      { id: "fallback-vendor-naiso", name: "内装", display_order: 70, status: "active" },
+      { id: "fallback-vendor-other", name: "その他", display_order: 80, status: "active" },
+      { id: "UNASSIGNED_VENDOR", name: "業者未定", display_order: 999, status: "active" },
+    ];
+
+    let inspectionCategories = [];
+    let inspectionVendors = [];
+    let categoryVendorMappingsByName = {};
+    let mappingPanelDirty = false;
+
+    function isActiveStatus(value){
+      if(value == null) return true;
+      const v = String(value).toLowerCase();
+      return v === "active" || v === "enabled" || v === "1" || v === "true";
+    }
+
+    function compareByDisplayOrder(a, b){
+      const ao = Number.isFinite(Number(a.display_order)) ? Number(a.display_order) : 9999;
+      const bo = Number.isFinite(Number(b.display_order)) ? Number(b.display_order) : 9999;
+      if(ao !== bo) return ao - bo;
+      return String(a.name || "").localeCompare(String(b.name || ""), "ja");
+    }
+
+    function ensureSpecialVendors(vendors){
+      const out = Array.isArray(vendors) ? [...vendors] : [];
+      if(!out.some(v=>v.name === "全業者")){
+        out.unshift({ id: "ALL_VENDORS", name: "全業者", display_order: 0, status: "active" });
+      }
+      if(!out.some(v=>v.name === "業者未定")){
+        out.push({ id: "UNASSIGNED_VENDOR", name: "業者未定", display_order: 999, status: "active" });
+      }
+      return out;
+    }
+
+    function renderCategorySelects(){
+      const list = inspectionCategories.length ? inspectionCategories : FALLBACK_CATEGORIES;
+      const html = list.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+      $("typeSelect").innerHTML = html;
+      $("fsTypeSelect").innerHTML = html;
+    }
+
+    function renderVendorSelects(){
+      const activeVendors = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
+        .filter(v=>v.name !== "共通")
+        .sort(compareByDisplayOrder);
+      const vendorHtml = activeVendors.map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`).join("");
+      $("vendorSelect").innerHTML = vendorHtml;
+      $("fsVendorSelect").innerHTML = vendorHtml;
+      const filterHtml = [`<option value="">全て</option>`]
+        .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
+        .join("");
+      $("filterVendor").innerHTML = filterHtml;
+      if(!activeVendors.some(v=>v.name === $("vendorSelect").value)){
+        $("vendorSelect").value = activeVendors[0]?.name || "業者未定";
+      }
+      syncFsSelects();
+    }
+
+    function setMappingPanelStatus(text, kind){
+      const el = $("mappingPanelStatus");
+      el.textContent = text;
+      el.style.color = kind === "error" ? "#991b1b" : kind === "ok" ? "#166534" : "var(--muted)";
+    }
+
+    function getVendorRecordByName(name){
+      const list = inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS;
+      return list.find(v=>v.name === name) || null;
+    }
+
+    function getVendorDisplayName(marker){
+      if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return "全業者";
+      if(marker.is_vendor_unassigned || marker.vendor_source === "unassigned" || marker.vendor_name === "業者未定") return "業者未定";
+      return marker.vendor_name || marker.vendor || "";
+    }
+
+    function updateVendorStateLabel(marker){
+      const label = $("vendorStateLabel");
+      if(!label) return;
+      if(marker){
+        if(marker.is_common || marker.vendor_source === "common"){
+          label.textContent = "共通：全業者";
+        }else if(marker.is_vendor_unassigned || marker.vendor_source === "unassigned"){
+          label.textContent = "業者未定";
+        }else if(marker.vendor_manual_override || marker.vendor_source === "manual"){
+          label.textContent = "手動変更済み";
+        }else{
+          label.textContent = `自動：${getVendorDisplayName(marker) || "-"}`;
+        }
+        return;
+      }
+      const t = $("typeSelect").value || "";
+      if(t === "共通"){
+        label.textContent = "共通：全業者";
+      }else{
+        label.textContent = `自動：${$("vendorSelect").value || "-"}`;
+      }
+    }
+
+    async function loadCategoryVendorMappings(){
+      try{
+        let categories = [];
+        let vendors = [];
+        if(isSupabaseConfigured()){
+          const sb = getSupabase();
+          const [catRes, vendorRes] = await Promise.all([
+            sb.from("inspection_categories")
+              .select("id,name,default_vendor_id,default_vendor_name,auto_assign_enabled,display_order,status")
+              .eq("status", "active")
+              .order("display_order", { ascending: true }),
+            sb.from("inspection_vendors")
+              .select("id,name,display_order,status")
+              .eq("status", "active")
+              .order("display_order", { ascending: true }),
+          ]);
+          if(catRes.error) throw catRes.error;
+          if(vendorRes.error) throw vendorRes.error;
+          categories = (catRes.data || []).filter(c=>isActiveStatus(c.status) && c.name !== "確認");
+          vendors = ensureSpecialVendors((vendorRes.data || []).filter(v=>isActiveStatus(v.status) && v.name !== "共通"));
+        }else{
+          categories = FALLBACK_CATEGORIES.filter(c=>c.name !== "確認");
+          vendors = ensureSpecialVendors(FALLBACK_VENDORS.filter(v=>v.name !== "共通"));
+        }
+        categories.sort(compareByDisplayOrder);
+        vendors.sort(compareByDisplayOrder);
+        inspectionCategories = categories;
+        inspectionVendors = vendors;
+        categoryVendorMappingsByName = {};
+        categories.forEach(c=>{
+          categoryVendorMappingsByName[c.name] = {
+            id: c.id,
+            category_name: c.name,
+            default_vendor_id: c.name === "共通" ? "ALL_VENDORS" : (c.default_vendor_id || getVendorRecordByName(c.default_vendor_name || "")?.id || null),
+            default_vendor_name: c.name === "共通" ? "全業者" : (c.default_vendor_name || "業者未定"),
+            auto_assign_enabled: c.auto_assign_enabled !== false,
+            display_order: c.display_order,
+            status: c.status || "active",
+            dirty: false,
+          };
+        });
+        renderCategorySelects();
+        renderVendorSelects();
+        renderCategoryVendorSettings();
+        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        updateVendorStateLabel();
+        setMappingPanelStatus("紐づけ設定を読み込みました", "ok");
+      }catch(e){
+        console.error(e);
+        inspectionCategories = FALLBACK_CATEGORIES.filter(c=>c.name !== "確認").sort(compareByDisplayOrder);
+        inspectionVendors = ensureSpecialVendors(FALLBACK_VENDORS.filter(v=>v.name !== "共通")).sort(compareByDisplayOrder);
+        categoryVendorMappingsByName = {};
+        inspectionCategories.forEach(c=>{
+          categoryVendorMappingsByName[c.name] = {
+            id: c.id,
+            category_name: c.name,
+            default_vendor_id: c.name === "共通" ? "ALL_VENDORS" : c.default_vendor_id,
+            default_vendor_name: c.name === "共通" ? "全業者" : c.default_vendor_name,
+            auto_assign_enabled: c.auto_assign_enabled !== false,
+            display_order: c.display_order,
+            status: c.status || "active",
+            dirty: false,
+          };
+        });
+        renderCategorySelects();
+        renderVendorSelects();
+        renderCategoryVendorSettings();
+        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        updateVendorStateLabel();
+        setMappingPanelStatus("Supabase未接続のため固定設定で動作中", "error");
+      }
+    }
+
+    function renderCategoryVendorSettings(){
+      const root = $("mappingSettingsList");
+      const rows = inspectionCategories.length ? inspectionCategories : FALLBACK_CATEGORIES;
+      const vendorOptions = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
+        .filter(v=>v.name !== "共通")
+        .sort(compareByDisplayOrder)
+        .map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`)
+        .join("");
+      const head = `
+        <div class="mapping-grid mapping-head">
+          <div>指摘種別</div>
+          <div>自動</div>
+          <div>標準担当業者</div>
+          <div>状態</div>
+        </div>
+      `;
+      const body = rows.map(c=>{
+        const map = categoryVendorMappingsByName[c.name] || {};
+        const vendorName = c.name === "共通" ? "全業者" : (map.default_vendor_name || c.default_vendor_name || "業者未定");
+        const on = map.auto_assign_enabled !== false;
+        const state = map.dirty ? "未保存" : "保存済み";
+        return `
+          <div class="mapping-row mapping-grid" data-category="${escapeHtml(c.name)}">
+            <div>${escapeHtml(c.name)}</div>
+            <div><input type="checkbox" data-role="auto" ${on ? "checked" : ""} ${c.name === "共通" ? "disabled" : ""}></div>
+            <div class="mapping-full"><select data-role="vendor" ${c.name === "共通" ? "disabled" : ""}>${vendorOptions}</select></div>
+            <div class="mapping-state" data-role="state">${state}</div>
+          </div>
+        `;
+      }).join("");
+      root.innerHTML = head + body;
+      rows.forEach(c=>{
+        const row = root.querySelector(`.mapping-row[data-category="${cssEscape(c.name)}"]`);
+        if(!row) return;
+        const vendorSelect = row.querySelector('select[data-role="vendor"]');
+        const map = categoryVendorMappingsByName[c.name];
+        if(vendorSelect){
+          vendorSelect.value = c.name === "共通" ? "全業者" : (map?.default_vendor_name || "業者未定");
+          vendorSelect.addEventListener("change", ()=>{
+            const selectedName = vendorSelect.value;
+            const vendor = getVendorRecordByName(selectedName);
+            if(map){
+              map.default_vendor_name = selectedName;
+              map.default_vendor_id = vendor?.id || null;
+              map.dirty = true;
+            }
+            row.querySelector('[data-role="state"]').textContent = "未保存";
+            mappingPanelDirty = true;
+            setMappingPanelStatus("未保存の変更があります", "warn");
+          });
+        }
+        const autoChk = row.querySelector('input[data-role="auto"]');
+        if(autoChk){
+          autoChk.addEventListener("change", ()=>{
+            if(map){
+              map.auto_assign_enabled = !!autoChk.checked;
+              map.dirty = true;
+            }
+            row.querySelector('[data-role="state"]').textContent = "未保存";
+            mappingPanelDirty = true;
+            setMappingPanelStatus("未保存の変更があります", "warn");
+          });
+        }
+      });
+    }
+
+    async function saveCategoryVendorMappings(){
+      const changed = Object.values(categoryVendorMappingsByName).filter(m=>m.dirty);
+      if(changed.length === 0){
+        setMappingPanelStatus("未保存の変更はありません", "ok");
+        return;
+      }
+      if(!isSupabaseConfigured()){
+        setMappingPanelStatus("Supabase未接続のため保存できません（画面反映のみ）", "error");
+        changed.forEach(m=>{ m.dirty = false; });
+        renderCategoryVendorSettings();
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        for(const map of changed){
+          const payload = {
+            default_vendor_id: map.category_name === "共通" ? "ALL_VENDORS" : map.default_vendor_id,
+            default_vendor_name: map.category_name === "共通" ? "全業者" : map.default_vendor_name,
+            auto_assign_enabled: map.category_name === "共通" ? true : !!map.auto_assign_enabled,
+          };
+          const { error } = await sb.from("inspection_categories")
+            .update(payload)
+            .eq("id", map.id);
+          if(error) throw error;
+          map.dirty = false;
+        }
+        mappingPanelDirty = false;
+        renderCategoryVendorSettings();
+        setMappingPanelStatus("紐づけ設定を保存しました", "ok");
+        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        updateVendorStateLabel();
+      }catch(e){
+        console.error(e);
+        setMappingPanelStatus("保存に失敗しました。接続と権限を確認してください", "error");
+      }
+    }
+
+    function getDefaultVendorForCategory(categoryName){
+      if(categoryName === "共通"){
+        return { id: "ALL_VENDORS", name: "全業者", source: "common", auto_assign_enabled: true };
+      }
+      const map = categoryVendorMappingsByName[categoryName];
+      if(!map) return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
+      if(map.auto_assign_enabled === false){
+        return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
+      }
+      return {
+        id: map.default_vendor_id || getVendorRecordByName(map.default_vendor_name || "")?.id || null,
+        name: map.default_vendor_name || "業者未定",
+        source: "auto",
+        auto_assign_enabled: true,
+      };
+    }
+
+    function applyDefaultVendorByCategory(categoryName, targetMarker, force = false){
+      const vendor = getDefaultVendorForCategory(categoryName);
+      if(targetMarker && targetMarker.vendor_manual_override && !force) return false;
+      const marker = targetMarker || null;
+      if(categoryName === "共通"){
+        if(marker){
+          marker.type = "共通";
+          marker.vendor = "全業者";
+          marker.vendor_id = "ALL_VENDORS";
+          marker.vendor_name = "全業者";
+          marker.vendor_source = "common";
+          marker.vendor_manual_override = false;
+          marker.original_auto_vendor_id = "ALL_VENDORS";
+          marker.original_auto_vendor_name = "全業者";
+          marker.is_common = true;
+          marker.is_vendor_unassigned = false;
+        }
+        $("vendorSelect").value = "全業者";
+        $("fsVendorSelect").value = "全業者";
+        updateVendorStateLabel(marker);
+        return true;
+      }
+      if(vendor.source === "unassigned" || vendor.name === "業者未定"){
+        if(marker){
+          marker.type = categoryName;
+          marker.vendor = "業者未定";
+          marker.vendor_id = "UNASSIGNED_VENDOR";
+          marker.vendor_name = "業者未定";
+          marker.vendor_source = "unassigned";
+          marker.vendor_manual_override = false;
+          marker.original_auto_vendor_id = "UNASSIGNED_VENDOR";
+          marker.original_auto_vendor_name = "業者未定";
+          marker.is_common = false;
+          marker.is_vendor_unassigned = true;
+        }
+        $("vendorSelect").value = "業者未定";
+        $("fsVendorSelect").value = "業者未定";
+        updateVendorStateLabel(marker);
+        return true;
+      }
+      if(marker){
+        marker.type = categoryName;
+        marker.vendor = vendor.name;
+        marker.vendor_id = vendor.id;
+        marker.vendor_name = vendor.name;
+        marker.vendor_source = "auto";
+        marker.vendor_manual_override = false;
+        marker.original_auto_vendor_id = vendor.id;
+        marker.original_auto_vendor_name = vendor.name;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = false;
+      }
+      $("vendorSelect").value = vendor.name;
+      $("fsVendorSelect").value = vendor.name;
+      updateVendorStateLabel(marker);
+      return true;
+    }
+
+    function markVendorManualOverride(targetMarker){
+      if(!targetMarker) return;
+      if(targetMarker.type === "共通"){
+        applyDefaultVendorByCategory("共通", targetMarker, true);
+        return;
+      }
+      const selectedName = $("vendorSelect").value || "業者未定";
+      const vendor = getVendorRecordByName(selectedName);
+      targetMarker.vendor = selectedName;
+      targetMarker.vendor_id = vendor?.id || (selectedName === "業者未定" ? "UNASSIGNED_VENDOR" : null);
+      targetMarker.vendor_name = selectedName;
+      if(selectedName === "業者未定"){
+        targetMarker.vendor_source = "unassigned";
+        targetMarker.vendor_manual_override = false;
+        targetMarker.is_vendor_unassigned = true;
+      }else{
+        targetMarker.vendor_source = "manual";
+        targetMarker.vendor_manual_override = true;
+        targetMarker.is_vendor_unassigned = false;
+      }
+      targetMarker.is_common = false;
+      updateVendorStateLabel(targetMarker);
+    }
+
+    function normalizeMarkerVendorState(marker){
+      if(!marker || typeof marker !== "object") return false;
+      const before = JSON.stringify({
+        vendor: marker.vendor,
+        vendor_id: marker.vendor_id,
+        vendor_name: marker.vendor_name,
+        vendor_source: marker.vendor_source,
+        vendor_manual_override: marker.vendor_manual_override,
+        original_auto_vendor_id: marker.original_auto_vendor_id,
+        original_auto_vendor_name: marker.original_auto_vendor_name,
+        is_common: marker.is_common,
+        is_vendor_unassigned: marker.is_vendor_unassigned,
+      });
+      if(marker.vendor_name === "共通"){
+        marker.vendor_name = "全業者";
+        marker.vendor = "全業者";
+      }
+      if(marker.type === "共通" || marker.vendor_name === "全業者" || marker.vendor_source === "common"){
+        marker.vendor = "全業者";
+        marker.vendor_name = "全業者";
+        marker.vendor_id = "ALL_VENDORS";
+        marker.vendor_source = "common";
+        marker.vendor_manual_override = false;
+        marker.original_auto_vendor_name = "全業者";
+        marker.original_auto_vendor_id = "ALL_VENDORS";
+        marker.is_common = true;
+        marker.is_vendor_unassigned = false;
+      }else if(marker.vendor_name === "業者未定" || marker.vendor === "業者未定" || marker.vendor_source === "unassigned"){
+        marker.vendor = "業者未定";
+        marker.vendor_name = "業者未定";
+        marker.vendor_id = "UNASSIGNED_VENDOR";
+        marker.vendor_source = "unassigned";
+        marker.vendor_manual_override = false;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = true;
+      }else if(marker.vendor_source === "manual" || marker.vendor_manual_override){
+        marker.vendor_source = "manual";
+        marker.vendor_manual_override = true;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = false;
+        marker.vendor_name = marker.vendor_name || marker.vendor || "";
+        marker.vendor = marker.vendor_name;
+        if(!marker.vendor_id){
+          marker.vendor_id = getVendorRecordByName(marker.vendor_name || "")?.id || null;
+        }
+      }else{
+        const vName = marker.vendor_name || marker.vendor || "";
+        const vendor = getVendorRecordByName(vName);
+        marker.vendor = vName || "業者未定";
+        marker.vendor_name = vName || "業者未定";
+        marker.vendor_id = vendor?.id || (vName ? marker.vendor_id : "UNASSIGNED_VENDOR");
+        marker.vendor_source = marker.vendor_source || (vName ? "auto" : "unassigned");
+        marker.vendor_manual_override = !!marker.vendor_manual_override;
+        marker.is_common = false;
+        marker.is_vendor_unassigned = !vName;
+        if(!marker.original_auto_vendor_name && marker.vendor_source === "auto"){
+          marker.original_auto_vendor_name = marker.vendor_name;
+          marker.original_auto_vendor_id = marker.vendor_id || null;
+        }
+      }
+      const after = JSON.stringify({
+        vendor: marker.vendor,
+        vendor_id: marker.vendor_id,
+        vendor_name: marker.vendor_name,
+        vendor_source: marker.vendor_source,
+        vendor_manual_override: marker.vendor_manual_override,
+        original_auto_vendor_id: marker.original_auto_vendor_id,
+        original_auto_vendor_name: marker.original_auto_vendor_name,
+        is_common: marker.is_common,
+        is_vendor_unassigned: marker.is_vendor_unassigned,
+      });
+      return before !== after;
+    }
+
+    function shouldShowMarkerForVendor(marker, selectedVendor){
+      if(!selectedVendor || selectedVendor === "全て" || selectedVendor === "全業者") return true;
+      if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return true;
+      return getVendorDisplayName(marker) === selectedVendor;
+    }
+
+    function cssEscape(value){
+      if(window.CSS && typeof window.CSS.escape === "function"){
+        return window.CSS.escape(value);
+      }
+      return String(value).replace(/"/g, '\\"');
     }
 
     // -------------------- State --------------------
@@ -1226,6 +1759,7 @@
       for(const arr of Object.values(mbk)){
         if(!Array.isArray(arr)) continue;
         arr.forEach(m=>{
+          if(normalizeMarkerVendorState(m)) changed = true;
           if(normalizeMarkerOffset(m)) changed = true;
         });
       }
@@ -1305,11 +1839,20 @@
         dx: DEFAULT_BUBBLE_DX,
         dy: DEFAULT_BUBBLE_DY,
         type: $("typeSelect").value,
-        vendor: $("vendorSelect").value,
+        vendor: "",
+        vendor_id: null,
+        vendor_name: "",
+        vendor_source: "auto",
+        vendor_manual_override: false,
+        original_auto_vendor_id: null,
+        original_auto_vendor_name: null,
+        is_common: false,
+        is_vendor_unassigned: false,
         memo: $("memoInput").value || "",
         createdAt: Date.now(),
         bubbleMoved: false,
       };
+      applyDefaultVendorByCategory(m.type, m, true);
       normalizeMarkerOffset(m);
       markers().push(m);
       selectedId = m.id;
@@ -1317,6 +1860,8 @@
       redrawOverlay();
       redrawList();
       syncButtons();
+      syncSelectorsFromSelectedMarker();
+      updateVendorStateLabel(m);
     }
 
     function deleteSelected(){
@@ -1330,6 +1875,7 @@
         redrawOverlay();
         redrawList();
         syncButtons();
+        syncSelectorsFromSelectedMarker();
       }
     }
 
@@ -1388,7 +1934,7 @@
         const bubble = svgEl("rect", { x:0,y:0,width:BUBBLE_W,height:BUBBLE_H, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
         bubbleG.appendChild(bubble);
 
-        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
         const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827" });
         t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
         bubbleG.appendChild(t1);
@@ -1423,7 +1969,7 @@
       const list = $("list");
       list.innerHTML = "";
       const arr = markers();
-      const view = filterVendor ? arr.filter(m=>m.vendor===filterVendor) : arr;
+      const view = arr.filter(m=>shouldShowMarkerForVendor(m, filterVendor));
 
       if(view.length === 0){
         const div = document.createElement("div");
@@ -1438,7 +1984,7 @@
         const div = document.createElement("div");
         div.className = "item" + (m.id===selectedId ? " sel" : "");
         div.dataset.id = m.id;
-        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
         const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>38? m.memo.slice(0,38)+"…" : m.memo) : "なし"} / 作成：${new Date(m.createdAt).toLocaleString()}`;
         div.innerHTML = `
           <div class="meta">
@@ -1511,6 +2057,7 @@
         redrawOverlay();
         redrawList();
         syncButtons();
+        syncSelectorsFromSelectedMarker();
 
         if(roleEl){
           const role = roleEl.getAttribute("data-role");
@@ -1690,6 +2237,7 @@
       syncButtons();
       redrawOverlay();
       redrawList();
+      syncSelectorsFromSelectedMarker();
 
       if(act === "delete"){
         deleteSelected();
@@ -1721,6 +2269,37 @@
       redrawList();
     });
 
+    $("typeSelect").addEventListener("change", ()=>{
+      const categoryName = $("typeSelect").value;
+      $("fsTypeSelect").value = categoryName;
+      const m = markers().find(mm=>mm.id===selectedId);
+      if(m){
+        m.type = categoryName;
+        applyDefaultVendorByCategory(categoryName, m, false);
+        saveStore();
+        redrawOverlay();
+        redrawList();
+        syncSelectorsFromSelectedMarker();
+      }else{
+        applyDefaultVendorByCategory(categoryName, null, true);
+      }
+      if(isFullscreen) updateFsInfo();
+    });
+
+    $("vendorSelect").addEventListener("change", ()=>{
+      const selectedVendorName = $("vendorSelect").value;
+      $("fsVendorSelect").value = selectedVendorName;
+      const m = markers().find(mm=>mm.id===selectedId);
+      if(m){
+        markVendorManualOverride(m);
+        saveStore();
+        redrawOverlay();
+        redrawList();
+      }else{
+        updateVendorStateLabel();
+      }
+    });
+
     function syncButtons(){
       $("btnDeleteSelected").disabled = !selectedId;
       const fsDel = $("fsBtnDelete");
@@ -1729,6 +2308,21 @@
       if(btnEM) btnEM.disabled = !selectedId;
       const fsEM = $("fsBtnEditMemo");
       if(fsEM) fsEM.disabled = !selectedId;
+    }
+
+    function syncSelectorsFromSelectedMarker(){
+      const m = markers().find(mm=>mm.id===selectedId);
+      if(m){
+        if(m.type) $("typeSelect").value = m.type;
+        const vn = getVendorDisplayName(m);
+        if(vn) $("vendorSelect").value = vn;
+        syncFsSelects();
+        updateVendorStateLabel(m);
+        return;
+      }
+      applyDefaultVendorByCategory($("typeSelect").value, null, true);
+      syncFsSelects();
+      updateVendorStateLabel();
     }
 
     // -------------------- PNG Export --------------------
@@ -1787,7 +2381,7 @@
         octx.stroke();
 
         // タイトル
-        const title = `${idx+1}. ${m.vendor} / ${m.type}`;
+        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
         octx.fillStyle = "#111827";
         octx.font = `bold ${12 * scale}px system-ui,sans-serif`;
         octx.fillText(
@@ -2023,6 +2617,7 @@
       redrawList();
       syncButtons();
       updatePageInfo();
+      syncSelectorsFromSelectedMarker();
     }
 
     $("pageInput").addEventListener("change", async ()=>{
@@ -2047,6 +2642,11 @@
     $("btnCloudLoad").addEventListener("click", ()=>{
       loadFromCloud(selectedCloudInspectionId || currentInspectionId);
     });
+    $("btnToggleMappingPanel").addEventListener("click", ()=>{
+      $("mappingPanel").classList.toggle("open");
+    });
+    $("btnSaveMappings").addEventListener("click", ()=>{ saveCategoryVendorMappings(); });
+    $("btnReloadMappings").addEventListener("click", ()=>{ loadCategoryVendorMappings(); });
 
     $("btnSavePng").addEventListener("click", savePng);
     $("btnDeleteSelected").addEventListener("click", ()=>{
@@ -2077,6 +2677,7 @@
       redrawList();
       syncButtons();
       updatePageInfo();
+      syncSelectorsFromSelectedMarker();
       toast("保存データを削除しました。");
     });
 
@@ -2226,9 +2827,11 @@
     // フルスクリーン時のselectをメインと同期
     $("fsTypeSelect").addEventListener("change", ()=>{
       $("typeSelect").value = $("fsTypeSelect").value;
+      $("typeSelect").dispatchEvent(new Event("change"));
     });
     $("fsVendorSelect").addEventListener("change", ()=>{
       $("vendorSelect").value = $("fsVendorSelect").value;
+      $("vendorSelect").dispatchEvent(new Event("change"));
     });
 
     // フルスクリーン時のページ操作
@@ -2330,12 +2933,14 @@
         // -------------------- Boot --------------------
     function boot(){
       resizeStage();
+      loadCategoryVendorMappings().catch(()=>{});
       // Ensure active key exists
       markers();
       redrawBackground();
       redrawOverlay();
       redrawList();
       syncButtons();
+      syncSelectorsFromSelectedMarker();
       updatePageInfo();
       initCloudUi();
       if(isSupabaseConfigured()){
