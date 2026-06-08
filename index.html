@@ -1644,10 +1644,7 @@
           .update({ status: "inactive", updated_at: now })
           .eq("vendor_id", vendorId)
           .eq("status", "active");
-        if(assignmentErr){
-          toast("【エラー】紐づけ設定の更新に失敗しました。");
-          throw assignmentErr;
-        }
+        if(assignmentErr) throw new Error(`ASSIGNMENT_UPDATE_FAILED:${assignmentErr.message || ""}`);
         try{
           await loadVendorMaster();
         }catch(reloadErr){
@@ -1666,11 +1663,19 @@
           }
         });
         refreshAllVendorSelects();
-        setMappingPanelStatus("業者を削除しました（今後の選択肢から非表示）", "ok");
+        if(mappingPanelDirty){
+          setMappingPanelStatus("未保存の変更があります", "warn");
+        }else{
+          setMappingPanelStatus("業者を削除しました（今後の選択肢から非表示）", "ok");
+        }
         toast(`業者「${name}」を今後の選択肢から削除しました。`);
       }catch(e){
         console.error(e);
-        toast("【エラー】Supabaseへの業者削除に失敗しました。");
+        if(String(e?.message || "").startsWith("ASSIGNMENT_UPDATE_FAILED:")){
+          toast("【エラー】紐づけ設定の更新に失敗しました。");
+        }else{
+          toast("【エラー】Supabaseへの業者削除に失敗しました。");
+        }
       }
     }
 
@@ -1811,7 +1816,16 @@
         const vendorSelect = row.querySelector('select[data-role="vendor"]');
         const map = categoryVendorMappingsByName[c.name];
         if(vendorSelect){
-          vendorSelect.value = c.name === "共通" ? "全業者" : (map?.default_vendor_name || "業者未定");
+          const currentVendorName = c.name === "共通" ? "全業者" : (map?.default_vendor_name || "業者未定");
+          const exists = Array.from(vendorSelect.options).some(opt=>opt.value === currentVendorName);
+          vendorSelect.value = exists ? currentVendorName : "業者未定";
+          if(map && c.name !== "共通" && !exists){
+            map.default_vendor_name = "業者未定";
+            map.default_vendor_id = "UNASSIGNED_VENDOR";
+            map.auto_assign_enabled = false;
+            map.dirty = true;
+            mappingPanelDirty = true;
+          }
           vendorSelect.addEventListener("change", ()=>{
             const selectedName = vendorSelect.value;
             const vendor = getVendorRecordByName(selectedName);
