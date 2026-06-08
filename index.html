@@ -2776,6 +2776,7 @@
 
     function openQuickMarkerEditor(marker, options = {}){
       if(!marker) return;
+      console.debug("[marker] openQuickMarkerEditor実行", { markerId: marker.id, isNew: options.isNew === true });
       const isNew = options.isNew === true;
       closeQuickMarkerEditor({ keepDraft: false });
       quickEditorState = {
@@ -2820,6 +2821,7 @@
     }
 
     function createDraftMarkerAt(x, y){
+      console.debug("[marker] createDraftMarkerAt実行", { x, y });
       const ratio = canvasPxToImgRatio(x, y);
       const m = {
         id: newId(),
@@ -2860,7 +2862,11 @@
       redrawList();
       syncButtons();
       syncSelectorsFromSelectedMarker();
-      openQuickMarkerEditor(m, { isNew: true });
+      try{
+        openQuickMarkerEditor(m, { isNew: true });
+      }catch(err){
+        console.error("openQuickMarkerEditor起動エラー", err);
+      }
       return m;
     }
 
@@ -3152,10 +3158,48 @@
     let drag = null;
     const DRAG_THRESHOLD = 6; // ドラッグ開始までの最小移動距離(px)
     let pendingDrag = null;   // ドラッグ確定前の候補
+    let suppressTapCreateUntil = 0;
+    let lastPointerDownAt = 0;
+
+    function getClientPointFromEvent(e){
+      if(e && e.touches && e.touches[0]){
+        return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+      }
+      if(e && e.changedTouches && e.changedTouches[0]){
+        return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
+      }
+      return { clientX: e.clientX, clientY: e.clientY };
+    }
+
+    function svgPointFromAnyEvent(e){
+      const p = getClientPointFromEvent(e);
+      return svgPointFromEvent({ clientX: p.clientX, clientY: p.clientY });
+    }
+
+    function shouldIgnoreBlankCreate(e){
+      const now = Date.now();
+      if(now < suppressTapCreateUntil) return true;
+      if(e?.type === "click" && now - lastPointerDownAt < 400) return true;
+      if(quickEditorState && quickMarkerEditor && quickMarkerEditor.contains(e.target)) return true;
+      return false;
+    }
+
+    function handleBlankCanvasTap(e, source){
+      if(shouldIgnoreBlankCreate(e)) return;
+      if(e?.type === "touchstart"){
+        suppressTapCreateUntil = Date.now() + 450;
+        if(typeof e.preventDefault === "function") e.preventDefault();
+      }
+      const p = svgPointFromAnyEvent(e);
+      console.debug("[marker] 図面クリック検知", { source, x: p.x, y: p.y });
+      closeQuickMarkerEditor({ keepDraft: false });
+      createDraftMarkerAt(p.x, p.y);
+    }
 
     // ★ pointerdown を1つに統合
     overlay.addEventListener("pointerdown", (e)=>{
       if(e.button === 2) return; // 右クリック無視
+      lastPointerDownAt = Date.now();
 
       const roleEl = e.target.closest("[data-role]");
       const groupEl = e.target.closest("g[data-id]");
@@ -3186,13 +3230,16 @@
             };
             overlay.setPointerCapture(e.pointerId);
           }
+        }else{
+          const marker = markers().find(mm=>mm.id===id);
+          if(marker){
+            openQuickMarkerEditor(marker, { isNew: false });
+          }
         }
         e.preventDefault();
       } else {
         // 空白エリアをクリック → 仮ピン作成してクイック編集
-        closeQuickMarkerEditor({ keepDraft: false });
-        const p = svgPointFromEvent(e);
-        createDraftMarkerAt(p.x, p.y);
+        handleBlankCanvasTap(e, "overlay.pointerdown");
         e.preventDefault();
       }
     });
@@ -3263,10 +3310,36 @@
       if(drag){
         try{ overlay.releasePointerCapture(drag.pointerId); }catch(_){}
         drag = null;
+        suppressTapCreateUntil = Date.now() + 220;
         saveStore();
       }
       e.preventDefault();
     });
+
+    // pointerイベントが取りこぼされる端末向けフォールバック
+    const fallbackTapHandler = (e)=>{
+      const groupEl = e.target.closest?.("g[data-id]");
+      if(groupEl){
+        const id = groupEl.getAttribute("data-id");
+        const marker = markers().find(mm=>mm.id===id);
+        if(marker){
+          selectedId = id;
+          redrawOverlay();
+          redrawList();
+          syncButtons();
+          syncSelectorsFromSelectedMarker();
+          openQuickMarkerEditor(marker, { isNew: false });
+        }
+        return;
+      }
+      handleBlankCanvasTap(e, `fallback.${e.type}`);
+    };
+    overlay.addEventListener("click", fallbackTapHandler, { passive: false });
+    overlay.addEventListener("touchstart", fallbackTapHandler, { passive: false });
+    bgCanvas.addEventListener("click", fallbackTapHandler, { passive: false });
+    stageWrap.addEventListener("click", fallbackTapHandler, { passive: false });
+    stageWrap.addEventListener("touchstart", fallbackTapHandler, { passive: false });
+    console.debug("[boot] クリックイベント登録完了");
 
 
     $("quickTypeChips").addEventListener("click", (e)=>{
@@ -4048,6 +4121,7 @@
 
         // -------------------- Boot --------------------
     function boot(){
+      console.debug("[boot] boot開始");
       resizeStage();
       loadCategoryVendorMappings().catch(()=>{});
       // Ensure active key exists
