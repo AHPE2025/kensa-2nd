@@ -98,6 +98,15 @@
     .mapping-row select{width:100%;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:7px 9px;background:#fff}
     .mapping-row input[type="checkbox"]{width:16px;height:16px}
     .mapping-state{font-size:11px;color:var(--muted);white-space:nowrap}
+    .vendor-mgmt{margin:10px 0 14px;padding:10px;border:1px solid #dbeafe;border-radius:12px;background:#fff}
+    .vendor-mgmt-title{font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px}
+    .vendor-mgmt-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+    .vendor-mgmt-form .field{flex:1;min-width:200px}
+    .vendor-mgmt-list{margin-top:10px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;max-height:240px;overflow:auto}
+    .vendor-mgmt-item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #e2e8f0}
+    .vendor-mgmt-item:last-child{border-bottom:none}
+    .vendor-mgmt-base{font-size:11px;color:#475569;background:#e2e8f0;border-radius:999px;padding:2px 8px;white-space:nowrap}
+    .vendor-mgmt-empty{padding:10px;color:var(--muted);font-size:12px}
     .vendor-state{font-size:11px;color:#334155;background:#f8fafc;border:1px solid #dbeafe;border-radius:8px;padding:5px 8px;white-space:nowrap}
     .legacy-input-note{font-size:11px;color:#6b7280;padding:4px 8px;border:1px dashed #d1d5db;border-radius:10px;background:#f9fafb}
     #quickMarkerEditor{
@@ -144,10 +153,41 @@
     #quickMarkerEditor .qe-actions .btn{padding:10px 14px;min-height:42px}
     #quickMarkerEditor .qe-vendor-row{display:flex;gap:6px;align-items:stretch}
     #quickMarkerEditor .qe-vendor-row select{flex:1}
+    #quickMarkerEditor .qe-photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    #quickMarkerEditor .qe-photo-box{
+      border:1px solid #dbe1ea;
+      border-radius:10px;
+      padding:8px;
+      background:#f8fafc;
+    }
+    #quickMarkerEditor .qe-photo-title{font-size:12px;font-weight:700;color:#334155;margin-bottom:6px}
+    #quickMarkerEditor .qe-photo-preview{
+      width:100%;
+      height:96px;
+      border:1px dashed #cbd5e1;
+      border-radius:8px;
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#fff;
+      color:#64748b;
+      font-size:12px;
+      margin-bottom:6px;
+    }
+    #quickMarkerEditor .qe-photo-preview img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+    #quickMarkerEditor .qe-photo-actions{display:flex;gap:6px;flex-wrap:wrap}
+    #quickMarkerEditor .qe-photo-actions .btn{padding:7px 9px;min-height:34px;font-size:12px}
     @media (max-width: 900px){
       #quickMarkerEditor{width:min(400px, calc(100% - 10px));padding:11px}
       #quickTypeChips .type-chip{font-size:14px;min-height:40px;padding:8px 13px}
       #quickMarkerEditor .qe-actions .btn{min-width:90px}
+      #quickMarkerEditor .qe-photo-grid{grid-template-columns:1fr}
     }
     @media (max-width: 860px){
       .mapping-grid{grid-template-columns:1fr auto;gap:6px}
@@ -212,6 +252,18 @@
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
           <strong style="font-size:13px">指摘種別ごとの標準担当業者</strong>
           <span class="small" id="mappingPanelStatus">未保存の変更はありません</span>
+        </div>
+        <div class="vendor-mgmt">
+          <div class="vendor-mgmt-title">業者管理</div>
+          <div class="vendor-mgmt-form">
+            <div class="field">
+              <label>新しい業者名</label>
+              <input id="vendorNewName" type="text" placeholder="例：塗装" />
+            </div>
+            <button class="btn primary" id="btnAddVendor" type="button">業者を追加</button>
+          </div>
+          <div class="small" style="margin-top:8px">登録済み業者</div>
+          <div class="vendor-mgmt-list" id="vendorManagementList"></div>
         </div>
         <div id="mappingSettingsList"></div>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
@@ -291,6 +343,31 @@
               <div style="width:100%">
                 <div class="qe-label">メモ（任意）</div>
                 <input id="quickMarkerMemo" type="text" placeholder="メモを入力" />
+              </div>
+            </div>
+            <div class="qe-row">
+              <div style="width:100%">
+                <div class="qe-label">写真（Before / After）</div>
+                <div class="qe-photo-grid">
+                  <div class="qe-photo-box">
+                    <div class="qe-photo-title">Before</div>
+                    <div id="quickBeforePhotoPreview" class="qe-photo-preview">写真なし</div>
+                    <div class="qe-photo-actions">
+                      <label class="btn" for="quickBeforePhotoInput">写真を選択</label>
+                      <input id="quickBeforePhotoInput" type="file" accept="image/*" capture="environment" style="display:none" />
+                      <button class="btn danger" id="quickBeforePhotoRemove" type="button">削除</button>
+                    </div>
+                  </div>
+                  <div class="qe-photo-box">
+                    <div class="qe-photo-title">After</div>
+                    <div id="quickAfterPhotoPreview" class="qe-photo-preview">写真なし</div>
+                    <div class="qe-photo-actions">
+                      <label class="btn" for="quickAfterPhotoInput">写真を選択</label>
+                      <input id="quickAfterPhotoInput" type="file" accept="image/*" capture="environment" style="display:none" />
+                      <button class="btn danger" id="quickAfterPhotoRemove" type="button">削除</button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="qe-actions">
@@ -445,6 +522,9 @@
     let currentDrawingId = null;
     let currentDrawingStoragePath = null;
     const DRAWING_BUCKET = "inspection-drawings";
+    const MARKER_PHOTO_BUCKET = "marker-photos";
+    const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+    const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
 
     function isSupabaseConfigured(){
       const urlOk = SUPABASE_URL && !String(SUPABASE_URL).includes("YOUR_SUPABASE");
@@ -510,6 +590,22 @@
       return (safe || "drawing") + ".pdf";
     }
 
+    function toSafeImageFileName(name){
+      const src = String(name || "photo.jpg");
+      const normalized = src.normalize("NFKC");
+      const idx = normalized.lastIndexOf(".");
+      const stem = idx >= 0 ? normalized.slice(0, idx) : normalized;
+      const extRaw = idx >= 0 ? normalized.slice(idx + 1).toLowerCase() : "jpg";
+      const ext = /^(png|jpg|jpeg|webp)$/.test(extRaw) ? extRaw : "jpg";
+      const safeStem = stem
+        .replace(/[\\\/:*?"<>|]/g, "_")
+        .replace(/\s+/g, "_")
+        .replace(/[^\w.-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return `${safeStem || "photo"}.${ext}`;
+    }
+
     function nowStamp(){
       return new Date().toISOString().replace(/[-:.TZ]/g, "");
     }
@@ -545,6 +641,13 @@
           memo: m.memo || "",
           createdAt: m.createdAt,
           bubbleMoved: !!m.bubbleMoved,
+          cloud_marker_id: m.cloud_marker_id || null,
+          beforePhoto: clonePhotoInfo(m.beforePhoto),
+          afterPhoto: clonePhotoInfo(m.afterPhoto),
+          beforePhotoDelete: !!m.beforePhotoDelete,
+          afterPhotoDelete: !!m.afterPhotoDelete,
+          beforePhotoDeletePath: m.beforePhotoDeletePath || null,
+          afterPhotoDeletePath: m.afterPhotoDeletePath || null,
         }));
       }
       return out;
@@ -626,6 +729,9 @@
               original_auto_vendor_name: m.original_auto_vendor_name || null,
               is_common: !!m.is_common,
               is_vendor_unassigned: !!m.is_vendor_unassigned,
+              cloud_marker_id: m.cloud_marker_id || null,
+              beforePhoto: clonePhotoInfo(m.beforePhoto),
+              afterPhoto: clonePhotoInfo(m.afterPhoto),
               version: 1,
             },
           });
@@ -660,6 +766,15 @@
             memo: row.memo || "",
             createdAt: md.createdAt || Date.now(),
             bubbleMoved: !!row.bubble_moved,
+            cloud_marker_id: row.id || md.cloud_marker_id || null,
+            beforePhoto: clonePhotoInfo(md.beforePhoto),
+            afterPhoto: clonePhotoInfo(md.afterPhoto),
+            beforePhotoFile: null,
+            afterPhotoFile: null,
+            beforePhotoDelete: false,
+            afterPhotoDelete: false,
+            beforePhotoDeletePath: null,
+            afterPhotoDeletePath: null,
           });
         });
         normalizeMarkersByKey(mbk);
@@ -882,11 +997,176 @@
         .eq("inspection_id", inspectionId);
       if(delErr) throw delErr;
       const markerRows = buildMarkerRows(inspectionId);
+      let inserted = [];
       if(markerRows.length > 0){
-        const { error: insErr } = await sb.from("markers").insert(markerRows);
+        const { data, error: insErr } = await sb.from("markers")
+          .insert(markerRows)
+          .select("id, local_marker_id");
         if(insErr) throw insErr;
+        inserted = data || [];
       }
-      return markerRows.length;
+      const idMap = new Map(inserted.map(r=>[String(r.local_marker_id), r.id]));
+      Object.values(store.markersByKey || {}).forEach(arr=>{
+        if(!Array.isArray(arr)) return;
+        arr.forEach(m=>{
+          m.cloud_marker_id = idMap.get(String(m.id)) || null;
+          ensureMarkerPhotoState(m);
+        });
+      });
+      return {
+        markerCount: markerRows.length,
+        insertedRows: inserted,
+      };
+    }
+
+    async function uploadMarkerPhotoToSupabase(marker, file, kind){
+      const inspectionId = currentInspectionId;
+      if(!inspectionId) throw new Error("inspection_id が未確定です。");
+      if(!marker) throw new Error("対象マーカーが未指定です。");
+      if(!(file instanceof File)) throw new Error("アップロード対象の写真ファイルがありません。");
+      if(kind !== "before" && kind !== "after") throw new Error("kind は before/after のみ対応です。");
+      const sb = getSupabase();
+      const markerId = marker.cloud_marker_id || marker.id;
+      const safeName = toSafeImageFileName(file.name || `${kind}.jpg`);
+      const storagePath = `markers/${inspectionId}/${markerId}/${kind}_${nowStamp()}_${safeName}`;
+      const uploadRes = await sb.storage.from(MARKER_PHOTO_BUCKET).upload(storagePath, file, {
+        contentType: file.type || "image/jpeg",
+        upsert: false,
+      });
+      if(uploadRes.error){
+        toast(`【エラー】${photoKindLabel(kind)}写真アップロードに失敗しました。`);
+        throw uploadRes.error;
+      }
+      const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(storagePath);
+      return {
+        storage_path: storagePath,
+        public_url: pub?.data?.publicUrl || "",
+        file_name: file.name || safeName,
+        mime_type: file.type || "image/jpeg",
+      };
+    }
+
+    async function saveMarkerPhotoRecord(marker, photoInfo, kind){
+      const markerCloudId = marker?.cloud_marker_id;
+      if(!markerCloudId) throw new Error("marker_id が未確定です。");
+      if(!photoInfo?.storage_path) throw new Error("写真情報の storage_path が未設定です。");
+      const sb = getSupabase();
+      const payload = {
+        marker_id: markerCloudId,
+        kind,
+        storage_path: photoInfo.storage_path,
+        public_url: photoInfo.public_url || "",
+        file_name: photoInfo.file_name || "",
+        mime_type: photoInfo.mime_type || "image/jpeg",
+        caption: null,
+        taken_at: new Date().toISOString(),
+        display_order: kind === "before" ? 0 : 1,
+      };
+      const { error } = await sb.from("marker_photos").upsert(payload, {
+        onConflict: "marker_id,kind",
+      });
+      if(error){
+        toast(`【エラー】${photoKindLabel(kind)}写真情報の保存に失敗しました。`);
+        throw error;
+      }
+      return payload;
+    }
+
+    async function saveMarkerPhotosToCloud(marker){
+      if(!marker?.cloud_marker_id) return 0;
+      const sb = getSupabase();
+      let savedCount = 0;
+      for(const kind of ["before", "after"]){
+        const photoKey = kind === "after" ? "afterPhoto" : "beforePhoto";
+        const fileKey = kind === "after" ? "afterPhotoFile" : "beforePhotoFile";
+        const delKey = kind === "after" ? "afterPhotoDelete" : "beforePhotoDelete";
+        const delPathKey = kind === "after" ? "afterPhotoDeletePath" : "beforePhotoDeletePath";
+        const selectedFile = marker[fileKey];
+        const deleteRequested = !!marker[delKey];
+        if(deleteRequested){
+          const { error: delRecErr } = await sb.from("marker_photos")
+            .delete()
+            .eq("marker_id", marker.cloud_marker_id)
+            .eq("kind", kind);
+          if(delRecErr){
+            toast(`【エラー】${photoKindLabel(kind)}写真の削除に失敗しました。`);
+            throw delRecErr;
+          }
+          const stalePath = marker[delPathKey] || marker[photoKey]?.storage_path || null;
+          if(stalePath) queuePhotoStorageDelete(stalePath);
+          marker[photoKey] = null;
+          marker[fileKey] = null;
+          marker[delKey] = false;
+          marker[delPathKey] = null;
+          continue;
+        }
+        if(selectedFile instanceof File){
+          const uploaded = await uploadMarkerPhotoToSupabase(marker, selectedFile, kind);
+          await saveMarkerPhotoRecord(marker, uploaded, kind);
+          const stalePath = marker[delPathKey];
+          if(stalePath) queuePhotoStorageDelete(stalePath);
+          marker[photoKey] = uploaded;
+          marker[fileKey] = null;
+          marker[delKey] = false;
+          marker[delPathKey] = null;
+          savedCount += 1;
+          continue;
+        }
+        if(marker[photoKey]?.storage_path){
+          await saveMarkerPhotoRecord(marker, marker[photoKey], kind);
+          marker[delPathKey] = null;
+          savedCount += 1;
+        }
+      }
+      return savedCount;
+    }
+
+    async function cleanupPendingPhotoStorageDeletes(){
+      if(pendingPhotoStorageDeletes.size === 0) return;
+      const paths = [...pendingPhotoStorageDeletes];
+      pendingPhotoStorageDeletes.clear();
+      try{
+        const sb = getSupabase();
+        const { error } = await sb.storage.from(MARKER_PHOTO_BUCKET).remove(paths);
+        if(error){
+          console.error("写真Storage削除失敗", error);
+          toast("【エラー】写真ファイルの一部削除に失敗しました。");
+        }
+      }catch(e){
+        console.error("写真Storage削除例外", e);
+        toast("【エラー】写真ファイルの削除処理でエラーが発生しました。");
+      }
+    }
+
+    async function loadMarkerPhotosFromCloud(markerIds){
+      if(!Array.isArray(markerIds) || markerIds.length === 0) return new Map();
+      const sb = getSupabase();
+      const { data, error } = await sb.from("marker_photos")
+        .select("marker_id,kind,storage_path,public_url,file_name,mime_type,display_order")
+        .in("marker_id", markerIds);
+      if(error){
+        toast("【エラー】写真のクラウド読み込みに失敗しました。");
+        throw error;
+      }
+      const map = new Map();
+      (data || []).forEach(row=>{
+        const id = String(row.marker_id);
+        if(!map.has(id)){
+          map.set(id, { beforePhoto: null, afterPhoto: null });
+        }
+        const info = {
+          storage_path: row.storage_path || null,
+          public_url: row.public_url || "",
+          file_name: row.file_name || "",
+          mime_type: row.mime_type || "",
+        };
+        if(row.kind === "before"){
+          map.get(id).beforePhoto = info;
+        }else if(row.kind === "after"){
+          map.get(id).afterPhoto = info;
+        }
+      });
+      return map;
     }
 
     async function loadInspectionWithDrawingAndMarkers(inspectionId){
@@ -914,6 +1194,26 @@
         if(!currentDrawingId) currentDrawingStoragePath = null;
         applyInspectionForm(insp);
         applyLoadedInspectionToStore(insp, markerRows || []);
+        try{
+          const markerIds = (markerRows || []).map(r=>r.id).filter(Boolean);
+          const photoMap = await loadMarkerPhotosFromCloud(markerIds);
+          Object.values(store.markersByKey || {}).forEach(arr=>{
+            if(!Array.isArray(arr)) return;
+            arr.forEach(m=>{
+              const hit = photoMap.get(String(m.cloud_marker_id || ""));
+              m.beforePhoto = clonePhotoInfo(hit?.beforePhoto);
+              m.afterPhoto = clonePhotoInfo(hit?.afterPhoto);
+              m.beforePhotoFile = null;
+              m.afterPhotoFile = null;
+              m.beforePhotoDelete = false;
+              m.afterPhotoDelete = false;
+              m.beforePhotoDeletePath = null;
+              m.afterPhotoDeletePath = null;
+            });
+          });
+        }catch(e){
+          showCloudError("写真情報の復元", e);
+        }
 
         if(insp.current_drawing_id){
           try{
@@ -1005,11 +1305,19 @@
           .eq("id", inspectionId);
         if(updErr) throw updErr;
 
-        const n = await saveMarkersToCloud(inspectionId);
+        const markerSaveRes = await saveMarkersToCloud(inspectionId);
+        let photoSavedCount = 0;
+        for(const arr of Object.values(store.markersByKey || {})){
+          if(!Array.isArray(arr)) continue;
+          for(const marker of arr){
+            photoSavedCount += await saveMarkerPhotosToCloud(marker);
+          }
+        }
+        await cleanupPendingPhotoStorageDeletes();
 
         saveStore();
         setCloudStatus("保存済", "ok");
-        toast(`クラウド保存しました。\n案件ID: ${inspectionId}\nマーカー: ${n}件`);
+        toast(`クラウド保存しました。マーカー：${markerSaveRes.markerCount}件 / 写真：${photoSavedCount}件`);
         updateCloudCurrentIdLabel();
         await refreshCloudInspectionList();
       }catch(e){
@@ -1117,6 +1425,7 @@
     let inspectionVendors = [];
     let categoryVendorMappingsByName = {};
     let mappingPanelDirty = false;
+    const VENDOR_DELETE_BLOCK_NAMES = new Set(["業者未定", "全業者"]);
 
     function isActiveStatus(value){
       if(value == null) return true;
@@ -1174,6 +1483,197 @@
       syncFsSelects();
     }
 
+    function refreshAllVendorSelects(){
+      renderVendorSelects();
+      renderCategoryVendorSettings();
+      renderVendorManagementUi();
+      if(quickEditorState){
+        updateQuickEditorUiFromDraft();
+      }
+      syncSelectorsFromSelectedMarker();
+      if(isFullscreen) updateFsInfo();
+    }
+
+    function canDeleteVendor(vendor){
+      const name = String(vendor?.name || "");
+      return !VENDOR_DELETE_BLOCK_NAMES.has(name);
+    }
+
+    function renderVendorManagementUi(){
+      const root = $("vendorManagementList");
+      if(!root) return;
+      const activeVendors = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
+        .filter(v=>isActiveStatus(v.status) && v.name !== "共通")
+        .sort(compareByDisplayOrder);
+      if(activeVendors.length === 0){
+        root.innerHTML = `<div class="vendor-mgmt-empty">登録済み業者はありません。</div>`;
+        return;
+      }
+      root.innerHTML = activeVendors.map(v=>{
+        if(!canDeleteVendor(v)){
+          return `
+            <div class="vendor-mgmt-item">
+              <span>${escapeHtml(v.name)}</span>
+              <span class="vendor-mgmt-base">基本業者</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="vendor-mgmt-item">
+            <span>${escapeHtml(v.name)}</span>
+            <button class="btn danger" type="button" data-role="vendor-delete" data-vendor-id="${escapeHtml(v.id || "")}" data-vendor-name="${escapeHtml(v.name)}">削除</button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function loadVendorMaster(){
+      let vendors = [];
+      if(isSupabaseConfigured()){
+        const sb = getSupabase();
+        const { data, error } = await sb.from("inspection_vendors")
+          .select("id,name,display_order,status")
+          .eq("status", "active")
+          .neq("name", "共通")
+          .order("display_order", { ascending: true })
+          .order("name", { ascending: true });
+        if(error) throw error;
+        vendors = ensureSpecialVendors((data || []).filter(v=>isActiveStatus(v.status) && v.name !== "共通"));
+      }else{
+        vendors = ensureSpecialVendors(FALLBACK_VENDORS.filter(v=>v.name !== "共通"));
+      }
+      vendors.sort(compareByDisplayOrder);
+      inspectionVendors = vendors;
+      refreshAllVendorSelects();
+      return vendors;
+    }
+
+    async function addVendorFromUi(){
+      const input = $("vendorNewName");
+      const name = String(input?.value || "").trim();
+      if(!name){
+        toast("【エラー】業者名を入力してください。");
+        return;
+      }
+      if(name === "共通"){
+        toast("【エラー】「共通」は業者として追加できません。");
+        return;
+      }
+      if(!isSupabaseConfigured()){
+        toast("【エラー】Supabase未接続のため業者を追加できません。");
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const now = new Date().toISOString();
+        const { data: sameNameRows, error: sameNameErr } = await sb.from("inspection_vendors")
+          .select("id,name,status,display_order")
+          .eq("name", name)
+          .order("updated_at", { ascending: false });
+        if(sameNameErr) throw sameNameErr;
+        const activeExisting = (sameNameRows || []).find(r=>isActiveStatus(r.status));
+        if(activeExisting){
+          toast("【エラー】同名業者がすでに存在します。");
+          return;
+        }
+        const inactiveExisting = (sameNameRows || []).find(r=>!isActiveStatus(r.status));
+        if(inactiveExisting){
+          const { error: reactivateErr } = await sb.from("inspection_vendors")
+            .update({ status: "active", updated_at: now })
+            .eq("id", inactiveExisting.id);
+          if(reactivateErr) throw reactivateErr;
+        }else{
+          const { data: maxRows, error: maxErr } = await sb.from("inspection_vendors")
+            .select("display_order")
+            .order("display_order", { ascending: false })
+            .limit(1);
+          if(maxErr) throw maxErr;
+          const baseOrder = Number(maxRows?.[0]?.display_order);
+          const displayOrder = (Number.isFinite(baseOrder) ? baseOrder : 0) + 10;
+          const { error: insertErr } = await sb.from("inspection_vendors").insert({
+            name,
+            status: "active",
+            display_order: displayOrder,
+            created_at: now,
+            updated_at: now,
+          });
+          if(insertErr) throw insertErr;
+        }
+        try{
+          await loadVendorMaster();
+        }catch(reloadErr){
+          console.error(reloadErr);
+          toast("【エラー】業者マスタの再読み込みに失敗しました。");
+          return;
+        }
+        if(input) input.value = "";
+        setMappingPanelStatus("業者を追加しました", "ok");
+        toast(`業者「${name}」を追加しました。`);
+      }catch(e){
+        console.error(e);
+        toast("【エラー】Supabaseへの業者追加に失敗しました。");
+      }
+    }
+
+    async function deleteVendorFromUi(vendorId, vendorName){
+      const name = String(vendorName || "").trim();
+      if(!vendorId){
+        toast("【エラー】業者IDが不正です。");
+        return;
+      }
+      if(VENDOR_DELETE_BLOCK_NAMES.has(name)){
+        toast(`【エラー】「${name}」は基本業者のため削除できません。`);
+        return;
+      }
+      if(!isSupabaseConfigured()){
+        toast("【エラー】Supabase未接続のため業者を削除できません。");
+        return;
+      }
+      const msg = name === "その他"
+        ? "「その他」を削除すると、分類しにくい指摘の逃げ道がなくなります。本当に削除しますか？"
+        : `「${name}」を今後の選択肢から削除します。過去データは残ります。よろしいですか？`;
+      if(!confirm(msg)) return;
+      try{
+        const sb = getSupabase();
+        const now = new Date().toISOString();
+        const { error: vendorErr } = await sb.from("inspection_vendors")
+          .update({ status: "inactive", updated_at: now })
+          .eq("id", vendorId);
+        if(vendorErr) throw vendorErr;
+        const { error: assignmentErr } = await sb.from("inspection_category_vendor_assignments")
+          .update({ status: "inactive", updated_at: now })
+          .eq("vendor_id", vendorId)
+          .eq("status", "active");
+        if(assignmentErr){
+          toast("【エラー】紐づけ設定の更新に失敗しました。");
+          throw assignmentErr;
+        }
+        try{
+          await loadVendorMaster();
+        }catch(reloadErr){
+          console.error(reloadErr);
+          toast("【エラー】業者マスタの再読み込みに失敗しました。");
+          return;
+        }
+        Object.values(categoryVendorMappingsByName).forEach(map=>{
+          if(!map || map.category_name === "共通") return;
+          if(map.default_vendor_id === vendorId || map.default_vendor_name === name){
+            map.default_vendor_id = "UNASSIGNED_VENDOR";
+            map.default_vendor_name = "業者未定";
+            map.auto_assign_enabled = false;
+            map.dirty = true;
+            mappingPanelDirty = true;
+          }
+        });
+        refreshAllVendorSelects();
+        setMappingPanelStatus("業者を削除しました（今後の選択肢から非表示）", "ok");
+        toast(`業者「${name}」を今後の選択肢から削除しました。`);
+      }catch(e){
+        console.error(e);
+        toast("【エラー】Supabaseへの業者削除に失敗しました。");
+      }
+    }
+
     function setMappingPanelStatus(text, kind){
       const el = $("mappingPanelStatus");
       el.textContent = text;
@@ -1217,31 +1717,20 @@
     async function loadCategoryVendorMappings(){
       try{
         let categories = [];
-        let vendors = [];
         if(isSupabaseConfigured()){
           const sb = getSupabase();
-          const [catRes, vendorRes] = await Promise.all([
-            sb.from("inspection_categories")
-              .select("id,name,default_vendor_id,default_vendor_name,auto_assign_enabled,display_order,status")
-              .eq("status", "active")
-              .order("display_order", { ascending: true }),
-            sb.from("inspection_vendors")
-              .select("id,name,display_order,status")
-              .eq("status", "active")
-              .order("display_order", { ascending: true }),
-          ]);
+          const catRes = await sb.from("inspection_categories")
+            .select("id,name,default_vendor_id,default_vendor_name,auto_assign_enabled,display_order,status")
+            .eq("status", "active")
+            .order("display_order", { ascending: true });
           if(catRes.error) throw catRes.error;
-          if(vendorRes.error) throw vendorRes.error;
           categories = (catRes.data || []).filter(c=>isActiveStatus(c.status) && c.name !== "確認");
-          vendors = ensureSpecialVendors((vendorRes.data || []).filter(v=>isActiveStatus(v.status) && v.name !== "共通"));
         }else{
           categories = FALLBACK_CATEGORIES.filter(c=>c.name !== "確認");
-          vendors = ensureSpecialVendors(FALLBACK_VENDORS.filter(v=>v.name !== "共通"));
         }
         categories.sort(compareByDisplayOrder);
-        vendors.sort(compareByDisplayOrder);
         inspectionCategories = categories;
-        inspectionVendors = vendors;
+        await loadVendorMaster();
         categoryVendorMappingsByName = {};
         categories.forEach(c=>{
           categoryVendorMappingsByName[c.name] = {
@@ -1256,8 +1745,7 @@
           };
         });
         renderCategorySelects();
-        renderVendorSelects();
-        renderCategoryVendorSettings();
+        refreshAllVendorSelects();
         applyDefaultVendorByCategory($("typeSelect").value, null, true);
         updateVendorStateLabel();
         setMappingPanelStatus("紐づけ設定を読み込みました", "ok");
@@ -1279,8 +1767,7 @@
           };
         });
         renderCategorySelects();
-        renderVendorSelects();
-        renderCategoryVendorSettings();
+        refreshAllVendorSelects();
         applyDefaultVendorByCategory($("typeSelect").value, null, true);
         updateVendorStateLabel();
         setMappingPanelStatus("Supabase未接続のため固定設定で動作中", "error");
@@ -1399,9 +1886,13 @@
       if(map.auto_assign_enabled === false){
         return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
       }
+      const resolved = getVendorRecordByName(map.default_vendor_name || "");
+      if(!resolved){
+        return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
+      }
       return {
-        id: map.default_vendor_id || getVendorRecordByName(map.default_vendor_name || "")?.id || null,
-        name: map.default_vendor_name || "業者未定",
+        id: resolved.id || map.default_vendor_id || null,
+        name: resolved.name || map.default_vendor_name || "業者未定",
         source: "auto",
         auto_assign_enabled: true,
       };
@@ -1563,6 +2054,46 @@
       return before !== after;
     }
 
+    function clonePhotoInfo(photo){
+      if(!photo || typeof photo !== "object") return null;
+      return {
+        storage_path: photo.storage_path || null,
+        public_url: photo.public_url || "",
+        file_name: photo.file_name || "",
+        mime_type: photo.mime_type || "",
+      };
+    }
+
+    function ensureMarkerPhotoState(marker){
+      if(!marker || typeof marker !== "object") return false;
+      const before = JSON.stringify({
+        beforePhoto: marker.beforePhoto || null,
+        afterPhoto: marker.afterPhoto || null,
+        beforePhotoDelete: !!marker.beforePhotoDelete,
+        afterPhotoDelete: !!marker.afterPhotoDelete,
+        beforePhotoDeletePath: marker.beforePhotoDeletePath || null,
+        afterPhotoDeletePath: marker.afterPhotoDeletePath || null,
+      });
+      marker.beforePhoto = clonePhotoInfo(marker.beforePhoto);
+      marker.afterPhoto = clonePhotoInfo(marker.afterPhoto);
+      marker.beforePhotoFile = marker.beforePhotoFile instanceof File ? marker.beforePhotoFile : null;
+      marker.afterPhotoFile = marker.afterPhotoFile instanceof File ? marker.afterPhotoFile : null;
+      marker.beforePhotoDelete = !!marker.beforePhotoDelete;
+      marker.afterPhotoDelete = !!marker.afterPhotoDelete;
+      marker.beforePhotoDeletePath = marker.beforePhotoDeletePath || null;
+      marker.afterPhotoDeletePath = marker.afterPhotoDeletePath || null;
+      marker.cloud_marker_id = marker.cloud_marker_id || null;
+      const after = JSON.stringify({
+        beforePhoto: marker.beforePhoto || null,
+        afterPhoto: marker.afterPhoto || null,
+        beforePhotoDelete: !!marker.beforePhotoDelete,
+        afterPhotoDelete: !!marker.afterPhotoDelete,
+        beforePhotoDeletePath: marker.beforePhotoDeletePath || null,
+        afterPhotoDeletePath: marker.afterPhotoDeletePath || null,
+      });
+      return before !== after;
+    }
+
     function shouldShowMarkerForVendor(marker, selectedVendor){
       if(!selectedVendor || selectedVendor === "全て" || selectedVendor === "全業者") return true;
       if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return true;
@@ -1609,6 +2140,7 @@
     const quickMarkerEditor = $("quickMarkerEditor");
     const QUICK_TYPE_CHIP_ORDER = ["共通","傷","汚れ","建具","設備","補修","その他"];
     let quickEditorState = null;
+    const pendingPhotoStorageDeletes = new Set();
 
     function resizeStage(){
       // devicePixelRatioを考慮してcanvasを物理ピクセルサイズで確保する
@@ -1841,6 +2373,7 @@
         if(!Array.isArray(arr)) continue;
         arr.forEach(m=>{
           if(normalizeMarkerVendorState(m)) changed = true;
+          if(ensureMarkerPhotoState(m)) changed = true;
           if(normalizeMarkerOffset(m)) changed = true;
         });
       }
@@ -1932,6 +2465,7 @@
       $("quickMarkerVendor").value = d.vendor_name || "";
       $("quickMarkerMemo").value = d.memo || "";
       renderQuickTypeChips(d.type || "共通");
+      renderQuickPhotoSection(d);
     }
 
     function applyQuickEditorCategoryChange(categoryName, marker){
@@ -1981,6 +2515,142 @@
       marker.is_vendor_unassigned = true;
     }
 
+    function photoKindLabel(kind){
+      return kind === "after" ? "After" : "Before";
+    }
+
+    function getMarkerPhotoBadgeText(marker){
+      const hasBefore = !!(marker?.beforePhoto?.public_url || marker?.beforePhotoFile);
+      const hasAfter = !!(marker?.afterPhoto?.public_url || marker?.afterPhotoFile);
+      if(hasBefore && hasAfter) return "Before/Afterあり";
+      if(hasBefore) return "Beforeあり";
+      if(hasAfter) return "Afterあり";
+      return "";
+    }
+
+    function queuePhotoStorageDelete(storagePath){
+      if(!storagePath) return;
+      pendingPhotoStorageDeletes.add(storagePath);
+    }
+
+    function setQuickPhotoPreviewElement(el, photo, kind){
+      if(!el) return;
+      const url = photo?.public_url || "";
+      if(url){
+        const alt = `${photoKindLabel(kind)}写真`;
+        el.innerHTML = `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" />`;
+      }else{
+        el.textContent = "写真なし";
+      }
+    }
+
+    function renderQuickPhotoSection(marker){
+      setQuickPhotoPreviewElement($("quickBeforePhotoPreview"), marker?.beforePhoto, "before");
+      setQuickPhotoPreviewElement($("quickAfterPhotoPreview"), marker?.afterPhoto, "after");
+      $("quickBeforePhotoRemove").disabled = !marker?.beforePhoto && !marker?.beforePhotoFile;
+      $("quickAfterPhotoRemove").disabled = !marker?.afterPhoto && !marker?.afterPhotoFile;
+    }
+
+    async function compressImageFile(file, maxSize = 1600, quality = 0.82){
+      if(!(file instanceof File)) return file;
+      if(!ACCEPTED_IMAGE_MIME_TYPES.has(file.type)) return file;
+      try{
+        const bitmap = await createImageBitmap(file);
+        const srcW = bitmap.width || 0;
+        const srcH = bitmap.height || 0;
+        if(!srcW || !srcH){
+          bitmap.close();
+          return file;
+        }
+        const longEdge = Math.max(srcW, srcH);
+        if(longEdge <= maxSize){
+          bitmap.close();
+          return file;
+        }
+        const scale = maxSize / longEdge;
+        const dstW = Math.max(1, Math.round(srcW * scale));
+        const dstH = Math.max(1, Math.round(srcH * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = dstW;
+        canvas.height = dstH;
+        const c = canvas.getContext("2d");
+        if(!c){
+          bitmap.close();
+          return file;
+        }
+        c.drawImage(bitmap, 0, 0, dstW, dstH);
+        bitmap.close();
+        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+        const blob = await new Promise(resolve=>canvas.toBlob(resolve, outType, quality));
+        if(!blob) return file;
+        if(blob.size >= file.size) return file;
+        const ext = outType === "image/png" ? "png" : "jpg";
+        const base = String(file.name || "photo").replace(/\.[^.]+$/, "");
+        return new File([blob], `${base}.${ext}`, { type: outType });
+      }catch(e){
+        console.warn("画像圧縮をスキップ", e);
+        return file;
+      }
+    }
+
+    async function handleQuickPhotoSelected(kind, inputEl){
+      if(!quickEditorState) return;
+      const marker = quickEditorState.draft;
+      const file = inputEl?.files?.[0];
+      if(!file) return;
+      const ext = String(file.name || "").split(".").pop()?.toLowerCase() || "";
+      const extOk = ["png","jpg","jpeg","webp"].includes(ext);
+      const mimeOk = !!file.type && file.type.startsWith("image/");
+      if(!mimeOk && !extOk){
+        toast("【エラー】画像ファイルのみ選択できます。");
+        inputEl.value = "";
+        return;
+      }
+      if(file.type && !ACCEPTED_IMAGE_MIME_TYPES.has(file.type)){
+        toast("【エラー】対応形式は png / jpg / jpeg / webp のみです。");
+        inputEl.value = "";
+        return;
+      }
+      if(file.size > MAX_PHOTO_FILE_SIZE){
+        toast("【エラー】写真サイズが大きすぎます（15MB以下）。");
+        inputEl.value = "";
+        return;
+      }
+      const photoKey = kind === "after" ? "afterPhoto" : "beforePhoto";
+      const fileKey = kind === "after" ? "afterPhotoFile" : "beforePhotoFile";
+      const delKey = kind === "after" ? "afterPhotoDelete" : "beforePhotoDelete";
+      const delPathKey = kind === "after" ? "afterPhotoDeletePath" : "beforePhotoDeletePath";
+      if(marker[photoKey]?.storage_path){
+        marker[delPathKey] = marker[photoKey].storage_path;
+      }
+      const compressed = await compressImageFile(file);
+      marker[fileKey] = compressed;
+      marker[delKey] = false;
+      marker[photoKey] = {
+        storage_path: null,
+        public_url: URL.createObjectURL(compressed),
+        file_name: compressed.name || file.name,
+        mime_type: compressed.type || file.type || "image/jpeg",
+      };
+      renderQuickPhotoSection(marker);
+      inputEl.value = "";
+    }
+
+    function deleteMarkerPhoto(marker, kind){
+      if(!marker) return;
+      const photoKey = kind === "after" ? "afterPhoto" : "beforePhoto";
+      const fileKey = kind === "after" ? "afterPhotoFile" : "beforePhotoFile";
+      const delKey = kind === "after" ? "afterPhotoDelete" : "beforePhotoDelete";
+      const delPathKey = kind === "after" ? "afterPhotoDeletePath" : "beforePhotoDeletePath";
+      if(marker[photoKey]?.storage_path){
+        marker[delPathKey] = marker[photoKey].storage_path;
+      }
+      marker[photoKey] = null;
+      marker[fileKey] = null;
+      marker[delKey] = true;
+      renderQuickPhotoSection(marker);
+    }
+
     function positionQuickEditorNearMarker(marker){
       if(!marker || !quickMarkerEditor || quickMarkerEditor.style.display === "none") return;
       const anchor = imgRatioToCanvasPx(marker.x, marker.y);
@@ -2014,6 +2684,14 @@
           memo: marker.memo || "",
           vendor_manual_override: !!marker.vendor_manual_override,
           vendor_source: marker.vendor_source || "auto",
+          beforePhoto: clonePhotoInfo(marker.beforePhoto),
+          afterPhoto: clonePhotoInfo(marker.afterPhoto),
+          beforePhotoFile: null,
+          afterPhotoFile: null,
+          beforePhotoDelete: false,
+          afterPhotoDelete: false,
+          beforePhotoDeletePath: null,
+          afterPhotoDeletePath: null,
         }
       };
       quickMarkerEditor.style.display = "block";
@@ -2057,6 +2735,15 @@
         memo: "",
         createdAt: Date.now(),
         bubbleMoved: false,
+        cloud_marker_id: null,
+        beforePhoto: null,
+        afterPhoto: null,
+        beforePhotoFile: null,
+        afterPhotoFile: null,
+        beforePhotoDelete: false,
+        afterPhotoDelete: false,
+        beforePhotoDeletePath: null,
+        afterPhotoDeletePath: null,
       };
       normalizeMarkerOffset(m);
       markers().push(m);
@@ -2111,7 +2798,16 @@
           marker.original_auto_vendor_name = marker.vendor_name;
         }
       }
+      marker.beforePhoto = clonePhotoInfo(d.beforePhoto);
+      marker.afterPhoto = clonePhotoInfo(d.afterPhoto);
+      marker.beforePhotoFile = d.beforePhotoFile instanceof File ? d.beforePhotoFile : null;
+      marker.afterPhotoFile = d.afterPhotoFile instanceof File ? d.afterPhotoFile : null;
+      marker.beforePhotoDelete = !!d.beforePhotoDelete;
+      marker.afterPhotoDelete = !!d.afterPhotoDelete;
+      marker.beforePhotoDeletePath = d.beforePhotoDeletePath || null;
+      marker.afterPhotoDeletePath = d.afterPhotoDeletePath || null;
       normalizeMarkerVendorState(marker);
+      ensureMarkerPhotoState(marker);
       quickEditorState = null;
       quickMarkerEditor.style.display = "none";
       selectedId = marker.id;
@@ -2126,10 +2822,12 @@
     function deleteMarkerById(markerId, options = {}){
       if(!markerId) return false;
       let deleted = false;
+      let removedMarker = null;
       for(const [key, arr] of Object.entries(store.markersByKey || {})){
         if(!Array.isArray(arr)) continue;
         const idx = arr.findIndex(m=>m.id === markerId);
         if(idx >= 0){
+          removedMarker = arr[idx] || null;
           arr.splice(idx, 1);
           if(arr.length === 0) store.markersByKey[key] = [];
           deleted = true;
@@ -2137,6 +2835,8 @@
         }
       }
       if(!deleted) return false;
+      if(removedMarker?.beforePhoto?.storage_path) queuePhotoStorageDelete(removedMarker.beforePhoto.storage_path);
+      if(removedMarker?.afterPhoto?.storage_path) queuePhotoStorageDelete(removedMarker.afterPhoto.storage_path);
       if(selectedId === markerId) selectedId = null;
       if(quickEditorState && quickEditorState.markerId === markerId){
         quickEditorState = null;
@@ -2228,8 +2928,10 @@
         bubbleG.appendChild(t1);
 
         const memo = (m.memo||"").trim();
+        const photoTag = getMarkerPhotoBadgeText(m);
         const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280" });
-        t2.textContent = memo ? (memo.length>22? memo.slice(0,22)+"…" : memo) : "（メモなし）";
+        const line2 = memo ? (memo.length>16? memo.slice(0,16)+"…" : memo) : "（メモなし）";
+        t2.textContent = photoTag ? `${line2} / ${photoTag}` : line2;
         bubbleG.appendChild(t2);
 
         group.appendChild(bubbleG);
@@ -2281,7 +2983,8 @@
         div.className = "item" + (m.id===selectedId ? " sel" : "");
         div.dataset.id = m.id;
         const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
-        const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>38? m.memo.slice(0,38)+"…" : m.memo) : "なし"} / 作成：${new Date(m.createdAt).toLocaleString()}`;
+        const photoTag = getMarkerPhotoBadgeText(m) || "なし";
+        const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>26? m.memo.slice(0,26)+"…" : m.memo) : "なし"} / 写真：${photoTag} / 作成：${new Date(m.createdAt).toLocaleString()}`;
         div.innerHTML = `
           <div class="meta">
             <div class="t">${escapeHtml(title)}</div>
@@ -2483,6 +3186,30 @@
     $("quickMarkerMemo").addEventListener("input", ()=>{
       if(!quickEditorState) return;
       quickEditorState.draft.memo = $("quickMarkerMemo").value || "";
+    });
+    $("quickBeforePhotoInput").addEventListener("change", async ()=>{
+      try{
+        await handleQuickPhotoSelected("before", $("quickBeforePhotoInput"));
+      }catch(e){
+        console.error("Before写真選択エラー", e);
+        toast("【エラー】Before写真の選択に失敗しました。");
+      }
+    });
+    $("quickAfterPhotoInput").addEventListener("change", async ()=>{
+      try{
+        await handleQuickPhotoSelected("after", $("quickAfterPhotoInput"));
+      }catch(e){
+        console.error("After写真選択エラー", e);
+        toast("【エラー】After写真の選択に失敗しました。");
+      }
+    });
+    $("quickBeforePhotoRemove").addEventListener("click", ()=>{
+      if(!quickEditorState) return;
+      deleteMarkerPhoto(quickEditorState.draft, "before");
+    });
+    $("quickAfterPhotoRemove").addEventListener("click", ()=>{
+      if(!quickEditorState) return;
+      deleteMarkerPhoto(quickEditorState.draft, "after");
     });
     $("quickMarkerSave").addEventListener("click", ()=>{ saveQuickMarkerEditor(); });
     $("quickMarkerCancel").addEventListener("click", ()=>{
@@ -2911,6 +3638,18 @@
     });
     $("btnSaveMappings").addEventListener("click", ()=>{ saveCategoryVendorMappings(); });
     $("btnReloadMappings").addEventListener("click", ()=>{ loadCategoryVendorMappings(); });
+    $("btnAddVendor").addEventListener("click", ()=>{ addVendorFromUi(); });
+    $("vendorNewName").addEventListener("keydown", (e)=>{
+      if(e.key === "Enter"){
+        e.preventDefault();
+        addVendorFromUi();
+      }
+    });
+    $("vendorManagementList").addEventListener("click", (e)=>{
+      const btn = e.target.closest('button[data-role="vendor-delete"]');
+      if(!btn) return;
+      deleteVendorFromUi(btn.dataset.vendorId || "", btn.dataset.vendorName || "");
+    });
 
     $("btnSavePng").addEventListener("click", savePng);
     $("btnDeleteSelected").addEventListener("click", ()=>{
