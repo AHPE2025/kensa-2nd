@@ -471,6 +471,25 @@
     };
     const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
 
+    // 吹き出しオフセット（画像比率座標）。loadStore より前に初期化する
+    const DEFAULT_BUBBLE_DX = 0.08;
+    const DEFAULT_BUBBLE_DY = -0.04;
+    const MIN_BUBBLE_OFFSET_DIST = 0.03;
+    const PIN_VIS_R = 7;
+    const PIN_CLEAR_MARGIN = 5;
+    const BUBBLE_W = 150;
+    const BUBBLE_H = 44;
+    const BUBBLE_OFFSET_CANDIDATES = [
+      [0.08, -0.04],
+      [-0.14, -0.04],
+      [0.08, 0.07],
+      [-0.14, 0.07],
+      [0.08, -0.12],
+      [-0.14, -0.12],
+      [0.12, -0.06],
+      [-0.18, -0.06],
+    ];
+
     // -------------------- Persistent Storage --------------------
     const STORAGE_KEY = "inspection_system_v3_plainjs";
     const defaultStore = {
@@ -566,12 +585,13 @@
     }
 
     function showCloudError(title, err){
+      const src = err?.error || err?.cause || err;
       const parts = [];
-      if(err?.message) parts.push(err.message);
-      if(err?.details) parts.push(err.details);
-      if(err?.hint) parts.push("hint: " + err.hint);
-      if(err?.code) parts.push("code: " + err.code);
-      const msg = parts.length ? parts.join("\n") : String(err);
+      if(src?.message) parts.push(src.message);
+      if(src?.details) parts.push(src.details);
+      if(src?.hint) parts.push("hint: " + src.hint);
+      if(src?.code) parts.push("code: " + src.code);
+      const msg = parts.length ? parts.join("\n") : String(src || err);
       console.error(title, err);
       toast("【エラー】" + title + "\n" + msg);
       setCloudStatus("エラー", "err");
@@ -632,8 +652,11 @@
           vendor: m.vendor,
           vendor_id: m.vendor_id || null,
           vendor_name: m.vendor_name || m.vendor || "",
+          vendor_status: m.vendor_status || "assigned",
           vendor_source: m.vendor_source || "auto",
           vendor_manual_override: !!m.vendor_manual_override,
+          assigned_vendor_names: Array.isArray(m.assigned_vendor_names) ? [...m.assigned_vendor_names] : [],
+          primary_vendor_name: m.primary_vendor_name || null,
           original_auto_vendor_id: m.original_auto_vendor_id || null,
           original_auto_vendor_name: m.original_auto_vendor_name || null,
           is_common: !!m.is_common,
@@ -642,6 +665,7 @@
           createdAt: m.createdAt,
           bubbleMoved: !!m.bubbleMoved,
           cloud_marker_id: m.cloud_marker_id || null,
+          supabase_marker_id: m.supabase_marker_id || m.cloud_marker_id || null,
           beforePhoto: clonePhotoInfo(m.beforePhoto),
           afterPhoto: clonePhotoInfo(m.afterPhoto),
           beforePhotoDelete: !!m.beforePhotoDelete,
@@ -698,6 +722,11 @@
           ? activeDrawingId
           : (pdfId === activeDrawingId ? activeDrawingId : null);
         arr.forEach((m, idx)=>{
+          normalizeMarkerVendorState(m);
+          ensureMarkerPhotoState(m);
+          const assignedVendorNames = m.is_common
+            ? ["全業者"]
+            : (m.is_vendor_unassigned || !m.vendor_name ? [] : [m.vendor_name]);
           rows.push({
             inspection_id: inspectionId,
             drawing_id: markerDrawingId,
@@ -709,7 +738,8 @@
             dy: Number(m.dy),
             type: m.type || "",
             vendor_name: m.vendor_name || m.vendor || "",
-            vendor_status: m.vendor_source || "assigned",
+            vendor_status: m.vendor_status || "assigned",
+            vendor_source: m.vendor_source || "auto",
             floor_label: null,
             memo: m.memo || "",
             is_common: !!m.is_common,
@@ -723,8 +753,11 @@
               createdAt: m.createdAt || Date.now(),
               vendor_id: m.vendor_id || null,
               vendor_name: m.vendor_name || m.vendor || "",
+              vendor_status: m.vendor_status || "assigned",
               vendor_source: m.vendor_source || "auto",
               vendor_manual_override: !!m.vendor_manual_override,
+              assigned_vendor_names: assignedVendorNames,
+              primary_vendor_name: m.primary_vendor_name || (assignedVendorNames[0] || null),
               original_auto_vendor_id: m.original_auto_vendor_id || null,
               original_auto_vendor_name: m.original_auto_vendor_name || null,
               is_common: !!m.is_common,
@@ -757,8 +790,11 @@
             vendor: row.vendor_name || md.vendor_name || "",
             vendor_id: md.vendor_id || null,
             vendor_name: row.vendor_name || md.vendor_name || "",
-            vendor_source: md.vendor_source || row.vendor_status || "auto",
+            vendor_status: row.vendor_status || md.vendor_status || "assigned",
+            vendor_source: row.vendor_source || md.vendor_source || "auto",
             vendor_manual_override: !!md.vendor_manual_override,
+            assigned_vendor_names: Array.isArray(md.assigned_vendor_names) ? [...md.assigned_vendor_names] : [],
+            primary_vendor_name: md.primary_vendor_name || null,
             original_auto_vendor_id: md.original_auto_vendor_id || null,
             original_auto_vendor_name: md.original_auto_vendor_name || null,
             is_common: !!row.is_common || !!md.is_common,
@@ -767,6 +803,7 @@
             createdAt: md.createdAt || Date.now(),
             bubbleMoved: !!row.bubble_moved,
             cloud_marker_id: row.id || md.cloud_marker_id || null,
+            supabase_marker_id: row.id || md.cloud_marker_id || null,
             beforePhoto: clonePhotoInfo(md.beforePhoto),
             afterPhoto: clonePhotoInfo(md.afterPhoto),
             beforePhotoFile: null,
@@ -1005,18 +1042,25 @@
         if(insErr) throw insErr;
         inserted = data || [];
       }
-      const idMap = new Map(inserted.map(r=>[String(r.local_marker_id), r.id]));
-      Object.values(store.markersByKey || {}).forEach(arr=>{
-        if(!Array.isArray(arr)) return;
-        arr.forEach(m=>{
-          m.cloud_marker_id = idMap.get(String(m.id)) || null;
-          ensureMarkerPhotoState(m);
-        });
-      });
+      mapSavedMarkerIdsToLocalMarkers(inserted);
       return {
         markerCount: markerRows.length,
         insertedRows: inserted,
       };
+    }
+
+    function mapSavedMarkerIdsToLocalMarkers(insertedRows){
+      const idMap = new Map((insertedRows || []).map(r=>[String(r.local_marker_id), r.id]));
+      Object.values(store.markersByKey || {}).forEach(arr=>{
+        if(!Array.isArray(arr)) return;
+        arr.forEach(m=>{
+          const mappedId = idMap.get(String(m.id)) || null;
+          m.cloud_marker_id = mappedId;
+          m.supabase_marker_id = mappedId;
+          ensureMarkerPhotoState(m);
+        });
+      });
+      return idMap;
     }
 
     async function uploadMarkerPhotoToSupabase(marker, file, kind){
@@ -1026,7 +1070,8 @@
       if(!(file instanceof File)) throw new Error("アップロード対象の写真ファイルがありません。");
       if(kind !== "before" && kind !== "after") throw new Error("kind は before/after のみ対応です。");
       const sb = getSupabase();
-      const markerId = marker.cloud_marker_id || marker.id;
+      const markerId = marker.cloud_marker_id || marker.supabase_marker_id || null;
+      if(!markerId) throw new Error("Supabase上の marker_id が未確定です。");
       const safeName = toSafeImageFileName(file.name || `${kind}.jpg`);
       const storagePath = `markers/${inspectionId}/${markerId}/${kind}_${nowStamp()}_${safeName}`;
       const uploadRes = await sb.storage.from(MARKER_PHOTO_BUCKET).upload(storagePath, file, {
@@ -1047,7 +1092,7 @@
     }
 
     async function saveMarkerPhotoRecord(marker, photoInfo, kind){
-      const markerCloudId = marker?.cloud_marker_id;
+      const markerCloudId = marker?.cloud_marker_id || marker?.supabase_marker_id || null;
       if(!markerCloudId) throw new Error("marker_id が未確定です。");
       if(!photoInfo?.storage_path) throw new Error("写真情報の storage_path が未設定です。");
       const sb = getSupabase();
@@ -1073,7 +1118,11 @@
     }
 
     async function saveMarkerPhotosToCloud(marker){
-      if(!marker?.cloud_marker_id) return 0;
+      if(!marker) return 0;
+      const markerCloudId = marker.cloud_marker_id || marker.supabase_marker_id || null;
+      if(!markerCloudId) return 0;
+      marker.cloud_marker_id = markerCloudId;
+      marker.supabase_marker_id = markerCloudId;
       const sb = getSupabase();
       let savedCount = 0;
       for(const kind of ["before", "after"]){
@@ -1086,7 +1135,7 @@
         if(deleteRequested){
           const { error: delRecErr } = await sb.from("marker_photos")
             .delete()
-            .eq("marker_id", marker.cloud_marker_id)
+            .eq("marker_id", markerCloudId)
             .eq("kind", kind);
           if(delRecErr){
             toast(`【エラー】${photoKindLabel(kind)}写真の削除に失敗しました。`);
@@ -1139,7 +1188,7 @@
     }
 
     async function loadMarkerPhotosFromCloud(markerIds){
-      if(!Array.isArray(markerIds) || markerIds.length === 0) return new Map();
+      if(!Array.isArray(markerIds) || markerIds.length === 0) return [];
       const sb = getSupabase();
       const { data, error } = await sb.from("marker_photos")
         .select("marker_id,kind,storage_path,public_url,file_name,mime_type,display_order")
@@ -1148,11 +1197,16 @@
         toast("【エラー】写真のクラウド読み込みに失敗しました。");
         throw error;
       }
-      const map = new Map();
-      (data || []).forEach(row=>{
-        const id = String(row.marker_id);
-        if(!map.has(id)){
-          map.set(id, { beforePhoto: null, afterPhoto: null });
+      return data || [];
+    }
+
+    function attachLoadedPhotosToMarkers(photoRows, markerRows){
+      const markerMap = new Map();
+      (photoRows || []).forEach(row=>{
+        const markerId = String(row.marker_id || "");
+        if(!markerId) return;
+        if(!markerMap.has(markerId)){
+          markerMap.set(markerId, { beforePhoto: null, afterPhoto: null });
         }
         const info = {
           storage_path: row.storage_path || null,
@@ -1161,12 +1215,24 @@
           mime_type: row.mime_type || "",
         };
         if(row.kind === "before"){
-          map.get(id).beforePhoto = info;
+          markerMap.get(markerId).beforePhoto = info;
         }else if(row.kind === "after"){
-          map.get(id).afterPhoto = info;
+          markerMap.get(markerId).afterPhoto = info;
         }
       });
-      return map;
+
+      (markerRows || []).forEach(marker=>{
+        const markerId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || "");
+        const hit = markerMap.get(markerId);
+        marker.beforePhoto = clonePhotoInfo(hit?.beforePhoto);
+        marker.afterPhoto = clonePhotoInfo(hit?.afterPhoto);
+        marker.beforePhotoFile = null;
+        marker.afterPhotoFile = null;
+        marker.beforePhotoDelete = false;
+        marker.afterPhotoDelete = false;
+        marker.beforePhotoDeletePath = null;
+        marker.afterPhotoDeletePath = null;
+      });
     }
 
     async function loadInspectionWithDrawingAndMarkers(inspectionId){
@@ -1195,22 +1261,13 @@
         applyInspectionForm(insp);
         applyLoadedInspectionToStore(insp, markerRows || []);
         try{
-          const markerIds = (markerRows || []).map(r=>r.id).filter(Boolean);
-          const photoMap = await loadMarkerPhotosFromCloud(markerIds);
-          Object.values(store.markersByKey || {}).forEach(arr=>{
-            if(!Array.isArray(arr)) return;
-            arr.forEach(m=>{
-              const hit = photoMap.get(String(m.cloud_marker_id || ""));
-              m.beforePhoto = clonePhotoInfo(hit?.beforePhoto);
-              m.afterPhoto = clonePhotoInfo(hit?.afterPhoto);
-              m.beforePhotoFile = null;
-              m.afterPhotoFile = null;
-              m.beforePhotoDelete = false;
-              m.afterPhotoDelete = false;
-              m.beforePhotoDeletePath = null;
-              m.afterPhotoDeletePath = null;
-            });
-          });
+          const localMarkers = Object.values(store.markersByKey || {})
+            .flatMap(arr=>Array.isArray(arr) ? arr : []);
+          const markerIds = localMarkers
+            .map(m=>m.cloud_marker_id || m.supabase_marker_id || null)
+            .filter(Boolean);
+          const photoRows = await loadMarkerPhotosFromCloud(markerIds);
+          attachLoadedPhotosToMarkers(photoRows, localMarkers);
         }catch(e){
           showCloudError("写真情報の復元", e);
         }
@@ -1922,6 +1979,7 @@
           marker.vendor = "全業者";
           marker.vendor_id = "ALL_VENDORS";
           marker.vendor_name = "全業者";
+          marker.vendor_status = "common";
           marker.vendor_source = "common";
           marker.vendor_manual_override = false;
           marker.original_auto_vendor_id = "ALL_VENDORS";
@@ -1940,6 +1998,7 @@
           marker.vendor = "業者未定";
           marker.vendor_id = "UNASSIGNED_VENDOR";
           marker.vendor_name = "業者未定";
+          marker.vendor_status = "undecided";
           marker.vendor_source = "unassigned";
           marker.vendor_manual_override = false;
           marker.original_auto_vendor_id = "UNASSIGNED_VENDOR";
@@ -1957,6 +2016,7 @@
         marker.vendor = vendor.name;
         marker.vendor_id = vendor.id;
         marker.vendor_name = vendor.name;
+        marker.vendor_status = "assigned";
         marker.vendor_source = "auto";
         marker.vendor_manual_override = false;
         marker.original_auto_vendor_id = vendor.id;
@@ -1982,10 +2042,12 @@
       targetMarker.vendor_id = vendor?.id || (selectedName === "業者未定" ? "UNASSIGNED_VENDOR" : null);
       targetMarker.vendor_name = selectedName;
       if(selectedName === "業者未定"){
+        targetMarker.vendor_status = "undecided";
         targetMarker.vendor_source = "unassigned";
         targetMarker.vendor_manual_override = false;
         targetMarker.is_vendor_unassigned = true;
       }else{
+        targetMarker.vendor_status = "assigned";
         targetMarker.vendor_source = "manual";
         targetMarker.vendor_manual_override = true;
         targetMarker.is_vendor_unassigned = false;
@@ -2000,8 +2062,11 @@
         vendor: marker.vendor,
         vendor_id: marker.vendor_id,
         vendor_name: marker.vendor_name,
+        vendor_status: marker.vendor_status,
         vendor_source: marker.vendor_source,
         vendor_manual_override: marker.vendor_manual_override,
+        assigned_vendor_names: marker.assigned_vendor_names,
+        primary_vendor_name: marker.primary_vendor_name,
         original_auto_vendor_id: marker.original_auto_vendor_id,
         original_auto_vendor_name: marker.original_auto_vendor_name,
         is_common: marker.is_common,
@@ -2011,45 +2076,83 @@
         marker.vendor_name = "全業者";
         marker.vendor = "全業者";
       }
-      if(marker.type === "共通" || marker.vendor_name === "全業者" || marker.vendor_source === "common"){
+      if(marker.type === "共通" || marker.vendor_name === "全業者" || marker.vendor_source === "common" || marker.vendor_status === "common"){
         marker.vendor = "全業者";
         marker.vendor_name = "全業者";
         marker.vendor_id = "ALL_VENDORS";
+        marker.vendor_status = "common";
         marker.vendor_source = "common";
         marker.vendor_manual_override = false;
+        marker.assigned_vendor_names = ["全業者"];
+        marker.primary_vendor_name = "全業者";
         marker.original_auto_vendor_name = "全業者";
         marker.original_auto_vendor_id = "ALL_VENDORS";
         marker.is_common = true;
         marker.is_vendor_unassigned = false;
-      }else if(marker.vendor_name === "業者未定" || marker.vendor === "業者未定" || marker.vendor_source === "unassigned"){
+      }else if(marker.vendor_name === "業者未定" || marker.vendor === "業者未定" || marker.vendor_source === "unassigned" || marker.vendor_status === "undecided"){
         marker.vendor = "業者未定";
         marker.vendor_name = "業者未定";
         marker.vendor_id = "UNASSIGNED_VENDOR";
+        marker.vendor_status = "undecided";
         marker.vendor_source = "unassigned";
         marker.vendor_manual_override = false;
+        marker.assigned_vendor_names = [];
+        marker.primary_vendor_name = null;
         marker.is_common = false;
         marker.is_vendor_unassigned = true;
       }else if(marker.vendor_source === "manual" || marker.vendor_manual_override){
-        marker.vendor_source = "manual";
-        marker.vendor_manual_override = true;
-        marker.is_common = false;
-        marker.is_vendor_unassigned = !(marker.vendor_name || marker.vendor);
         marker.vendor_name = marker.vendor_name || marker.vendor || "";
-        marker.vendor = marker.vendor_name;
-        if(!marker.vendor_id){
-          marker.vendor_id = getVendorRecordByName(marker.vendor_name || "")?.id || null;
+        if(!marker.vendor_name){
+          marker.vendor = "業者未定";
+          marker.vendor_name = "業者未定";
+          marker.vendor_id = "UNASSIGNED_VENDOR";
+          marker.vendor_status = "undecided";
+          marker.vendor_source = "unassigned";
+          marker.vendor_manual_override = false;
+          marker.assigned_vendor_names = [];
+          marker.primary_vendor_name = null;
+          marker.is_common = false;
+          marker.is_vendor_unassigned = true;
+        }else{
+          marker.vendor_source = "manual";
+          marker.vendor_status = "assigned";
+          marker.vendor_manual_override = true;
+          marker.is_common = false;
+          marker.is_vendor_unassigned = false;
+          marker.vendor = marker.vendor_name;
+          marker.assigned_vendor_names = [marker.vendor_name];
+          marker.primary_vendor_name = marker.vendor_name;
+          if(!marker.vendor_id){
+            marker.vendor_id = getVendorRecordByName(marker.vendor_name || "")?.id || null;
+          }
         }
       }else{
         const vName = marker.vendor_name || marker.vendor || "";
-        const vendor = getVendorRecordByName(vName);
-        marker.vendor = vName || "業者未定";
-        marker.vendor_name = vName || "業者未定";
-        marker.vendor_id = vendor?.id || (vName ? marker.vendor_id : "UNASSIGNED_VENDOR");
-        marker.vendor_source = marker.vendor_source || (vName ? "auto" : "unassigned");
-        marker.vendor_manual_override = !!marker.vendor_manual_override;
-        marker.is_common = false;
-        marker.is_vendor_unassigned = !vName;
-        if(!marker.original_auto_vendor_name && marker.vendor_source === "auto"){
+        if(!vName || vName === "業者未定"){
+          marker.vendor = "業者未定";
+          marker.vendor_name = "業者未定";
+          marker.vendor_id = "UNASSIGNED_VENDOR";
+          marker.vendor_status = "undecided";
+          marker.vendor_source = "unassigned";
+          marker.vendor_manual_override = false;
+          marker.assigned_vendor_names = [];
+          marker.primary_vendor_name = null;
+          marker.is_common = false;
+          marker.is_vendor_unassigned = true;
+        }else{
+          const vendor = getVendorRecordByName(vName);
+          marker.vendor = vName;
+          marker.vendor_name = vName;
+          marker.vendor_id = vendor?.id || marker.vendor_id || null;
+          marker.vendor_status = "assigned";
+          marker.vendor_source = "auto";
+          marker.vendor_manual_override = false;
+          marker.assigned_vendor_names = [vName];
+          marker.primary_vendor_name = vName;
+          marker.is_common = false;
+          marker.is_vendor_unassigned = false;
+        }
+        if(!marker.original_auto_vendor_name && marker.vendor_source === "auto" && marker.vendor_name){
           marker.original_auto_vendor_name = marker.vendor_name;
           marker.original_auto_vendor_id = marker.vendor_id || null;
         }
@@ -2058,8 +2161,11 @@
         vendor: marker.vendor,
         vendor_id: marker.vendor_id,
         vendor_name: marker.vendor_name,
+        vendor_status: marker.vendor_status,
         vendor_source: marker.vendor_source,
         vendor_manual_override: marker.vendor_manual_override,
+        assigned_vendor_names: marker.assigned_vendor_names,
+        primary_vendor_name: marker.primary_vendor_name,
         original_auto_vendor_id: marker.original_auto_vendor_id,
         original_auto_vendor_name: marker.original_auto_vendor_name,
         is_common: marker.is_common,
@@ -2097,6 +2203,7 @@
       marker.beforePhotoDeletePath = marker.beforePhotoDeletePath || null;
       marker.afterPhotoDeletePath = marker.afterPhotoDeletePath || null;
       marker.cloud_marker_id = marker.cloud_marker_id || null;
+      marker.supabase_marker_id = marker.supabase_marker_id || marker.cloud_marker_id || null;
       const after = JSON.stringify({
         beforePhoto: marker.beforePhoto || null,
         afterPhoto: marker.afterPhoto || null,
@@ -2127,10 +2234,6 @@
     let filterVendor = "";
     // stage measured size
     let stageW = 1, stageH = 1;
-
-    // Bubble size (for auto arrangement collision checks)
-    const BUBBLE_W = 150;
-    const BUBBLE_H = 44;
 
     function activeKey(){
       const bg = store.activeBg;
@@ -2286,22 +2389,7 @@
       };
     }
 
-    // 吹き出しオフセット（画像比率座標）。ピンと吹き出しが重ならないよう補正する
-    const DEFAULT_BUBBLE_DX = 0.08;
-    const DEFAULT_BUBBLE_DY = -0.04;
-    const MIN_BUBBLE_OFFSET_DIST = 0.03;
-    const PIN_VIS_R = 7;
-    const PIN_CLEAR_MARGIN = 5;
-    const BUBBLE_OFFSET_CANDIDATES = [
-      [0.08, -0.04],
-      [-0.14, -0.04],
-      [0.08, 0.07],
-      [-0.14, 0.07],
-      [0.08, -0.12],
-      [-0.14, -0.12],
-      [0.12, -0.06],
-      [-0.18, -0.06],
-    ];
+    // 吹き出しオフセット定数は先頭で定義済み
 
     function canUseCanvasOffsetCheck(){
       return imgRect.iw > 10 && imgRect.ih > 10 && imgRect.sc > 0 && stageW > 1 && stageH > 1;
@@ -2520,11 +2608,12 @@
 
     function clearMarkerVendor(marker){
       if(!marker) return;
-      marker.vendor_name = "";
-      marker.vendor_id = null;
-      marker.vendor = "";
-      marker.vendor_manual_override = true;
-      marker.vendor_source = "manual";
+      marker.vendor_name = "業者未定";
+      marker.vendor_id = "UNASSIGNED_VENDOR";
+      marker.vendor = "業者未定";
+      marker.vendor_status = "undecided";
+      marker.vendor_manual_override = false;
+      marker.vendor_source = "unassigned";
       marker.is_common = false;
       marker.is_vendor_unassigned = true;
     }
@@ -2695,6 +2784,7 @@
         draft: {
           type: marker.type || "共通",
           vendor_name: marker.vendor_name || marker.vendor || "",
+          vendor_status: marker.vendor_status || "assigned",
           memo: marker.memo || "",
           vendor_manual_override: !!marker.vendor_manual_override,
           vendor_source: marker.vendor_source || "auto",
@@ -2740,8 +2830,11 @@
         vendor: "",
         vendor_id: null,
         vendor_name: "",
+        vendor_status: "common",
         vendor_source: "common",
         vendor_manual_override: false,
+        assigned_vendor_names: ["全業者"],
+        primary_vendor_name: "全業者",
         original_auto_vendor_id: "ALL_VENDORS",
         original_auto_vendor_name: "全業者",
         is_common: true,
@@ -2750,6 +2843,7 @@
         createdAt: Date.now(),
         bubbleMoved: false,
         cloud_marker_id: null,
+        supabase_marker_id: null,
         beforePhoto: null,
         afterPhoto: null,
         beforePhotoFile: null,
@@ -2784,6 +2878,7 @@
         marker.vendor = d.vendor_name || "全業者";
         marker.vendor_name = d.vendor_name || "全業者";
         marker.vendor_id = marker.vendor_name ? (getVendorRecordByName(marker.vendor_name)?.id || "ALL_VENDORS") : null;
+        marker.vendor_status = "common";
         marker.vendor_source = "common";
         marker.vendor_manual_override = false;
         marker.is_common = true;
@@ -2791,11 +2886,12 @@
         marker.original_auto_vendor_id = "ALL_VENDORS";
         marker.original_auto_vendor_name = "全業者";
       }else if(!d.vendor_name){
-        marker.vendor = "";
-        marker.vendor_name = "";
-        marker.vendor_id = null;
-        marker.vendor_source = d.vendor_manual_override ? "manual" : "unassigned";
-        marker.vendor_manual_override = !!d.vendor_manual_override;
+        marker.vendor = "業者未定";
+        marker.vendor_name = "業者未定";
+        marker.vendor_id = "UNASSIGNED_VENDOR";
+        marker.vendor_status = "undecided";
+        marker.vendor_source = "unassigned";
+        marker.vendor_manual_override = false;
         marker.is_common = false;
         marker.is_vendor_unassigned = true;
       }else{
@@ -2803,6 +2899,7 @@
         marker.vendor = d.vendor_name;
         marker.vendor_name = d.vendor_name;
         marker.vendor_id = vendor?.id || null;
+        marker.vendor_status = "assigned";
         marker.vendor_source = d.vendor_manual_override ? "manual" : "auto";
         marker.vendor_manual_override = !!d.vendor_manual_override;
         marker.is_common = false;
