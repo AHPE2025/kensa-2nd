@@ -8329,31 +8329,92 @@
       await new Promise(resolve=>setTimeout(resolve, 200));
     }
 
+    function getMarkerIssueTitleForPdf(marker, number){
+      const issueType = String(marker?.type || "種別未設定").trim() || "種別未設定";
+      const memo = String(marker?.memo || "").trim();
+      if(!memo) return `${number}. ${issueType}`;
+      const shortMemo = memo.length > 38 ? `${memo.slice(0, 38)}…` : memo;
+      return `${number}. ${issueType} / ${shortMemo}`;
+    }
+
+    function getCurrentPdfPageImageForExport(){
+      const bg = store.activeBg;
+      if(!bg || bg.kind !== "pdf"){
+        throw new Error("PDF図面が未選択です。");
+      }
+      const pdfIdentity = resolvePdfIdentity(bg);
+      const page = Number(bg.page || 1);
+      const cacheKey = `${pdfIdentity}:${page}`;
+      const dataURL = String(bg.pageCache?.[cacheKey] || "");
+      if(!dataURL){
+        throw new Error("PDFページ画像が未生成です。ページを表示してから再実行してください。");
+      }
+      return dataURL;
+    }
+
+    function choosePdfDrawingOrientation(size = {}){
+      const width = Number(size.width || 0);
+      const height = Number(size.height || 0);
+      if(width > 0 && height > 0){
+        const ratio = width / height;
+        if(ratio < 0.72) return "portrait";
+      }
+      return "landscape";
+    }
+
     function buildPdfDrawingDom(opts = {}){
       const header = opts.headerData || getPdfHeaderData();
       const stageImageData = String(opts.stageImageData || "");
       const pageNumber = Number(opts.pageNumber || 1);
-      const rotation = normalizeQuarterTurn(opts.rotation ?? 0);
+      const orderedMarkers = Array.isArray(opts.orderedMarkers) ? opts.orderedMarkers : [];
+      const drawingSize = opts.drawingSize || { width: 1, height: 1 };
+      const orientation = opts.orientation === "portrait" ? "portrait" : "landscape";
+      const isLandscape = orientation === "landscape";
+      const pageW = isLandscape ? 1600 : 1130;
+      const pageH = isLandscape ? 1130 : 1600;
+      const rootPadding = 20;
+      const headerH = 88;
+      const footerH = 28;
+      const vGap = 12;
+      const mainW = pageW - rootPadding * 2;
+      const mainH = pageH - rootPadding * 2 - headerH - footerH - vGap * 2;
+      const notesEnabled = orderedMarkers.length > 0;
+      const notesW = notesEnabled ? Math.round(Math.min(Math.max(mainW * 0.29, 320), 430)) : 0;
+      const panelGap = notesEnabled ? 12 : 0;
+      const drawingW = Math.max(200, mainW - notesW - panelGap);
+      const drawingH = mainH;
+      const imgW = Math.max(1, Number(drawingSize.width || 1));
+      const imgH = Math.max(1, Number(drawingSize.height || 1));
+      const drawingScale = Math.min(drawingW / imgW, drawingH / imgH);
+      const drawW = imgW * drawingScale;
+      const drawH = imgH * drawingScale;
+      const drawX = (drawingW - drawW) / 2;
+      const drawY = (drawingH - drawH) / 2;
+      const noteAnchors = [];
+      const markerCount = orderedMarkers.length;
+      const noteSlot = markerCount > 0 ? (mainH / (markerCount + 1)) : 0;
+
       const root = document.createElement("div");
-      root.dataset.rotation = String(rotation);
-      root.style.width = "1600px";
-      root.style.minHeight = "1120px";
+      root.style.width = `${pageW}px`;
+      root.style.height = `${pageH}px`;
       root.style.boxSizing = "border-box";
-      root.style.padding = "28px";
+      root.style.padding = `${rootPadding}px`;
       root.style.background = "#ffffff";
       root.style.display = "flex";
       root.style.flexDirection = "column";
-      root.style.gap = "16px";
+      root.style.gap = `${vGap}px`;
       root.style.fontFamily = "'Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif";
       root.style.color = "#0f172a";
 
       const headerWrap = document.createElement("div");
+      headerWrap.style.height = `${headerH}px`;
+      headerWrap.style.boxSizing = "border-box";
       headerWrap.style.display = "grid";
-      headerWrap.style.gridTemplateColumns = "1fr 1fr 1fr";
+      headerWrap.style.gridTemplateColumns = "2fr 1fr 1fr";
       headerWrap.style.gap = "10px";
-      headerWrap.style.padding = "14px 16px";
+      headerWrap.style.padding = "10px 14px";
       headerWrap.style.border = "1px solid #dbe2ea";
-      headerWrap.style.borderRadius = "12px";
+      headerWrap.style.borderRadius = "10px";
       headerWrap.style.background = "#f8fafc";
       const headerItems = [
         { label: "現場名", value: header.site_name || "-" },
@@ -8364,46 +8425,158 @@
         const box = document.createElement("div");
         const label = document.createElement("div");
         label.textContent = item.label;
-        label.style.fontSize = "16px";
+        label.style.fontSize = "14px";
         label.style.fontWeight = "700";
-        label.style.color = "#334155";
+        label.style.color = "#475569";
         const value = document.createElement("div");
         value.textContent = item.value;
-        value.style.marginTop = "6px";
-        value.style.fontSize = "24px";
+        value.style.marginTop = "4px";
+        value.style.fontSize = "20px";
         value.style.fontWeight = "700";
-        value.style.lineHeight = "1.25";
+        value.style.lineHeight = "1.22";
         value.style.wordBreak = "break-word";
         box.appendChild(label);
         box.appendChild(value);
         headerWrap.appendChild(box);
       });
 
-      const stageWrapEl = document.createElement("div");
-      stageWrapEl.style.flex = "1";
-      stageWrapEl.style.minHeight = "860px";
-      stageWrapEl.style.display = "flex";
-      stageWrapEl.style.alignItems = "center";
-      stageWrapEl.style.justifyContent = "center";
-      stageWrapEl.style.border = "1px solid #dbe2ea";
-      stageWrapEl.style.borderRadius = "12px";
-      stageWrapEl.style.background = "#ffffff";
-      stageWrapEl.style.overflow = "hidden";
+      const main = document.createElement("div");
+      main.style.position = "relative";
+      main.style.width = `${mainW}px`;
+      main.style.height = `${mainH}px`;
+      main.style.display = "flex";
+      main.style.gap = `${panelGap}px`;
+
+      const drawingPanel = document.createElement("div");
+      drawingPanel.style.position = "relative";
+      drawingPanel.style.width = `${drawingW}px`;
+      drawingPanel.style.height = `${drawingH}px`;
+      drawingPanel.style.border = "1px solid #dbe2ea";
+      drawingPanel.style.borderRadius = "10px";
+      drawingPanel.style.background = "#ffffff";
+      drawingPanel.style.overflow = "hidden";
+
       const stageImg = document.createElement("img");
       stageImg.src = stageImageData;
-      stageImg.style.width = "100%";
-      stageImg.style.height = "100%";
+      stageImg.style.position = "absolute";
+      stageImg.style.left = `${drawX}px`;
+      stageImg.style.top = `${drawY}px`;
+      stageImg.style.width = `${drawW}px`;
+      stageImg.style.height = `${drawH}px`;
       stageImg.style.objectFit = "contain";
-      stageWrapEl.appendChild(stageImg);
+      drawingPanel.appendChild(stageImg);
+      main.appendChild(drawingPanel);
+
+      const notePane = document.createElement("div");
+      if(notesEnabled){
+        notePane.style.position = "relative";
+        notePane.style.width = `${notesW}px`;
+        notePane.style.height = `${mainH}px`;
+        notePane.style.border = "1px solid #dbe2ea";
+        notePane.style.borderRadius = "10px";
+        notePane.style.background = "#ffffff";
+        notePane.style.overflow = "hidden";
+        main.appendChild(notePane);
+
+        orderedMarkers.forEach(({ marker, number }, idx)=>{
+          const issue = document.createElement("div");
+          const y = clamp((idx + 1) * noteSlot, 42, mainH - 42);
+          issue.style.position = "absolute";
+          issue.style.left = "10px";
+          issue.style.top = `${Math.max(8, y - 24)}px`;
+          issue.style.width = `${notesW - 18}px`;
+          issue.style.lineHeight = "1.25";
+          issue.style.wordBreak = "break-word";
+          const mainText = document.createElement("div");
+          mainText.textContent = getMarkerIssueTitleForPdf(marker, number);
+          mainText.style.color = "#dc2626";
+          mainText.style.fontSize = "15px";
+          mainText.style.fontWeight = "700";
+          const vendorText = document.createElement("div");
+          vendorText.textContent = `（${getVendorDisplayName(marker) || "業者未設定"}）`;
+          vendorText.style.color = "#15803d";
+          vendorText.style.fontSize = "13px";
+          vendorText.style.fontWeight = "700";
+          vendorText.style.marginTop = "2px";
+          issue.appendChild(mainText);
+          issue.appendChild(vendorText);
+          notePane.appendChild(issue);
+          noteAnchors.push({
+            marker,
+            number,
+            x: drawingW + panelGap + 8,
+            y,
+          });
+        });
+      }
+
+      const overlaySvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      overlaySvg.setAttribute("width", String(mainW));
+      overlaySvg.setAttribute("height", String(mainH));
+      overlaySvg.setAttribute("viewBox", `0 0 ${mainW} ${mainH}`);
+      overlaySvg.style.position = "absolute";
+      overlaySvg.style.left = "0";
+      overlaySvg.style.top = "0";
+      overlaySvg.style.pointerEvents = "none";
+
+      orderedMarkers.forEach(({ marker, number }, idx)=>{
+        const mx = clamp(Number.isFinite(Number(marker?.x)) ? Number(marker.x) : 0.5, 0, 1);
+        const my = clamp(Number.isFinite(Number(marker?.y)) ? Number(marker.y) : 0.5, 0, 1);
+        const pinX = drawX + (drawW * mx);
+        const pinY = drawY + (drawH * my);
+        const noteAnchor = noteAnchors[idx] || null;
+        if(noteAnchor){
+          const elbowX = drawingW + 2;
+          const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line1.setAttribute("x1", pinX.toFixed(2));
+          line1.setAttribute("y1", pinY.toFixed(2));
+          line1.setAttribute("x2", elbowX.toFixed(2));
+          line1.setAttribute("y2", pinY.toFixed(2));
+          line1.setAttribute("stroke", "#dc2626");
+          line1.setAttribute("stroke-width", "1.2");
+          line1.setAttribute("stroke-linecap", "round");
+          overlaySvg.appendChild(line1);
+          const line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line2.setAttribute("x1", elbowX.toFixed(2));
+          line2.setAttribute("y1", pinY.toFixed(2));
+          line2.setAttribute("x2", noteAnchor.x.toFixed(2));
+          line2.setAttribute("y2", noteAnchor.y.toFixed(2));
+          line2.setAttribute("stroke", "#dc2626");
+          line2.setAttribute("stroke-width", "1.2");
+          line2.setAttribute("stroke-linecap", "round");
+          overlaySvg.appendChild(line2);
+        }
+
+        const pinCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        pinCircle.setAttribute("cx", pinX.toFixed(2));
+        pinCircle.setAttribute("cy", pinY.toFixed(2));
+        pinCircle.setAttribute("r", "13");
+        pinCircle.setAttribute("fill", "#dc2626");
+        pinCircle.setAttribute("stroke", "#ffffff");
+        pinCircle.setAttribute("stroke-width", "2");
+        overlaySvg.appendChild(pinCircle);
+
+        const pinLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        pinLabel.setAttribute("x", pinX.toFixed(2));
+        pinLabel.setAttribute("y", (pinY + 4.2).toFixed(2));
+        pinLabel.setAttribute("text-anchor", "middle");
+        pinLabel.setAttribute("font-size", "12");
+        pinLabel.setAttribute("font-weight", "800");
+        pinLabel.setAttribute("fill", "#ffffff");
+        pinLabel.textContent = String(number);
+        overlaySvg.appendChild(pinLabel);
+      });
+      main.appendChild(overlaySvg);
 
       const footer = document.createElement("div");
-      footer.style.fontSize = "16px";
+      footer.style.height = `${footerH}px`;
+      footer.style.fontSize = "15px";
       footer.style.textAlign = "right";
       footer.style.color = "#64748b";
       footer.textContent = `Page ${Math.max(1, pageNumber)}`;
 
       root.appendChild(headerWrap);
-      root.appendChild(stageWrapEl);
+      root.appendChild(main);
       root.appendChild(footer);
       return root;
     }
@@ -8443,44 +8616,45 @@
     }
 
     async function buildPdfDrawingPageImage(options = {}){
-      const stage = $("stageWrap");
-      if(!stage) throw new Error("図面表示エリアが見つかりません。");
-      await stabilizePdfCapture();
-      const h2c = await loadHtml2Canvas();
-      const pixelScale = clamp((window.devicePixelRatio || 1) * 2, 1.5, 4);
-      const stageCanvas = await h2c(stage, {
-        backgroundColor: "#ffffff",
-        scale: pixelScale,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        onclone: (doc)=>{
-          const quickEditor = doc.getElementById("quickMarkerEditor");
-          if(quickEditor) quickEditor.style.display = "none";
-          const textEditor = doc.getElementById("textNoteEditor");
-          if(textEditor) textEditor.style.display = "none";
-        },
-      });
-      const stageImageData = stageCanvas.toDataURL("image/png");
+      const orderedMarkers = Array.isArray(options.orderedMarkers) ? options.orderedMarkers : [];
+      const pageNumber = Number(options.pageNumber || 1);
+      const bg = store.activeBg;
+      if(!bg || bg.kind !== "pdf"){
+        throw new Error("図面PDFが選択されていません。");
+      }
+      await ensurePageRendered(Number(bg.page || 1));
+      const stageImageData = getCurrentPdfPageImageForExport();
+      const drawingImg = await loadImageElement(stageImageData);
+      const drawingSize = {
+        width: Number(drawingImg.naturalWidth || drawingImg.width || 1),
+        height: Number(drawingImg.naturalHeight || drawingImg.height || 1),
+      };
+      const orientation = choosePdfDrawingOrientation(drawingSize);
       const drawingDom = buildPdfDrawingDom({
         headerData: getPdfHeaderData(),
         stageImageData,
-        rotation: getCurrentPdfRotation(),
-        pageNumber: Number(options.pageNumber || 1),
+        pageNumber,
+        orderedMarkers,
+        drawingSize,
+        orientation,
       });
-      const host = createPdfHiddenRoot(1620);
+      const host = createPdfHiddenRoot(orientation === "landscape" ? 1640 : 1160);
       host.appendChild(drawingDom);
       await waitForImagesReady(drawingDom);
-      await new Promise(resolve=>setTimeout(resolve, 200));
+      await new Promise(resolve=>setTimeout(resolve, 180));
+      const h2c = await loadHtml2Canvas();
       const pageCanvas = await h2c(drawingDom, {
         backgroundColor: "#ffffff",
-        scale: 2,
+        scale: 2.6,
         useCORS: true,
         allowTaint: true,
         logging: false,
       });
       host.remove();
-      return pageCanvas.toDataURL("image/png");
+      return {
+        imageData: pageCanvas.toDataURL("image/png"),
+        orientation,
+      };
     }
 
     function getPhotoSource(photo){
@@ -8578,7 +8752,7 @@
       return row;
     }
 
-    function createPhotoBlock(label, src, fallback){
+    function createPhotoBlock(label, src){
       const wrap = document.createElement("div");
       wrap.style.border = "1px solid #dbe2ea";
       wrap.style.borderRadius = "12px";
@@ -8600,20 +8774,12 @@
       frame.style.alignItems = "center";
       frame.style.justifyContent = "center";
       frame.style.overflow = "hidden";
-      if(src){
-        const img = document.createElement("img");
-        img.src = src;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "contain";
-        frame.appendChild(img);
-      }else{
-        const empty = document.createElement("div");
-        empty.textContent = fallback;
-        empty.style.color = "#64748b";
-        empty.style.fontSize = "16px";
-        frame.appendChild(empty);
-      }
+      const img = document.createElement("img");
+      img.src = src;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "contain";
+      frame.appendChild(img);
       wrap.appendChild(title);
       wrap.appendChild(frame);
       return wrap;
@@ -8624,8 +8790,6 @@
       const number = Number(opts.number || 0);
       const beforeSrc = String(opts.beforeSrc || "");
       const afterSrc = String(opts.afterSrc || "");
-      const beforeFallback = String(opts.beforeFallback || "写真なし");
-      const afterFallback = String(opts.afterFallback || "写真なし");
       const pageNumber = Number(opts.pageNumber || 1);
       const root = document.createElement("div");
       root.style.width = "1100px";
@@ -8658,11 +8822,23 @@
 
       const photos = document.createElement("div");
       photos.style.display = "grid";
-      photos.style.gridTemplateColumns = "1fr 1fr";
+      photos.style.gridTemplateColumns = (beforeSrc && afterSrc) ? "1fr 1fr" : "1fr";
       photos.style.gap = "12px";
-      photos.appendChild(createPhotoBlock("Before写真", beforeSrc, beforeFallback));
-      photos.appendChild(createPhotoBlock("After写真", afterSrc, afterFallback));
+      if(beforeSrc) photos.appendChild(createPhotoBlock("Before写真", beforeSrc));
+      if(afterSrc) photos.appendChild(createPhotoBlock("After写真", afterSrc));
       root.appendChild(photos);
+
+      const noPhotoInfo = [];
+      if(!beforeSrc) noPhotoInfo.push("Before写真：なし");
+      if(!afterSrc) noPhotoInfo.push("After写真：なし");
+      if(noPhotoInfo.length > 0){
+        const compact = document.createElement("div");
+        compact.textContent = noPhotoInfo.join(" / ");
+        compact.style.color = "#64748b";
+        compact.style.fontSize = "15px";
+        compact.style.fontWeight = "600";
+        root.appendChild(compact);
+      }
 
       const footer = document.createElement("div");
       footer.style.marginTop = "auto";
@@ -8683,8 +8859,6 @@
         number,
         beforeSrc: beforeResult.dataUrl,
         afterSrc: afterResult.dataUrl,
-        beforeFallback: beforeResult.error ? "写真読込失敗" : "写真なし",
-        afterFallback: afterResult.error ? "写真読込失敗" : "写真なし",
         pageNumber,
       });
       const host = createPdfHiddenRoot(1120);
@@ -8695,6 +8869,129 @@
       const canvas = await h2c(detailDom, {
         backgroundColor: "#ffffff",
         scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+      });
+      host.remove();
+      return canvas.toDataURL("image/png");
+    }
+
+    function markerHasAnyPhoto(marker){
+      const pair = getMarkerPhotoPair(marker);
+      const beforeSrc = getPhotoSource(pair.before);
+      const afterSrc = getPhotoSource(pair.after);
+      return !!(beforeSrc || afterSrc);
+    }
+
+    function buildPdfNoPhotoListDom(opts = {}){
+      const items = Array.isArray(opts.items) ? opts.items : [];
+      const pageNumber = Number(opts.pageNumber || 1);
+      const root = document.createElement("div");
+      root.style.width = "1100px";
+      root.style.minHeight = "1550px";
+      root.style.boxSizing = "border-box";
+      root.style.padding = "24px";
+      root.style.background = "#ffffff";
+      root.style.display = "flex";
+      root.style.flexDirection = "column";
+      root.style.gap = "12px";
+      root.style.fontFamily = "'Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif";
+      root.style.color = "#0f172a";
+
+      const title = document.createElement("div");
+      title.textContent = "写真なし指摘一覧";
+      title.style.fontSize = "28px";
+      title.style.fontWeight = "800";
+      root.appendChild(title);
+
+      const table = document.createElement("table");
+      table.style.width = "100%";
+      table.style.borderCollapse = "collapse";
+      table.style.tableLayout = "fixed";
+      table.style.border = "1px solid #dbe2ea";
+      const colWidths = ["10%", "24%", "18%", "12%", "28%", "8%"];
+      const labels = ["No.", "指摘種別", "担当業者", "状態", "メモ", "写真"];
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      labels.forEach((label, idx)=>{
+        const th = document.createElement("th");
+        th.textContent = label;
+        th.style.padding = "10px 8px";
+        th.style.fontSize = "15px";
+        th.style.fontWeight = "800";
+        th.style.background = "#f8fafc";
+        th.style.border = "1px solid #e2e8f0";
+        th.style.width = colWidths[idx];
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      if(items.length === 0){
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.textContent = "写真なし指摘はありません。";
+        td.style.padding = "12px";
+        td.style.textAlign = "center";
+        td.style.border = "1px solid #e2e8f0";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      }else{
+        items.forEach(({ marker, number })=>{
+          const tr = document.createElement("tr");
+          const status = normalizeMarkerStatus(marker) === "completed" ? "完了" : "未対応";
+          const cells = [
+            String(number),
+            String(marker?.type || "-"),
+            String(getVendorDisplayName(marker) || "未設定"),
+            status,
+            String(marker?.memo || "").trim() || "なし",
+            "なし",
+          ];
+          cells.forEach((value, idx)=>{
+            const td = document.createElement("td");
+            td.textContent = value;
+            td.style.padding = "9px 8px";
+            td.style.border = "1px solid #e2e8f0";
+            td.style.fontSize = "14px";
+            td.style.verticalAlign = "top";
+            td.style.wordBreak = "break-word";
+            if(idx === 5){
+              td.style.textAlign = "center";
+              td.style.fontWeight = "700";
+              td.style.color = "#475569";
+            }
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+      }
+      table.appendChild(tbody);
+      root.appendChild(table);
+
+      const footer = document.createElement("div");
+      footer.style.marginTop = "auto";
+      footer.style.fontSize = "16px";
+      footer.style.color = "#64748b";
+      footer.style.textAlign = "right";
+      footer.textContent = `Page ${Math.max(1, pageNumber)}`;
+      root.appendChild(footer);
+      return root;
+    }
+
+    async function buildPdfNoPhotoListPageImage(items, pageNumber){
+      const dom = buildPdfNoPhotoListDom({ items, pageNumber });
+      const host = createPdfHiddenRoot(1120);
+      host.appendChild(dom);
+      await waitForImagesReady(dom);
+      await new Promise(resolve=>setTimeout(resolve, 180));
+      const h2c = await loadHtml2Canvas();
+      const canvas = await h2c(dom, {
+        backgroundColor: "#ffffff",
+        scale: 2.4,
         useCORS: true,
         allowTaint: true,
         logging: false,
@@ -8724,24 +9021,47 @@
 
     async function buildPdfMarkerDetailPages(pdf, orderedMarkers, options = {}){
       const useCurrentFirstPage = !!options.useCurrentPageForFirst;
-      if(orderedMarkers.length === 0){
-        if(!useCurrentFirstPage){
-          pdf.addPage("a4", "portrait");
+      let pagePrepared = false;
+      const useNextPortraitPage = ()=>{
+        if(!pagePrepared && useCurrentFirstPage){
+          pagePrepared = true;
+          return;
         }
+        pdf.addPage("a4", "portrait");
+        pagePrepared = true;
+      };
+      const withPhotos = [];
+      const withoutPhotos = [];
+      orderedMarkers.forEach(item=>{
+        if(markerHasAnyPhoto(item.marker)){
+          withPhotos.push(item);
+        }else{
+          withoutPhotos.push(item);
+        }
+      });
+
+      const noPhotoChunkSize = 12;
+      for(let i = 0; i < withoutPhotos.length; i += noPhotoChunkSize){
+        useNextPortraitPage();
         const pageNo = pdf.getNumberOfPages();
-        const emptyMarker = { type: "-", memo: "対象の指摘はありません。" };
-        const imageData = await buildPdfDetailPageImage(emptyMarker, 0, pageNo);
+        const chunk = withoutPhotos.slice(i, i + noPhotoChunkSize);
+        const imageData = await buildPdfNoPhotoListPageImage(chunk, pageNo);
         addDetailImageToPdf(pdf, imageData);
-        return;
       }
-      for(let i = 0; i < orderedMarkers.length; i++){
-        if(i > 0 || !useCurrentFirstPage){
-          pdf.addPage("a4", "portrait");
-        }
-        const { marker, number } = orderedMarkers[i];
+
+      for(let i = 0; i < withPhotos.length; i++){
+        useNextPortraitPage();
         const pageNo = pdf.getNumberOfPages();
+        const { marker, number } = withPhotos[i];
         const imageData = await buildPdfDetailPageImage(marker, number, pageNo);
         addDetailImageToPdf(pdf, imageData);
+      }
+
+      if(!pagePrepared){
+        useNextPortraitPage();
+        const pageNo = pdf.getNumberOfPages();
+        const emptyImage = await buildPdfNoPhotoListPageImage([], pageNo);
+        addDetailImageToPdf(pdf, emptyImage);
       }
     }
 
@@ -8755,15 +9075,21 @@
       const includesDetails = mode !== "drawing_only";
       await loadHtml2Canvas();
       const JsPdf = await loadJsPdf();
+      let drawingPage = null;
+      if(includesDrawing){
+        drawingPage = await buildPdfDrawingPageImage({
+          pageNumber: 1,
+          orderedMarkers,
+        });
+      }
       const pdf = new JsPdf({
-        orientation: includesDrawing ? "landscape" : "portrait",
+        orientation: includesDrawing ? drawingPage.orientation : "portrait",
         unit: "mm",
         format: "a4",
         compress: true,
       });
       if(includesDrawing){
-        const drawingImageData = await buildPdfDrawingPageImage({ pageNumber: 1 });
-        addDrawingImageToPdf(pdf, drawingImageData);
+        addDrawingImageToPdf(pdf, drawingPage.imageData);
       }
       if(includesDetails){
         await buildPdfMarkerDetailPages(pdf, orderedMarkers, {
