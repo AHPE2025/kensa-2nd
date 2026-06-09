@@ -57,10 +57,10 @@
     .app-view.active{display:block}
     .inspection-grid{display:grid;grid-template-columns:2fr 1fr;gap:12px}
     .inspection-header{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-    .inspection-row{display:grid;grid-template-columns:2fr 1.2fr 1.2fr 0.9fr 0.9fr 1.2fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .inspection-row{display:grid;grid-template-columns:2fr 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr 1.2fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
     .inspection-row.head{font-size:12px;font-weight:700;background:#f8fafc}
     .inspection-row:last-child{border-bottom:none}
-    .floor-row{display:grid;grid-template-columns:1.4fr .8fr .8fr .9fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .floor-row{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr .9fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
     .floor-row.head{font-size:12px;font-weight:700;background:#f8fafc}
     .floor-row:last-child{border-bottom:none}
     .floor-inspection-head{padding:10px 14px;margin-bottom:12px}
@@ -126,6 +126,77 @@
     .vendor-mgmt-empty{padding:10px;color:var(--muted);font-size:12px}
     .vendor-state{font-size:11px;color:#334155;background:#f8fafc;border:1px solid #dbeafe;border-radius:8px;padding:5px 8px;white-space:nowrap}
     .legacy-input-note{font-size:11px;color:#6b7280;padding:4px 8px;border:1px dashed #d1d5db;border-radius:10px;background:#f9fafb}
+    .input-mode{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .input-mode .mode-btn{
+      border:1px solid #cbd5e1;
+      background:#f8fafc;
+      color:#1f2937;
+      border-radius:999px;
+      padding:8px 12px;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+      min-height:38px;
+    }
+    .input-mode .mode-btn.active{
+      background:#2563eb;
+      border-color:#2563eb;
+      color:#fff;
+    }
+    #textNotesLayer{
+      position:absolute;
+      inset:0;
+      z-index:4;
+      pointer-events:none;
+      touch-action:none;
+    }
+    .text-note-box{
+      position:absolute;
+      background:#ffffff;
+      color:#111827;
+      border:1px solid #d7dce4;
+      border-radius:8px;
+      box-shadow:0 3px 10px rgba(15,23,42,.16);
+      padding:6px 8px;
+      font-size:14px;
+      line-height:1.35;
+      pointer-events:auto;
+      cursor:grab;
+      user-select:none;
+      white-space:pre-wrap;
+      overflow:hidden;
+    }
+    .text-note-box:active{cursor:grabbing}
+    .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
+    .text-note-box.note-time{border-color:#60a5fa;background:#eff6ff}
+    .text-note-box.note-other{border-color:#9ca3af;background:#f8fafc}
+    .text-note-box.is-selected{outline:2px solid #2563eb}
+    #textNoteEditor{
+      position:absolute;
+      z-index:1300;
+      display:none;
+      width:min(320px, calc(100% - 12px));
+      background:#fff;
+      border:1px solid #dbe1ea;
+      border-radius:14px;
+      box-shadow:0 10px 26px rgba(15,23,42,.18);
+      padding:10px;
+      touch-action:manipulation;
+    }
+    #textNoteEditor .tn-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+    #textNoteEditor .tn-label{font-size:11px;color:#475569;font-weight:700}
+    #textNoteEditor textarea,#textNoteEditor select,#textNoteEditor input[type="number"]{
+      width:100%;
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      font-size:14px;
+      padding:8px 10px;
+      min-height:40px;
+      background:#fff;
+    }
+    #textNoteEditor textarea{min-height:84px;resize:vertical}
+    #textNoteEditor .tn-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px}
+    #textNoteEditor .tn-actions .btn{padding:9px 13px;min-height:40px}
     #quickMarkerEditor{
       position:absolute;
       z-index:1200;
@@ -200,6 +271,43 @@
     }
     #quickMarkerEditor .qe-photo-actions{display:flex;gap:6px;flex-wrap:wrap}
     #quickMarkerEditor .qe-photo-actions .btn{padding:7px 9px;min-height:34px;font-size:12px}
+    #quickMarkerStatusControls{display:flex;gap:8px;flex-wrap:wrap}
+    .status-toggle-btn{
+      flex:1 1 120px;
+      min-height:44px;
+      border:2px solid #cbd5e1;
+      background:#f8fafc;
+      color:#0f172a;
+      border-radius:12px;
+      font-size:14px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .status-toggle-btn.active.open{
+      border-color:#1d4ed8;
+      background:#dbeafe;
+      color:#1e3a8a;
+    }
+    .status-toggle-btn.active.completed{
+      border-color:#15803d;
+      background:#dcfce7;
+      color:#166534;
+    }
+    .status-badge{
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      border:1px solid #cbd5e1;
+      padding:1px 8px;
+      font-size:11px;
+      font-weight:700;
+      line-height:1.6;
+      margin-left:6px;
+    }
+    .status-badge.open{background:#eff6ff;border-color:#bfdbfe;color:#1e40af}
+    .status-badge.completed{background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .item.status-completed{opacity:.62}
+    .vendor-row.completed{opacity:.62}
     @media (max-width: 900px){
       #quickMarkerEditor{width:min(400px, calc(100% - 10px));padding:11px}
       #quickTypeChips .type-chip{font-size:14px;min-height:40px;padding:8px 13px}
@@ -232,6 +340,7 @@
               <div>検査担当者</div>
               <div>総指摘</div>
               <div>未対応</div>
+              <div>完了</div>
               <div>最終更新</div>
               <div>操作</div>
             </div>
@@ -297,6 +406,7 @@
             <div>フロア名</div>
             <div>指摘件数</div>
             <div>未対応件数</div>
+            <div>完了件数</div>
             <div>図面</div>
             <div>操作</div>
           </div>
@@ -319,6 +429,14 @@
             <div class="field" style="min-width:220px">
               <label>業者名</label>
               <select id="vendorWorkVendor"></select>
+            </div>
+            <div class="field" style="min-width:180px">
+              <label>ステータス</label>
+              <select id="vendorWorkStatusFilter">
+                <option value="open" selected>未対応</option>
+                <option value="completed">完了</option>
+                <option value="all">全て</option>
+              </select>
             </div>
           </div>
           <div id="vendorWorkList" class="list"></div>
@@ -421,6 +539,13 @@
 
         <!-- 図面上部：指摘種別・業者セレクタ -->
         <div class="drawing-controls card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px 14px;border-bottom:1px solid var(--line);margin:0;box-shadow:none;border-radius:var(--radius) var(--radius) 0 0;border:none;border-bottom:1px solid var(--line)">
+          <div class="field" style="min-width:180px">
+            <label>入力モード</label>
+            <div class="input-mode">
+              <button class="mode-btn active" id="btnInputModePin" type="button">ピン追加</button>
+              <button class="mode-btn" id="btnInputModeText" type="button">テキスト追加</button>
+            </div>
+          </div>
           <div class="field" style="min-width:140px;flex:1">
             <label>指摘種別</label>
             <select id="typeSelect">
@@ -461,6 +586,7 @@
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <canvas id="bg"></canvas>
           <svg id="overlay"></svg>
+          <div id="textNotesLayer"></div>
           <div id="quickMarkerEditor">
             <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
             <div class="qe-row" id="quickTypeChips"></div>
@@ -478,6 +604,12 @@
                   <button class="btn" id="quickMarkerVendorClear" type="button">クリア</button>
                 </div>
                 <div id="quickRelatedVendors" class="qe-label" style="margin-top:6px;color:#64748b">関連業者：なし</div>
+              </div>
+            </div>
+            <div class="qe-row">
+              <div style="width:100%">
+                <div class="qe-label">ステータス</div>
+                <div id="quickMarkerStatusControls"></div>
               </div>
             </div>
             <div class="qe-row">
@@ -517,6 +649,41 @@
               <button class="btn primary" id="quickMarkerSave" type="button">保存</button>
             </div>
           </div>
+          <div id="textNoteEditor">
+            <div class="tn-label" style="margin-bottom:6px">テキストメモ編集</div>
+            <div class="tn-row">
+              <div style="width:100%">
+                <div class="tn-label">内容</div>
+                <textarea id="textNoteEditorContent" placeholder="メモを入力"></textarea>
+              </div>
+            </div>
+            <div class="tn-row">
+              <div style="flex:1;min-width:120px">
+                <div class="tn-label">メモ種別</div>
+                <select id="textNoteEditorType">
+                  <option value="memo">メモ</option>
+                  <option value="caution">注意</option>
+                  <option value="time">時間</option>
+                  <option value="other">その他</option>
+                </select>
+              </div>
+              <div style="width:96px">
+                <div class="tn-label">文字サイズ</div>
+                <input id="textNoteEditorFontSize" type="number" min="10" max="32" value="14" />
+              </div>
+            </div>
+            <div class="tn-row">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#334155">
+                <input id="textNoteEditorBold" type="checkbox" />
+                太字
+              </label>
+            </div>
+            <div class="tn-actions">
+              <button class="btn danger" id="textNoteEditorDelete" type="button">削除</button>
+              <button class="btn" id="textNoteEditorCancel" type="button">キャンセル</button>
+              <button class="btn primary" id="textNoteEditorSave" type="button">保存</button>
+            </div>
+          </div>
           <button class="fs-btn" id="btnFullscreen">⛶ フルスクリーン</button>
         </div>
 
@@ -534,6 +701,14 @@
                 <option value="内装">内装</option>
                 <option value="クリーニング">クリーニング</option>
                 <option value="その他">その他</option>
+              </select>
+            </div>
+            <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
+              <label style="font-size:12px;color:var(--muted);white-space:nowrap">ステータス</label>
+              <select id="filterStatus" style="border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px">
+                <option value="open" selected>未対応</option>
+                <option value="completed">完了</option>
+                <option value="all">全て</option>
               </select>
             </div>
           </div>
@@ -643,7 +818,10 @@
       // activeBg: { kind:"none"|"pdf", pdfId:"...", page:1, pageCount: N, pageCache: { "pdfId:page": dataURL } }
       activeBg: { kind:"none" },
       // markersByKey: { "template": [..], "pdf:PDFID:1": [..] }
-      markersByKey: {}
+      markersByKey: {},
+      // textNotesByKey: { "template": [..], "pdf:PDFID:1": [..] }
+      textNotesByKey: {},
+      inputMode: "pin",
     };
 
     function loadStore(){
@@ -659,12 +837,16 @@
           return structuredClone(defaultStore);
         }
         if(!obj.markersByKey) obj.markersByKey = {};
+        if(!obj.textNotesByKey) obj.textNotesByKey = {};
+        if(obj.inputMode !== "text") obj.inputMode = "pin";
         if(!obj.activeBg) obj.activeBg = { kind:"none" };
         try{
           normalizeMarkersByKey(obj.markersByKey);
+          normalizeTextNotesByKey(obj.textNotesByKey);
         }catch(normErr){
           console.error("[store] markers normalize failed", normErr);
           obj.markersByKey = {};
+          obj.textNotesByKey = {};
         }
         console.debug("loadStore done", { source: "storage" });
         return obj;
@@ -813,6 +995,9 @@
       for(const [key, arr] of Object.entries(src)){
         if(!Array.isArray(arr)) continue;
         out[key] = arr.map(m=>({
+          status: normalizeMarkerStatus(m),
+          completed_at: m.completed_at || null,
+          completed_by: m.completed_by || "",
           id: m.id,
           x: m.x, y: m.y, dx: m.dx, dy: m.dy,
           type: m.type,
@@ -867,6 +1052,18 @@
       return "template";
     }
 
+    function parseTextNoteKey(key){
+      if(key === "template") return { page_number: 0, drawing_id: null, noteKey: "template" };
+      const m = /^pdf:([^:]+):(\d+)$/.exec(String(key || ""));
+      if(m) return { page_number: parseInt(m[2], 10), drawing_id: m[1], noteKey: key };
+      return { page_number: 1, drawing_id: null, noteKey: key || "template" };
+    }
+
+    function textNoteKeyFromRow(row){
+      if(row.drawing_id && Number(row.page_number) > 0) return `pdf:${row.drawing_id}:${Number(row.page_number)}`;
+      return "template";
+    }
+
     function remapMarkersPdfIdentity(oldId, newId){
       if(!oldId || !newId || oldId === newId) return;
       const mbk = store.markersByKey || {};
@@ -895,6 +1092,7 @@
           ? activeDrawingId
           : (pdfId === activeDrawingId ? activeDrawingId : null);
         arr.forEach((m, idx)=>{
+          const normalizedStatus = normalizeMarkerStatus(m);
           normalizeMarkerVendorState(m);
           ensureMarkerPhotoState(m);
           const assignedVendorNames = m.is_common
@@ -919,7 +1117,9 @@
             dy: Number(m.dy),
             type: m.type || "",
             vendor_name: m.vendor_name || m.vendor || "",
-            status: m.status || "open",
+            status: normalizedStatus,
+            completed_at: m.completed_at || null,
+            completed_by: m.completed_by || "",
             vendor_status: m.vendor_status || "assigned",
             vendor_source: m.vendor_source || "auto",
             floor_label: null,
@@ -936,7 +1136,9 @@
               floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
               pdfId,
               createdAt: m.createdAt || Date.now(),
-              status: m.status || "open",
+              status: normalizedStatus,
+              completed_at: m.completed_at || null,
+              completed_by: m.completed_by || "",
               vendor_id: m.vendor_id || null,
               vendor_name: m.vendor_name || m.vendor || "",
               vendor_status: m.vendor_status || "assigned",
@@ -972,6 +1174,7 @@
           const key = markerKeyFromRow(row);
           if(!mbk[key]) mbk[key] = [];
           const md = row.marker_data || {};
+          const normalizedStatus = normalizeMarkerStatus(row.status || md.status || "open");
           mbk[key].push({
             id: row.local_marker_id || md.id || newId(),
             x: Number(row.x),
@@ -980,7 +1183,9 @@
             dy: Number(row.dy),
             type: row.type || "",
             vendor: row.vendor_name || md.vendor_name || "",
-            status: row.status || md.status || "open",
+            status: normalizedStatus,
+            completed_at: row.completed_at || md.completed_at || null,
+            completed_by: row.completed_by || md.completed_by || "",
             vendor_id: md.vendor_id || null,
             vendor_name: row.vendor_name || md.vendor_name || "",
             vendor_status: row.vendor_status || md.vendor_status || "assigned",
@@ -1047,6 +1252,7 @@
           version: 1,
           activeBg: activeBgForCloud(),
           markersByKey: markersByKeyForCloud(),
+          inputMode: store.inputMode || "pin",
           normalRotation: normalRotation || 0,
         },
       };
@@ -1100,12 +1306,16 @@
       if(typeof settings.normalRotation === "number"){
         normalRotation = settings.normalRotation;
       }
+      store.inputMode = settings.inputMode === "text" ? "text" : (store.inputMode || "pin");
       store.version = 1;
     }
 
     function refreshUiAfterDataChange(){
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
+      closeTextNoteEditor();
       selectedId = null;
+      selectedTextNoteId = null;
+      setInputMode(store.inputMode || "pin");
       saveStore();
       updatePageInfo();
       redrawBackground();
@@ -1259,6 +1469,106 @@
         markerCount: markerRows.length,
         insertedRows: inserted,
       };
+    }
+
+    function buildTextNoteRowsForCloud(inspectionId){
+      const rows = [];
+      const byKey = store.textNotesByKey || {};
+      const floorName = selectedFloor?.floor_name || $("inpFloorName").value || null;
+      for(const [key, arr] of Object.entries(byKey)){
+        if(!Array.isArray(arr)) continue;
+        const { page_number, drawing_id } = parseTextNoteKey(key);
+        arr.forEach((noteRaw, idx)=>{
+          const note = normalizeTextNote(noteRaw);
+          rows.push({
+            id: note.id || null,
+            inspection_id: inspectionId,
+            site_id: selectedSiteId || null,
+            floor_id: selectedFloorId || null,
+            drawing_id: drawing_id || null,
+            floor_name: floorName,
+            page_number: page_number > 0 ? page_number : 1,
+            local_text_id: note.local_text_id,
+            x: Number(note.x),
+            y: Number(note.y),
+            width: Number(note.width),
+            height: Number(note.height),
+            text_content: String(note.text_content ?? ""),
+            note_type: note.note_type || "memo",
+            font_size: Number(note.font_size || 14),
+            font_weight: note.font_weight || "normal",
+            text_color: note.text_color || "#111827",
+            background_color: note.background_color || "#ffffff",
+            border_color: note.border_color || "#d7dce4",
+            opacity: Number(note.opacity || 1),
+            rotation: Number(note.rotation || 0),
+            display_order: Number.isFinite(Number(note.display_order)) ? Number(note.display_order) : idx,
+            status: note.status === "deleted" ? "deleted" : "active",
+          });
+        });
+      }
+      return rows;
+    }
+
+    async function saveTextNotesToCloud(inspectionId){
+      const sb = getSupabase();
+      const rows = buildTextNoteRowsForCloud(inspectionId);
+      if(rows.length === 0) return { textNoteCount: 0 };
+      const { data, error } = await sb.from("drawing_text_notes")
+        .upsert(rows, { onConflict: "inspection_id,local_text_id" })
+        .select("id, local_text_id");
+      if(error) throw error;
+      const idMap = new Map((data || []).map(r=>[String(r.local_text_id), r.id]));
+      for(const arr of Object.values(store.textNotesByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        arr.forEach(note=>{
+          const sid = idMap.get(String(note.local_text_id));
+          if(sid) note.id = sid;
+        });
+      }
+      return { textNoteCount: rows.length };
+    }
+
+    async function loadTextNotesFromCloud(inspectionId){
+      if(!inspectionId) return;
+      const sb = getSupabase();
+      const { data, error } = await sb.from("drawing_text_notes")
+        .select("*")
+        .eq("inspection_id", inspectionId)
+        .eq("status", "active")
+        .order("display_order", { ascending: true });
+      if(error) throw error;
+      const next = {};
+      (data || []).forEach(row=>{
+        const key = textNoteKeyFromRow(row);
+        if(!next[key]) next[key] = [];
+        next[key].push(normalizeTextNote({
+          id: row.id || null,
+          local_text_id: row.local_text_id,
+          x: row.x,
+          y: row.y,
+          width: row.width,
+          height: row.height,
+          text_content: row.text_content,
+          note_type: row.note_type,
+          font_size: row.font_size,
+          font_weight: row.font_weight,
+          text_color: row.text_color,
+          background_color: row.background_color,
+          border_color: row.border_color,
+          opacity: row.opacity,
+          rotation: row.rotation,
+          display_order: row.display_order,
+          status: row.status || "active",
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        }));
+      });
+      store.textNotesByKey = next;
+      normalizeTextNotesByKey(store.textNotesByKey);
+      saveStore();
+      redrawOverlay();
+      redrawTextNotes();
     }
 
     function mapSavedMarkerIdsToLocalMarkers(insertedRows){
@@ -1517,6 +1827,11 @@
             toast("PDFの復元に失敗しました。再アップロードしてください");
           }
         }
+        try{
+          await loadTextNotesFromCloud(inspectionId);
+        }catch(e){
+          showCloudError("テキストメモの復元", e);
+        }
 
         refreshUiAfterDataChange();
         updateCurrentContextLabels();
@@ -1578,6 +1893,7 @@
         if(updErr) throw updErr;
 
         const markerSaveRes = await saveMarkersToCloud(inspectionId);
+        const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
         let photoSavedCount = 0;
         for(const arr of Object.values(store.markersByKey || {})){
           if(!Array.isArray(arr)) continue;
@@ -1589,7 +1905,7 @@
 
         saveStore();
         setCloudStatus("保存済", "ok");
-        toast(`クラウド保存しました。マーカー：${markerSaveRes.markerCount}件 / 写真：${photoSavedCount}件`);
+        toast(`クラウド保存しました。マーカー：${markerSaveRes.markerCount}件 / テキスト：${textNoteSaveRes.textNoteCount}件 / 写真：${photoSavedCount}件`);
         updateCloudCurrentIdLabel();
         await refreshCloudInspectionList();
         if(selectedSiteId) await loadInspectionSites();
@@ -1683,9 +1999,61 @@
       return d.toISOString().slice(0, 10);
     }
 
+    function normalizeMarkerStatus(marker){
+      const raw = (marker && typeof marker === "object") ? marker.status : marker;
+      const s = String(raw == null ? "" : raw).trim().toLowerCase();
+      const normalized = ["completed", "done", "complete", "完了"].includes(s) ? "completed" : "open";
+      if(marker && typeof marker === "object"){
+        marker.status = normalized;
+        if(normalized !== "completed"){
+          marker.completed_at = null;
+          marker.completed_by = "";
+        }else{
+          marker.completed_by = String(marker.completed_by || "");
+        }
+      }
+      return normalized;
+    }
+
+    function getMarkerStatusLabel(status){
+      return normalizeMarkerStatus(status) === "completed" ? "完了" : "未対応";
+    }
+
+    function setMarkerStatus(marker, status){
+      if(!marker || typeof marker !== "object") return;
+      const next = normalizeMarkerStatus(status);
+      if(next === "completed"){
+        marker.status = "completed";
+        marker.completed_at = new Date().toISOString();
+        const actor = ($("inpInspectorName")?.value || "").trim();
+        marker.completed_by = actor || "";
+      }else{
+        marker.status = "open";
+        marker.completed_at = null;
+        marker.completed_by = "";
+      }
+    }
+
+    function renderMarkerStatusControls(marker){
+      const normalized = normalizeMarkerStatus(marker);
+      return `
+        <button type="button" class="status-toggle-btn open ${normalized === "open" ? "active open" : ""}" data-act="set-status" data-status="open">未対応</button>
+        <button type="button" class="status-toggle-btn completed ${normalized === "completed" ? "active completed" : ""}" data-act="set-status" data-status="completed">完了</button>
+      `;
+    }
+
+    function filterMarkersByStatus(markerRows, statusFilter){
+      const filter = String(statusFilter || "all").toLowerCase();
+      if(filter === "all" || filter === "全て") return markerRows;
+      const target = normalizeMarkerStatus(filter);
+      return (Array.isArray(markerRows) ? markerRows : []).filter(entry=>{
+        const marker = entry?.marker || entry;
+        return normalizeMarkerStatus(marker) === target;
+      });
+    }
+
     function isUnresolvedStatus(status){
-      const s = String(status || "").toLowerCase();
-      return !["done", "completed", "resolved", "closed", "対応済み"].includes(s);
+      return normalizeMarkerStatus(status) === "open";
     }
 
     function updateCurrentContextLabels(){
@@ -1737,6 +2105,7 @@
         siteIds.forEach(id=>summaryBySite.set(String(id), {
           total_count: 0,
           unresolved_count: 0,
+          completed_count: 0,
           updated_at: null,
         }));
 
@@ -1763,7 +2132,11 @@
               if(!siteKey || !summaryBySite.has(siteKey)) return;
               const bucket = summaryBySite.get(siteKey);
               bucket.total_count += 1;
-              if(isUnresolvedStatus(m.status)) bucket.unresolved_count += 1;
+              if(isUnresolvedStatus(m.status)){
+                bucket.unresolved_count += 1;
+              }else{
+                bucket.completed_count += 1;
+              }
             });
           }
         }
@@ -1774,6 +2147,7 @@
             ...site,
             total_count: summary.total_count || 0,
             unresolved_count: summary.unresolved_count || 0,
+            completed_count: summary.completed_count || 0,
             latest_updated_at: summary.updated_at || site.updated_at || site.created_at || null,
           };
         });
@@ -1804,6 +2178,7 @@
           <div>${escapeHtml(site.inspector_name || "-")}</div>
           <div>${Number(site.total_count || 0)}</div>
           <div>${Number(site.unresolved_count || 0)}</div>
+          <div>${Number(site.completed_count || 0)}</div>
           <div>${escapeHtml(site.latest_updated_at ? new Date(site.latest_updated_at).toLocaleString() : "-")}</div>
           <div><button class="btn" type="button" data-act="open-site" data-id="${escapeHtml(String(site.id))}">開く</button></div>
         `;
@@ -1897,6 +2272,7 @@
         const summaryByFloor = new Map(floorIds.map(id=>[String(id), {
           total_count: 0,
           unresolved_count: 0,
+          completed_count: 0,
           drawing_registered: false,
         }]));
         if(floorIds.length > 0){
@@ -1917,7 +2293,11 @@
               if(!floorKey || !summaryByFloor.has(floorKey)) return;
               const bucket = summaryByFloor.get(floorKey);
               bucket.total_count += 1;
-              if(isUnresolvedStatus(m.status)) bucket.unresolved_count += 1;
+              if(isUnresolvedStatus(m.status)){
+                bucket.unresolved_count += 1;
+              }else{
+                bucket.completed_count += 1;
+              }
             });
           }
 
@@ -1959,6 +2339,7 @@
           <div>${escapeHtml(f.floor_name || "-")}</div>
           <div>${Number(f.total_count || 0)}</div>
           <div>${Number(f.unresolved_count || 0)}</div>
+          <div>${Number(f.completed_count || 0)}</div>
           <div>${f.drawing_registered ? "登録済み" : "未登録"}</div>
           <div><button class="btn" type="button" data-act="open-floor" data-id="${escapeHtml(String(f.id))}">フロアを開く</button></div>
         `;
@@ -2076,19 +2457,23 @@
       const list = $("vendorWorkList");
       const vendorSelect = $("vendorWorkVendor");
       const vendorName = selectedVendorWorkName || vendorSelect.value || "";
+      const statusFilter = $("vendorWorkStatusFilter")?.value || "open";
       list.innerHTML = "";
       const markerRows = Object.entries(store.markersByKey || {}).flatMap(([key, arr])=>
         (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
       );
-      const filtered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, vendorName));
+      const vendorFiltered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, vendorName));
+      const filtered = filterMarkersByStatus(vendorFiltered, statusFilter);
       if(filtered.length === 0){
         list.innerHTML = `<div class="vendor-row"><span class="small">該当する指摘がありません。</span></div>`;
         return;
       }
       filtered.forEach(({ marker, markerKey }, idx)=>{
         const row = document.createElement("div");
-        row.className = "vendor-row";
-        const statusText = isUnresolvedStatus(marker.status) ? "未対応" : "対応済み";
+        const markerStatus = normalizeMarkerStatus(marker);
+        row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "");
+        const statusText = getMarkerStatusLabel(markerStatus);
+        const canComplete = markerStatus !== "completed";
         row.innerHTML = `
           <div>
             <div><strong>${idx + 1}. ${escapeHtml(marker.type || "種別未設定")}</strong></div>
@@ -2096,7 +2481,8 @@
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn" type="button" data-act="goto-marker" data-marker-id="${escapeHtml(String(marker.id))}" data-marker-key="${escapeHtml(markerKey)}">図面で見る</button>
-            <button class="btn ok" type="button" data-act="mark-done" data-marker-id="${escapeHtml(String(marker.id))}">対応済みにする</button>
+            <button class="btn ok" type="button" data-act="mark-completed" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "" : "disabled"}>完了にする</button>
+            <button class="btn" type="button" data-act="mark-open" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "disabled" : ""}>未対応に戻す</button>
           </div>
         `;
         list.appendChild(row);
@@ -3227,7 +3613,10 @@
     // -------------------- State --------------------
     let store = loadStore();
     let selectedId = null;
+    let selectedTextNoteId = null;
     let filterVendor = "";
+    let filterStatus = "open";
+    let inputMode = store.inputMode === "text" ? "text" : "pin";
 
     function activeKey(){
       const bg = store.activeBg;
@@ -3242,15 +3631,23 @@
       if(!store.markersByKey[key]) store.markersByKey[key] = [];
       return store.markersByKey[key];
     }
+    function textNotes(){
+      const key = activeKey();
+      if(!store.textNotesByKey[key]) store.textNotesByKey[key] = [];
+      return store.textNotesByKey[key];
+    }
 
     // -------------------- Background Rendering --------------------
     const bgCanvas = $("bg");
     const ctx = bgCanvas.getContext("2d");
     const overlay = $("overlay");
+    const textNotesLayer = $("textNotesLayer");
     const stageWrap = $("stageWrap");
     const quickMarkerEditor = $("quickMarkerEditor");
+    const textNoteEditor = $("textNoteEditor");
     const QUICK_TYPE_CHIP_ORDER = ["共通","傷","汚れ","建具","設備","補修","その他"];
     let quickEditorState = null;
+    let textNoteEditorState = null;
     const pendingPhotoStorageDeletes = new Set();
 
     function resizeStage(){
@@ -3515,12 +3912,61 @@
       }
     }
 
+    function normalizeTextNote(note){
+      const src = (note && typeof note === "object") ? note : {};
+      const createdAt = src.created_at || src.createdAt || new Date().toISOString();
+      const updatedAt = src.updated_at || src.updatedAt || createdAt;
+      return {
+        id: src.id || null,
+        local_text_id: src.local_text_id || src.localTextId || ("t_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16)),
+        x: clamp(Number.isFinite(Number(src.x)) ? Number(src.x) : 0.5, 0, 1),
+        y: clamp(Number.isFinite(Number(src.y)) ? Number(src.y) : 0.5, 0, 1),
+        width: clamp(Number.isFinite(Number(src.width)) ? Number(src.width) : 0.18, 0.08, 0.6),
+        height: clamp(Number.isFinite(Number(src.height)) ? Number(src.height) : 0.065, 0.04, 0.3),
+        text_content: (src.text_content ?? src.textContent ?? "メモを入力"),
+        note_type: src.note_type || src.noteType || "memo",
+        font_size: clamp(parseInt(String(src.font_size ?? src.fontSize ?? 14), 10) || 14, 10, 32),
+        font_weight: String(src.font_weight || src.fontWeight || "normal") === "bold" ? "bold" : "normal",
+        text_color: src.text_color || "#111827",
+        background_color: src.background_color || "#ffffff",
+        border_color: src.border_color || "#d7dce4",
+        opacity: clamp(Number.isFinite(Number(src.opacity)) ? Number(src.opacity) : 1, 0.2, 1),
+        rotation: Number.isFinite(Number(src.rotation)) ? Number(src.rotation) : 0,
+        display_order: Number.isFinite(Number(src.display_order)) ? Number(src.display_order) : (Number.isFinite(Number(src.displayOrder)) ? Number(src.displayOrder) : 0),
+        status: String(src.status || "active") === "deleted" ? "deleted" : "active",
+        created_at: createdAt,
+        updated_at: updatedAt,
+      };
+    }
+
+    function normalizeTextNotesByKey(mbk){
+      if(!mbk || typeof mbk !== "object") return false;
+      let changed = false;
+      for(const [key, arr] of Object.entries(mbk)){
+        if(!Array.isArray(arr)){
+          mbk[key] = [];
+          changed = true;
+          continue;
+        }
+        mbk[key] = arr.map((note, idx)=>{
+          const normalized = normalizeTextNote(note);
+          if(!Number.isFinite(Number(normalized.display_order))) normalized.display_order = idx;
+          if(JSON.stringify(note) !== JSON.stringify(normalized)) changed = true;
+          return normalized;
+        });
+      }
+      return changed;
+    }
+
     function normalizeMarkersByKey(mbk){
       if(!mbk || typeof mbk !== "object") return false;
       let changed = false;
       for(const arr of Object.values(mbk)){
         if(!Array.isArray(arr)) continue;
         arr.forEach(m=>{
+          const beforeStatus = String(m.status || "");
+          const normalizedStatus = normalizeMarkerStatus(m);
+          if(beforeStatus !== normalizedStatus) changed = true;
           if(normalizeMarkerVendorState(m)) changed = true;
           if(ensureMarkerPhotoState(m)) changed = true;
           if(safeNormalizeMarkerOffset(m)) changed = true;
@@ -3616,6 +4062,7 @@
       const related = Array.isArray(d.sub_vendor_names) && d.sub_vendor_names.length ? d.sub_vendor_names.join("、") : "なし";
       $("quickRelatedVendors").textContent = `関連業者：${related}`;
       renderQuickTypeChips(d.type || "共通");
+      $("quickMarkerStatusControls").innerHTML = renderMarkerStatusControls(d);
       renderQuickPhotoSection(d);
     }
 
@@ -3812,6 +4259,9 @@
         isNew,
         draft: {
           type: marker.type || "共通",
+          status: normalizeMarkerStatus(marker),
+          completed_at: marker.completed_at || null,
+          completed_by: marker.completed_by || "",
           vendor_name: marker.vendor_name || marker.vendor || "",
           vendor_id: marker.vendor_id || null,
           vendor_status: marker.vendor_status || "assigned",
@@ -3858,6 +4308,207 @@
       }
     }
 
+    function setInputMode(mode){
+      inputMode = mode === "text" ? "text" : "pin";
+      store.inputMode = inputMode;
+      saveStore();
+      $("btnInputModePin")?.classList.toggle("active", inputMode === "pin");
+      $("btnInputModeText")?.classList.toggle("active", inputMode === "text");
+    }
+
+    function textNoteTypeLabel(noteType){
+      if(noteType === "caution") return "注意";
+      if(noteType === "time") return "時間";
+      if(noteType === "other") return "その他";
+      return "メモ";
+    }
+
+    function getTextNoteByLocalId(localTextId){
+      if(!localTextId) return null;
+      for(const arr of Object.values(store.textNotesByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        const found = arr.find(n=>n.local_text_id === localTextId);
+        if(found) return found;
+      }
+      return null;
+    }
+
+    function positionTextNoteEditor(note){
+      if(!textNoteEditor || !note) return;
+      const p = imgRatioToCanvasPx(note.x, note.y);
+      const editorW = textNoteEditor.offsetWidth || 320;
+      const editorH = textNoteEditor.offsetHeight || 260;
+      const left = clamp(p.x + 16, 8, Math.max(8, stageW - editorW - 8));
+      const top = clamp(p.y + 16, 8, Math.max(8, stageH - editorH - 8));
+      textNoteEditor.style.left = `${left}px`;
+      textNoteEditor.style.top = `${top}px`;
+    }
+
+    function closeTextNoteEditor(){
+      textNoteEditorState = null;
+      if(textNoteEditor) textNoteEditor.style.display = "none";
+    }
+
+    function saveTextNoteFromEditor(note){
+      if(!note) return;
+      const content = $("textNoteEditorContent")?.value ?? "";
+      const noteType = $("textNoteEditorType")?.value || "memo";
+      const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
+      const isBold = !!$("textNoteEditorBold")?.checked;
+      note.text_content = String(content);
+      note.note_type = noteType;
+      note.font_size = clamp(Number.isFinite(fontSize) ? fontSize : 14, 10, 32);
+      note.font_weight = isBold ? "bold" : "normal";
+      note.updated_at = new Date().toISOString();
+      saveStore();
+      redrawOverlay();
+    }
+
+    function openTextNoteEditor(note, options = {}){
+      if(!note || !textNoteEditor) return;
+      const isNew = !!options.isNew;
+      textNoteEditorState = {
+        local_text_id: note.local_text_id,
+        isNew,
+      };
+      $("textNoteEditorContent").value = (note.text_content ?? "メモを入力");
+      $("textNoteEditorType").value = note.note_type || "memo";
+      $("textNoteEditorFontSize").value = String(note.font_size || 14);
+      $("textNoteEditorBold").checked = (note.font_weight || "normal") === "bold";
+      textNoteEditor.style.display = "block";
+      positionTextNoteEditor(note);
+      setTimeout(()=>{ try{ $("textNoteEditorContent").focus(); }catch(_){} }, 0);
+    }
+
+    function deleteTextNote(note){
+      if(!note) return;
+      const ok = confirm("このテキストメモを削除しますか？");
+      if(!ok) return;
+      note.status = "deleted";
+      note.updated_at = new Date().toISOString();
+      if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
+      closeTextNoteEditor();
+      saveStore();
+      redrawOverlay();
+    }
+
+    function createTextNoteAt(x, y){
+      const ratio = canvasPxToImgRatio(x, y);
+      const now = new Date().toISOString();
+      const note = normalizeTextNote({
+        local_text_id: "txt_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16),
+        x: ratio.x,
+        y: ratio.y,
+        width: 0.18,
+        height: 0.065,
+        text_content: "メモを入力",
+        note_type: "memo",
+        font_size: 14,
+        font_weight: "normal",
+        status: "active",
+        created_at: now,
+        updated_at: now,
+      });
+      const arr = textNotes();
+      note.display_order = arr.length;
+      arr.push(note);
+      selectedTextNoteId = note.local_text_id;
+      closeQuickMarkerEditor({ keepDraft: false });
+      saveStore();
+      redrawOverlay();
+      openTextNoteEditor(note, { isNew: true });
+      return note;
+    }
+
+    let textNoteDrag = null;
+    function redrawTextNotes(){
+      if(!textNotesLayer) return;
+      textNotesLayer.innerHTML = "";
+      const arr = textNotes()
+        .map((note, idx)=>{
+          const normalized = normalizeTextNote(note);
+          Object.assign(note, normalized);
+          if(!Number.isFinite(Number(note.display_order))) note.display_order = idx;
+          return note;
+        })
+        .filter(note=>note.status === "active")
+        .sort((a,b)=>(Number(a.display_order || 0) - Number(b.display_order || 0)));
+      arr.forEach(noteRaw=>{
+        const note = noteRaw;
+        const point = imgRatioToCanvasPx(note.x, note.y);
+        const w = clamp(note.width * stageW, 90, 360);
+        const h = clamp(note.height * stageH, 34, 220);
+        const el = document.createElement("div");
+        el.className = "text-note-box note-" + note.note_type + (selectedTextNoteId === note.local_text_id ? " is-selected" : "");
+        el.dataset.localTextId = note.local_text_id;
+        el.style.left = `${clamp(point.x, 0, Math.max(0, stageW - w))}px`;
+        el.style.top = `${clamp(point.y, 0, Math.max(0, stageH - h))}px`;
+        el.style.width = `${w}px`;
+        el.style.minHeight = `${h}px`;
+        el.style.fontSize = `${note.font_size}px`;
+        el.style.fontWeight = note.font_weight || "normal";
+        el.style.color = note.text_color || "#111827";
+        el.style.backgroundColor = note.background_color || "#ffffff";
+        el.style.borderColor = note.border_color || "#d7dce4";
+        el.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
+        const text = String(note.text_content ?? "");
+        el.textContent = text.trim() ? text : " ";
+        el.title = textNoteTypeLabel(note.note_type);
+        el.addEventListener("pointerdown", (e)=>{
+          if(e.button === 2) return;
+          selectedTextNoteId = note.local_text_id;
+          const base = imgRatioToCanvasPx(note.x, note.y);
+          textNoteDrag = {
+            local_text_id: note.local_text_id,
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            baseX: base.x,
+            baseY: base.y,
+          };
+          closeQuickMarkerEditor({ keepDraft: false });
+          redrawTextNotes();
+          try{ el.setPointerCapture(e.pointerId); }catch(_){}
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        el.addEventListener("pointermove", (e)=>{
+          if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
+          const target = getTextNoteByLocalId(textNoteDrag.local_text_id);
+          if(!target) return;
+          const nx = textNoteDrag.baseX + (e.clientX - textNoteDrag.startX);
+          const ny = textNoteDrag.baseY + (e.clientY - textNoteDrag.startY);
+          const r = canvasPxToImgRatio(clamp(nx, 0, stageW), clamp(ny, 0, stageH));
+          target.x = clamp(r.x, 0, 1);
+          target.y = clamp(r.y, 0, 1);
+          target.updated_at = new Date().toISOString();
+          redrawTextNotes();
+          if(textNoteEditorState && textNoteEditorState.local_text_id === target.local_text_id){
+            positionTextNoteEditor(target);
+          }
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        el.addEventListener("pointerup", (e)=>{
+          if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
+          const moved = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY) >= 3;
+          textNoteDrag = null;
+          try{ el.releasePointerCapture(e.pointerId); }catch(_){}
+          const target = getTextNoteByLocalId(note.local_text_id);
+          if(target){
+            saveStore();
+            redrawOverlay();
+            if(!moved){
+              openTextNoteEditor(target, { isNew: false });
+            }
+          }
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        textNotesLayer.appendChild(el);
+      });
+    }
+
     function createDraftMarkerAt(x, y){
       console.debug("[marker] createDraftMarkerAt実行", { x, y });
       const ratio = canvasPxToImgRatio(x, y);
@@ -3885,6 +4536,9 @@
         original_auto_vendor_name: "全業者",
         is_common: true,
         is_vendor_unassigned: false,
+        status: "open",
+        completed_at: null,
+        completed_by: "",
         memo: "",
         createdAt: Date.now(),
         bubbleMoved: false,
@@ -3902,6 +4556,7 @@
       safeNormalizeMarkerOffset(m);
       markers().push(m);
       selectedId = m.id;
+      selectedTextNoteId = null;
       redrawOverlay();
       redrawList();
       syncButtons();
@@ -3923,6 +4578,8 @@
         return;
       }
       const d = quickEditorState.draft;
+      const prevStatus = normalizeMarkerStatus(marker);
+      const nextStatus = normalizeMarkerStatus(d.status || "open");
       marker.type = d.type || "共通";
       marker.memo = d.memo || "";
       if(marker.type === "共通"){
@@ -3995,6 +4652,17 @@
       marker.afterPhotoDelete = !!d.afterPhotoDelete;
       marker.beforePhotoDeletePath = d.beforePhotoDeletePath || null;
       marker.afterPhotoDeletePath = d.afterPhotoDeletePath || null;
+      if(prevStatus !== nextStatus){
+        setMarkerStatus(marker, nextStatus);
+      }else if(nextStatus === "completed"){
+        marker.status = "completed";
+        marker.completed_at = d.completed_at || marker.completed_at || new Date().toISOString();
+        marker.completed_by = String(d.completed_by || marker.completed_by || "");
+      }else{
+        marker.status = "open";
+        marker.completed_at = null;
+        marker.completed_by = "";
+      }
       normalizeMarkerVendorState(marker);
       ensureMarkerPhotoState(marker);
       quickEditorState = null;
@@ -4116,11 +4784,13 @@
         t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
         bubbleG.appendChild(t1);
 
+        const statusLabel = getMarkerStatusLabel(m.status);
         const memo = (m.memo||"").trim();
         const photoTag = getMarkerPhotoBadgeText(m);
         const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280" });
         const line2 = memo ? (memo.length>16? memo.slice(0,16)+"…" : memo) : "（メモなし）";
-        t2.textContent = photoTag ? `${line2} / ${photoTag}` : line2;
+        const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
+        t2.textContent = `${statusLine} / ${line2}`;
         bubbleG.appendChild(t2);
 
         group.appendChild(bubbleG);
@@ -4149,6 +4819,7 @@
       }
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
+      redrawTextNotes();
     }
 
     // -------------------- List Rendering --------------------
@@ -4156,7 +4827,8 @@
       const list = $("list");
       list.innerHTML = "";
       const arr = markers();
-      const view = arr.filter(m=>shouldShowMarkerForVendor(m, filterVendor));
+      const vendorFiltered = arr.filter(m=>shouldShowMarkerForVendor(m, filterVendor));
+      const view = filterMarkersByStatus(vendorFiltered, filterStatus);
 
       if(view.length === 0){
         const div = document.createElement("div");
@@ -4168,15 +4840,17 @@
       }
 
       view.forEach((m, idx)=>{
+        const status = normalizeMarkerStatus(m);
+        const statusLabel = getMarkerStatusLabel(status);
         const div = document.createElement("div");
-        div.className = "item" + (m.id===selectedId ? " sel" : "");
+        div.className = "item" + (m.id===selectedId ? " sel" : "") + (status === "completed" ? " status-completed" : "");
         div.dataset.id = m.id;
         const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
         const photoTag = getMarkerPhotoBadgeText(m) || "なし";
-        const sub = `メモ：${(m.memo||"").trim() ? (m.memo.length>26? m.memo.slice(0,26)+"…" : m.memo) : "なし"} / 写真：${photoTag} / 作成：${new Date(m.createdAt).toLocaleString()}`;
+        const sub = `状態：${statusLabel} / メモ：${(m.memo||"").trim() ? (m.memo.length>26? m.memo.slice(0,26)+"…" : m.memo) : "なし"} / 写真：${photoTag} / 作成：${new Date(m.createdAt).toLocaleString()}`;
         div.innerHTML = `
           <div class="meta">
-            <div class="t">${escapeHtml(title)}</div>
+            <div class="t">${escapeHtml(title)} <span class="status-badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></div>
             <div class="s">${escapeHtml(sub)}</div>
           </div>
           <div class="act">
@@ -4265,8 +4939,14 @@
       }
       const p = svgPointFromAnyEvent(e);
       console.debug("stage tapped", { source, x: p.x, y: p.y });
+      selectedId = null;
       closeQuickMarkerEditor({ keepDraft: false });
-      createDraftMarkerAt(p.x, p.y);
+      closeTextNoteEditor();
+      if(inputMode === "text"){
+        createTextNoteAt(p.x, p.y);
+      }else{
+        createDraftMarkerAt(p.x, p.y);
+      }
     }
 
     function handleBlankCanvasTap(e, source){
@@ -4285,6 +4965,7 @@
         // 既存マーカー上をクリック → 選択 ＋ ドラッグ候補に登録
         const id = groupEl.getAttribute("data-id");
         selectedId = id;
+        selectedTextNoteId = null;
         redrawOverlay();
         redrawList();
         syncButtons();
@@ -4403,6 +5084,7 @@
         const marker = markers().find(mm=>mm.id===id);
         if(marker){
           selectedId = id;
+          selectedTextNoteId = null;
           redrawOverlay();
           redrawList();
           syncButtons();
@@ -4433,6 +5115,22 @@
       if(!chip || !quickEditorState) return;
       quickEditorState.draft.type = chip.dataset.type || "共通";
       applyQuickEditorCategoryChange(quickEditorState.draft.type, quickEditorState.draft);
+      updateQuickEditorUiFromDraft();
+    });
+    $("quickMarkerStatusControls").addEventListener("click", (e)=>{
+      if(!quickEditorState) return;
+      const btn = e.target.closest('button[data-act="set-status"]');
+      if(!btn) return;
+      const next = normalizeMarkerStatus(btn.dataset.status || "open");
+      if(next === "completed"){
+        quickEditorState.draft.status = "completed";
+        quickEditorState.draft.completed_at = new Date().toISOString();
+        quickEditorState.draft.completed_by = ($("inpInspectorName")?.value || "").trim() || "";
+      }else{
+        quickEditorState.draft.status = "open";
+        quickEditorState.draft.completed_at = null;
+        quickEditorState.draft.completed_by = "";
+      }
       updateQuickEditorUiFromDraft();
     });
     $("quickMarkerType").addEventListener("change", ()=>{
@@ -4508,12 +5206,48 @@
         closeQuickMarkerEditor({ keepDraft: false });
       }
     });
+    $("btnInputModePin").addEventListener("click", ()=>{ setInputMode("pin"); });
+    $("btnInputModeText").addEventListener("click", ()=>{ setInputMode("text"); });
+    $("textNoteEditorSave").addEventListener("click", ()=>{
+      if(!textNoteEditorState) return;
+      const note = getTextNoteByLocalId(textNoteEditorState.local_text_id);
+      if(!note) return;
+      saveTextNoteFromEditor(note);
+      closeTextNoteEditor();
+    });
+    $("textNoteEditorCancel").addEventListener("click", ()=>{
+      closeTextNoteEditor();
+      redrawTextNotes();
+    });
+    $("textNoteEditorDelete").addEventListener("click", ()=>{
+      if(!textNoteEditorState) return;
+      const note = getTextNoteByLocalId(textNoteEditorState.local_text_id);
+      if(!note) return;
+      deleteTextNote(note);
+    });
+    $("textNoteEditorContent").addEventListener("keydown", (e)=>{
+      if((e.ctrlKey || e.metaKey) && e.key === "Enter"){
+        e.preventDefault();
+        $("textNoteEditorSave").click();
+      }
+      if(e.key === "Escape"){
+        e.preventDefault();
+        closeTextNoteEditor();
+      }
+    });
     document.addEventListener("pointerdown", (e)=>{
       if(!quickEditorState) return;
       if(quickMarkerEditor.contains(e.target)) return;
       if(e.target.closest("g[data-id]")) return;
       if(e.target.closest("#overlay")) return;
       closeQuickMarkerEditor({ keepDraft: false });
+    });
+    document.addEventListener("pointerdown", (e)=>{
+      if(!textNoteEditorState) return;
+      if(textNoteEditor.contains(e.target)) return;
+      if(e.target.closest(".text-note-box")) return;
+      closeTextNoteEditor();
+      redrawTextNotes();
     });
 
     // List interactions
@@ -4523,6 +5257,7 @@
       const id = item.dataset.id;
       const act = e.target.closest("button")?.dataset?.act;
       selectedId = id;
+      selectedTextNoteId = null;
       syncButtons();
       redrawOverlay();
       redrawList();
@@ -4554,6 +5289,10 @@
     // Filter
     $("filterVendor").addEventListener("change", ()=>{
       filterVendor = $("filterVendor").value;
+      redrawList();
+    });
+    $("filterStatus").addEventListener("change", ()=>{
+      filterStatus = $("filterStatus").value || "open";
       redrawList();
     });
 
@@ -4661,10 +5400,11 @@
 
         // メモ
         const memo = (m.memo || "").trim();
-        const memoText = memo ? (memo.length > 22 ? memo.slice(0,22)+"…" : memo) : "（メモなし）";
+        const statusText = getMarkerStatusLabel(m.status);
+        const memoText = memo ? (memo.length > 14 ? memo.slice(0,14)+"…" : memo) : "（メモなし）";
         octx.fillStyle = "#6b7280";
         octx.font = `${11 * scale}px system-ui,sans-serif`;
-        octx.fillText(memoText, bx + 10 * scale, by + 34 * scale);
+        octx.fillText(`${statusText} / ${memoText}`, bx + 10 * scale, by + 34 * scale);
 
         // アンカー円（吹き出しの上に描画してピンが隠れないようにする）
         octx.beginPath();
@@ -4674,6 +5414,46 @@
         octx.strokeStyle = isSel ? "#2563eb" : "#ffffff";
         octx.lineWidth = (isSel ? 3.5 : 2) * scale;
         octx.stroke();
+      });
+
+      const noteArr = textNotes()
+        .map(n=>normalizeTextNote(n))
+        .filter(n=>n.status === "active")
+        .sort((a,b)=>(a.display_order || 0) - (b.display_order || 0));
+      noteArr.forEach(note=>{
+        const p = imgRatioToCanvasPx(note.x, note.y);
+        const nx = p.x * scale;
+        const ny = p.y * scale;
+        const nw = clamp(note.width * stageW * scale, 90 * scale, 360 * scale);
+        const nh = clamp(note.height * stageH * scale, 34 * scale, 220 * scale);
+        octx.globalAlpha = clamp(Number(note.opacity || 1), 0.2, 1);
+        octx.fillStyle = note.background_color || "#ffffff";
+        octx.strokeStyle = note.border_color || "#d7dce4";
+        octx.lineWidth = 1.2 * scale;
+        const rr = 8 * scale;
+        octx.beginPath();
+        octx.moveTo(nx + rr, ny);
+        octx.lineTo(nx + nw - rr, ny);
+        octx.arcTo(nx + nw, ny, nx + nw, ny + rr, rr);
+        octx.lineTo(nx + nw, ny + nh - rr);
+        octx.arcTo(nx + nw, ny + nh, nx + nw - rr, ny + nh, rr);
+        octx.lineTo(nx + rr, ny + nh);
+        octx.arcTo(nx, ny + nh, nx, ny + nh - rr, rr);
+        octx.lineTo(nx, ny + rr);
+        octx.arcTo(nx, ny, nx + rr, ny, rr);
+        octx.closePath();
+        octx.fill();
+        octx.stroke();
+        octx.globalAlpha = 1;
+        octx.fillStyle = note.text_color || "#111827";
+        octx.font = `${note.font_weight === "bold" ? "bold " : ""}${Math.max(10, note.font_size * scale)}px system-ui,sans-serif`;
+        const text = String(note.text_content ?? "");
+        const lines = text.split(/\r?\n/);
+        const maxLines = Math.max(1, Math.floor((nh - 10 * scale) / (note.font_size * scale * 1.35)));
+        for(let i=0;i<Math.min(lines.length, maxLines);i++){
+          const yy = ny + (note.font_size * scale * 1.25) + (i * note.font_size * scale * 1.35);
+          octx.fillText(lines[i], nx + 8 * scale, yy, nw - 16 * scale);
+        }
       });
 
       // ── ダウンロード ──
@@ -4883,6 +5663,8 @@
       redrawBackground();
 
       selectedId = null;
+      selectedTextNoteId = null;
+      closeTextNoteEditor();
       redrawOverlay();
       redrawList();
       syncButtons();
@@ -4923,6 +5705,9 @@
       selectedVendorWorkName = e.target.value || "";
       renderVendorWorkList();
     });
+    $("vendorWorkStatusFilter").addEventListener("change", ()=>{
+      renderVendorWorkList();
+    });
     $("inspectionSiteList").addEventListener("click", (e)=>{
       const btn = e.target.closest('button[data-act="open-site"]');
       if(!btn) return;
@@ -4934,14 +5719,29 @@
       openFloor(btn.dataset.id || "");
     });
     $("vendorWorkList").addEventListener("click", async (e)=>{
-      const doneBtn = e.target.closest('button[data-act="mark-done"]');
-      if(doneBtn){
-        const markerId = doneBtn.dataset.markerId || "";
+      const completedBtn = e.target.closest('button[data-act="mark-completed"]');
+      if(completedBtn){
+        const markerId = completedBtn.dataset.markerId || "";
         const all = Object.values(store.markersByKey || {}).flatMap(arr=>Array.isArray(arr) ? arr : []);
         const marker = all.find(m=>String(m.id) === String(markerId));
         if(marker){
-          marker.status = "done";
+          setMarkerStatus(marker, "completed");
           saveStore();
+          redrawOverlay();
+          redrawList();
+          renderVendorWorkList();
+        }
+        return;
+      }
+      const openBtn = e.target.closest('button[data-act="mark-open"]');
+      if(openBtn){
+        const markerId = openBtn.dataset.markerId || "";
+        const all = Object.values(store.markersByKey || {}).flatMap(arr=>Array.isArray(arr) ? arr : []);
+        const marker = all.find(m=>String(m.id) === String(markerId));
+        if(marker){
+          setMarkerStatus(marker, "open");
+          saveStore();
+          redrawOverlay();
           redrawList();
           renderVendorWorkList();
         }
@@ -4995,8 +5795,14 @@
       localStorage.removeItem(STORAGE_KEY);
       store = loadStore();
       selectedId = null;
+      selectedTextNoteId = null;
       filterVendor = "";
+      filterStatus = "open";
+      closeTextNoteEditor();
+      setInputMode("pin");
       $("filterVendor").value = "";
+      $("filterStatus").value = "open";
+      if($("vendorWorkStatusFilter")) $("vendorWorkStatusFilter").value = "open";
       $("memoInput").value = "";
       $("pageInput").value = "1";
       lastPdfFile = null;
@@ -5272,6 +6078,8 @@
         loadCategoryVendorMappings().catch(()=>{});
         // Ensure active key exists
         markers();
+        textNotes();
+        setInputMode(store.inputMode || "pin");
         redrawBackground();
         redrawOverlay();
         redrawList();
