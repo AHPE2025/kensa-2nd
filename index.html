@@ -5783,53 +5783,245 @@
       return fallback;
     }
 
-    function renderMarkerNumberForPdf(pdf, marker, number, opts = {}){
-      const x = Number(opts.x || 0);
-      const y = Number(opts.y || 0);
-      const radius = Number(opts.radius || 3.1);
-      pdf.setFillColor(220, 38, 38);
-      pdf.circle(x, y, radius, "F");
-      pdf.setDrawColor(255, 255, 255);
-      pdf.setLineWidth(0.5);
-      pdf.circle(x, y, radius, "S");
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8.5);
-      const text = String(number);
-      const tw = pdf.getTextWidth(text);
-      pdf.text(text, x - (tw / 2), y + 2.2);
-      return { x, y, radius, marker };
+    let html2canvasFn = null;
+
+    async function loadHtml2Canvas(){
+      if(html2canvasFn) return html2canvasFn;
+      if(window.html2canvas){
+        html2canvasFn = window.html2canvas;
+        return html2canvasFn;
+      }
+      const candidates = [
+        "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js",
+        "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
+      ];
+      for(const src of candidates){
+        try{
+          await loadScript(src);
+          if(window.html2canvas){
+            html2canvasFn = window.html2canvas;
+            return html2canvasFn;
+          }
+        }catch(err){
+          console.warn("html2canvas failed:", src, err);
+        }
+      }
+      throw new Error("PDF画像化ライブラリ（html2canvas）の読み込みに失敗しました。");
     }
 
-    function renderTextNotesForPdf(pdf, opts = {}){
-      const area = opts.area || { x: 0, y: 0, w: 1, h: 1 };
-      const noteArr = textNotes()
-        .map(n=>normalizeTextNote(n))
-        .filter(n=>n.status === "active")
-        .sort((a,b)=>(a.display_order || 0) - (b.display_order || 0));
-      noteArr.forEach(note=>{
-        const nx = area.x + clamp(note.x, 0, 1) * area.w;
-        const ny = area.y + clamp(note.y, 0, 1) * area.h;
-        const nw = clamp(note.width * area.w, 16, area.w * 0.7);
-        const nh = clamp(note.height * area.h, 9, area.h * 0.4);
-        const fill = parseHexToRgb(note.background_color, [255,255,255]);
-        const border = parseHexToRgb(note.border_color, [215,220,228]);
-        const textColor = parseHexToRgb(note.text_color, [17,24,39]);
-        pdf.setFillColor(fill[0], fill[1], fill[2]);
-        pdf.setDrawColor(border[0], border[1], border[2]);
-        pdf.setLineWidth(0.35);
-        pdf.roundedRect(nx, ny, nw, nh, 1.6, 1.6, "FD");
-        const content = String(note.text_content ?? "").trim() || "メモなし";
-        const fontSize = clamp(Number(note.font_size || 12) * 0.5, 6, 10);
-        pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
-        pdf.setFont("helvetica", note.font_weight === "bold" ? "bold" : "normal");
-        pdf.setFontSize(fontSize);
-        const lines = pdf.splitTextToSize(content, Math.max(8, nw - 3));
-        const maxLines = Math.max(1, Math.floor((nh - 2.4) / (fontSize * 0.55)));
-        lines.slice(0, maxLines).forEach((line, idx)=>{
-          pdf.text(line, nx + 1.5, ny + 2.2 + idx * (fontSize * 0.55));
+    function normalizeQuarterTurn(v){
+      const n = Number(v);
+      if(!Number.isFinite(n)) return 0;
+      const rot = ((Math.round(n / 90) * 90) % 360 + 360) % 360;
+      return [0, 90, 180, 270].includes(rot) ? rot : 0;
+    }
+
+    function getCurrentPdfRotation(){
+      const wrap = $("stageWrap");
+      if(wrap){
+        if(wrap.classList.contains("rot90")) return 90;
+        if(wrap.classList.contains("rot180")) return 180;
+        if(wrap.classList.contains("rot270")) return 270;
+      }
+      if(typeof isFullscreen !== "undefined" && isFullscreen){
+        return normalizeQuarterTurn(typeof fsRotation === "number" ? fsRotation : 0);
+      }
+      return normalizeQuarterTurn(typeof normalRotation === "number" ? normalRotation : 0);
+    }
+
+    function getPdfHeaderData(){
+      const site_name = String(selectedSite?.site_name || $("inpSiteName")?.value || "").trim() || "（現場名未設定）";
+      const inspection_date = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt")?.value || "") || "-";
+      const floor_name = String(selectedFloor?.floor_name || $("inpFloorName")?.value || "").trim() || "-";
+      return { site_name, inspection_date, floor_name };
+    }
+
+    function createPdfHiddenRoot(widthPx = 1600){
+      const host = document.createElement("div");
+      host.style.position = "fixed";
+      host.style.left = "-100000px";
+      host.style.top = "0";
+      host.style.width = `${widthPx}px`;
+      host.style.pointerEvents = "none";
+      host.style.zIndex = "-1";
+      host.style.background = "#fff";
+      document.body.appendChild(host);
+      return host;
+    }
+
+    async function waitForImagesReady(root){
+      if(!root) return;
+      const imgs = Array.from(root.querySelectorAll("img"));
+      if(imgs.length === 0) return;
+      await Promise.all(imgs.map(img=>{
+        if(img.complete) return Promise.resolve();
+        return new Promise(resolve=>{
+          img.onload = ()=>resolve();
+          img.onerror = ()=>resolve();
         });
+      }));
+    }
+
+    async function stabilizePdfCapture(){
+      try{ redrawOverlay(); }catch(_){}
+      try{ redrawTextNotes(); }catch(_){}
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve, 200));
+    }
+
+    function buildPdfDrawingDom(opts = {}){
+      const header = opts.headerData || getPdfHeaderData();
+      const stageImageData = String(opts.stageImageData || "");
+      const pageNumber = Number(opts.pageNumber || 1);
+      const rotation = normalizeQuarterTurn(opts.rotation ?? 0);
+      const root = document.createElement("div");
+      root.dataset.rotation = String(rotation);
+      root.style.width = "1600px";
+      root.style.minHeight = "1120px";
+      root.style.boxSizing = "border-box";
+      root.style.padding = "28px";
+      root.style.background = "#ffffff";
+      root.style.display = "flex";
+      root.style.flexDirection = "column";
+      root.style.gap = "16px";
+      root.style.fontFamily = "'Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif";
+      root.style.color = "#0f172a";
+
+      const headerWrap = document.createElement("div");
+      headerWrap.style.display = "grid";
+      headerWrap.style.gridTemplateColumns = "1fr 1fr 1fr";
+      headerWrap.style.gap = "10px";
+      headerWrap.style.padding = "14px 16px";
+      headerWrap.style.border = "1px solid #dbe2ea";
+      headerWrap.style.borderRadius = "12px";
+      headerWrap.style.background = "#f8fafc";
+      const headerItems = [
+        { label: "現場名", value: header.site_name || "-" },
+        { label: "検査日", value: header.inspection_date || "-" },
+        { label: "フロア", value: header.floor_name || "-" },
+      ];
+      headerItems.forEach(item=>{
+        const box = document.createElement("div");
+        const label = document.createElement("div");
+        label.textContent = item.label;
+        label.style.fontSize = "16px";
+        label.style.fontWeight = "700";
+        label.style.color = "#334155";
+        const value = document.createElement("div");
+        value.textContent = item.value;
+        value.style.marginTop = "6px";
+        value.style.fontSize = "24px";
+        value.style.fontWeight = "700";
+        value.style.lineHeight = "1.25";
+        value.style.wordBreak = "break-word";
+        box.appendChild(label);
+        box.appendChild(value);
+        headerWrap.appendChild(box);
       });
+
+      const stageWrapEl = document.createElement("div");
+      stageWrapEl.style.flex = "1";
+      stageWrapEl.style.minHeight = "860px";
+      stageWrapEl.style.display = "flex";
+      stageWrapEl.style.alignItems = "center";
+      stageWrapEl.style.justifyContent = "center";
+      stageWrapEl.style.border = "1px solid #dbe2ea";
+      stageWrapEl.style.borderRadius = "12px";
+      stageWrapEl.style.background = "#ffffff";
+      stageWrapEl.style.overflow = "hidden";
+      const stageImg = document.createElement("img");
+      stageImg.src = stageImageData;
+      stageImg.style.width = "100%";
+      stageImg.style.height = "100%";
+      stageImg.style.objectFit = "contain";
+      stageWrapEl.appendChild(stageImg);
+
+      const footer = document.createElement("div");
+      footer.style.fontSize = "16px";
+      footer.style.textAlign = "right";
+      footer.style.color = "#64748b";
+      footer.textContent = `Page ${Math.max(1, pageNumber)}`;
+
+      root.appendChild(headerWrap);
+      root.appendChild(stageWrapEl);
+      root.appendChild(footer);
+      return root;
+    }
+
+    function addDrawingImageToPdf(pdf, imageData){
+      if(!imageData) return;
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 4;
+      const maxW = Math.max(10, pageW - margin * 2);
+      const maxH = Math.max(10, pageH - margin * 2);
+      const props = pdf.getImageProperties(imageData);
+      const scale = Math.min(maxW / props.width, maxH / props.height);
+      const drawW = Math.max(1, props.width * scale);
+      const drawH = Math.max(1, props.height * scale);
+      const dx = (pageW - drawW) / 2;
+      const dy = (pageH - drawH) / 2;
+      const fmt = /^data:image\/png/i.test(imageData) ? "PNG" : "JPEG";
+      pdf.addImage(imageData, fmt, dx, dy, drawW, drawH, undefined, "FAST");
+    }
+
+    function addDetailImageToPdf(pdf, imageData){
+      if(!imageData) return;
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 6;
+      const maxW = Math.max(10, pageW - margin * 2);
+      const maxH = Math.max(10, pageH - margin * 2);
+      const props = pdf.getImageProperties(imageData);
+      const scale = Math.min(maxW / props.width, maxH / props.height);
+      const drawW = Math.max(1, props.width * scale);
+      const drawH = Math.max(1, props.height * scale);
+      const dx = (pageW - drawW) / 2;
+      const dy = (pageH - drawH) / 2;
+      const fmt = /^data:image\/png/i.test(imageData) ? "PNG" : "JPEG";
+      pdf.addImage(imageData, fmt, dx, dy, drawW, drawH, undefined, "FAST");
+    }
+
+    async function buildPdfDrawingPageImage(options = {}){
+      const stage = $("stageWrap");
+      if(!stage) throw new Error("図面表示エリアが見つかりません。");
+      await stabilizePdfCapture();
+      const h2c = await loadHtml2Canvas();
+      const pixelScale = clamp((window.devicePixelRatio || 1) * 2, 1.5, 4);
+      const stageCanvas = await h2c(stage, {
+        backgroundColor: "#ffffff",
+        scale: pixelScale,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        onclone: (doc)=>{
+          const quickEditor = doc.getElementById("quickMarkerEditor");
+          if(quickEditor) quickEditor.style.display = "none";
+          const textEditor = doc.getElementById("textNoteEditor");
+          if(textEditor) textEditor.style.display = "none";
+        },
+      });
+      const stageImageData = stageCanvas.toDataURL("image/png");
+      const drawingDom = buildPdfDrawingDom({
+        headerData: getPdfHeaderData(),
+        stageImageData,
+        rotation: getCurrentPdfRotation(),
+        pageNumber: Number(options.pageNumber || 1),
+      });
+      const host = createPdfHiddenRoot(1620);
+      host.appendChild(drawingDom);
+      await waitForImagesReady(drawingDom);
+      await new Promise(resolve=>setTimeout(resolve, 200));
+      const pageCanvas = await h2c(drawingDom, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+      });
+      host.remove();
+      return pageCanvas.toDataURL("image/png");
     }
 
     function getPhotoSource(photo){
@@ -5887,141 +6079,188 @@
       });
     }
 
-    async function getCurrentDrawingDataUrlForPdf(){
-      const bg = store.activeBg;
-      if(bg?.kind !== "pdf") return null;
-      const pdfIdentity = resolvePdfIdentity(bg);
-      if(!pdfIdentity || !bg.page) return null;
-      const cacheKey = `${pdfIdentity}:${bg.page}`;
-      if(bg.pageCache?.[cacheKey]) return bg.pageCache[cacheKey];
-      if(lastPdfFile){
-        try{
-          const rendered = await renderPdfPageToDataUrl(lastPdfFile, bg.page);
-          bg.pageCount = rendered.pageCount;
-          bg.pageCache[cacheKey] = rendered.dataURL;
-          saveStore();
-          return rendered.dataURL;
-        }catch(err){
-          console.warn("draw page render for PDF export failed", err);
-        }
-      }
-      return null;
+    function buildDetailInfoRows(marker, number){
+      const mainVendor = getVendorDisplayName(marker) || "未設定";
+      const assigned = Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names : [];
+      const subs = Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : [];
+      const relatedVendors = Array.from(new Set([...subs, ...assigned])).filter(name=>name && name !== mainVendor && name !== "全業者");
+      const statusLabel = normalizeMarkerStatus(marker) === "completed" ? "完了" : "未対応";
+      return [
+        { label: "指摘 No.", value: String(number) },
+        { label: "指摘種別", value: String(marker?.type || "-") },
+        { label: "担当業者", value: mainVendor },
+        { label: "関連業者", value: relatedVendors.length ? relatedVendors.join("、") : "なし" },
+        { label: "ステータス", value: statusLabel },
+        { label: "メモ", value: String(marker?.memo || "").trim() || "なし" },
+      ];
     }
 
-    async function drawPhotoCell(pdf, rect, label, photoInfo){
-      const x = rect.x, y = rect.y, w = rect.w, h = rect.h;
-      pdf.setDrawColor(203, 213, 225);
-      pdf.setFillColor(248, 250, 252);
-      pdf.roundedRect(x, y, w, h, 2, 2, "FD");
-      pdf.setTextColor(30, 41, 59);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(10);
-      pdf.text(label, x + 3, y + 5.5);
-      const bodyY = y + 7;
-      const bodyH = h - 9;
-      const result = await resolveImageForPdf(photoInfo);
-      if(!result.dataUrl){
-        pdf.setTextColor(100, 116, 139);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(11);
-        pdf.text(result.error ? "写真読込失敗" : "写真なし", x + 3, bodyY + 8);
-        return;
-      }
-      try{
-        const img = await loadImageElement(result.dataUrl);
-        const scale = Math.min((w - 4) / img.width, (bodyH - 3) / img.height);
-        const dw = Math.max(1, img.width * scale);
-        const dh = Math.max(1, img.height * scale);
-        const dx = x + (w - dw) / 2;
-        const dy = bodyY + (bodyH - dh) / 2;
-        const fmt = /png/i.test(result.dataUrl.slice(0, 50)) ? "PNG" : "JPEG";
-        pdf.addImage(result.dataUrl, fmt, dx, dy, dw, dh, undefined, "FAST");
-      }catch(err){
-        console.warn("photo draw failed", err);
-        pdf.setTextColor(100, 116, 139);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(11);
-        pdf.text("写真読込失敗", x + 3, bodyY + 8);
-      }
+    function createDetailRow(label, value){
+      const row = document.createElement("div");
+      row.style.display = "grid";
+      row.style.gridTemplateColumns = "140px 1fr";
+      row.style.gap = "10px";
+      row.style.padding = "8px 0";
+      row.style.borderBottom = "1px solid #e2e8f0";
+      const labelEl = document.createElement("div");
+      labelEl.textContent = label;
+      labelEl.style.color = "#475569";
+      labelEl.style.fontSize = "16px";
+      labelEl.style.fontWeight = "700";
+      const valueEl = document.createElement("div");
+      valueEl.textContent = value;
+      valueEl.style.color = "#0f172a";
+      valueEl.style.fontSize = "17px";
+      valueEl.style.lineHeight = "1.5";
+      valueEl.style.whiteSpace = "pre-wrap";
+      valueEl.style.wordBreak = "break-word";
+      row.appendChild(labelEl);
+      row.appendChild(valueEl);
+      return row;
     }
 
-    async function buildPdfDrawingPage(pdf, orderedMarkers, options = {}){
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const margin = 10;
-      const headerH = 15;
-      const footerH = 8;
-      const drawArea = {
-        x: margin,
-        y: margin + headerH,
-        w: pageW - margin * 2,
-        h: pageH - margin * 2 - headerH - footerH,
-      };
-      const siteName = (selectedSite?.site_name || $("inpSiteName")?.value || "（現場名未設定）").trim();
-      const dateText = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt")?.value || "");
-      const floorName = (selectedFloor?.floor_name || $("inpFloorName")?.value || "-").trim() || "-";
-      pdf.setTextColor(17, 24, 39);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(12);
-      pdf.text(`現場名: ${siteName}`, margin, margin + 5);
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(10);
-      pdf.text(`検査日: ${dateText} / フロア: ${floorName}`, margin, margin + 10);
-
-      let actualArea = { ...drawArea };
-      const drawingDataUrl = await getCurrentDrawingDataUrlForPdf();
-      if(drawingDataUrl){
-        try{
-          const img = await loadImageElement(drawingDataUrl);
-          const scale = Math.min(drawArea.w / img.width, drawArea.h / img.height);
-          const dw = img.width * scale;
-          const dh = img.height * scale;
-          const dx = drawArea.x + (drawArea.w - dw) / 2;
-          const dy = drawArea.y + (drawArea.h - dh) / 2;
-          actualArea = { x: dx, y: dy, w: dw, h: dh };
-          pdf.addImage(drawingDataUrl, "PNG", dx, dy, dw, dh, undefined, "FAST");
-        }catch(err){
-          console.warn("drawing image placement failed", err);
-          pdf.setDrawColor(203, 213, 225);
-          pdf.rect(drawArea.x, drawArea.y, drawArea.w, drawArea.h);
-          pdf.setTextColor(100, 116, 139);
-          pdf.text("図面画像を読み込めませんでした。", drawArea.x + 6, drawArea.y + 10);
-        }
+    function createPhotoBlock(label, src, fallback){
+      const wrap = document.createElement("div");
+      wrap.style.border = "1px solid #dbe2ea";
+      wrap.style.borderRadius = "12px";
+      wrap.style.padding = "10px";
+      wrap.style.background = "#f8fafc";
+      wrap.style.display = "flex";
+      wrap.style.flexDirection = "column";
+      wrap.style.gap = "8px";
+      const title = document.createElement("div");
+      title.textContent = label;
+      title.style.fontWeight = "700";
+      title.style.color = "#334155";
+      const frame = document.createElement("div");
+      frame.style.height = "430px";
+      frame.style.border = "1px solid #cbd5e1";
+      frame.style.borderRadius = "10px";
+      frame.style.background = "#ffffff";
+      frame.style.display = "flex";
+      frame.style.alignItems = "center";
+      frame.style.justifyContent = "center";
+      frame.style.overflow = "hidden";
+      if(src){
+        const img = document.createElement("img");
+        img.src = src;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "contain";
+        frame.appendChild(img);
       }else{
-        pdf.setDrawColor(203, 213, 225);
-        pdf.rect(drawArea.x, drawArea.y, drawArea.w, drawArea.h);
-        pdf.setTextColor(100, 116, 139);
-        pdf.text("図面が未選択のため、図面表示は省略されました。", drawArea.x + 6, drawArea.y + 10);
+        const empty = document.createElement("div");
+        empty.textContent = fallback;
+        empty.style.color = "#64748b";
+        empty.style.fontSize = "16px";
+        frame.appendChild(empty);
       }
+      wrap.appendChild(title);
+      wrap.appendChild(frame);
+      return wrap;
+    }
 
-      orderedMarkers.forEach(entry=>{
-        const marker = entry.marker;
-        const px = actualArea.x + clamp(Number(marker.x), 0, 1) * actualArea.w;
-        const py = actualArea.y + clamp(Number(marker.y), 0, 1) * actualArea.h;
-        renderMarkerNumberForPdf(pdf, marker, entry.number, { x: px, y: py, radius: 3.2 });
-        const memo = String(marker.memo || "").trim();
-        if(memo){
-          const memoW = clamp(actualArea.w * 0.22, 28, 56);
-          const lines = pdf.splitTextToSize(memo, memoW - 3);
-          const memoH = clamp(4 + lines.length * 3.5, 7, 24);
-          const mx = clamp(px + 4, actualArea.x, actualArea.x + actualArea.w - memoW);
-          const my = clamp(py + 2, actualArea.y, actualArea.y + actualArea.h - memoH);
-          pdf.setFillColor(255, 255, 255);
-          pdf.setDrawColor(226, 232, 240);
-          pdf.roundedRect(mx, my, memoW, memoH, 1.2, 1.2, "FD");
-          pdf.setTextColor(71, 85, 105);
-          pdf.setFont("helvetica", "normal");
-          pdf.setFontSize(8);
-          lines.slice(0, 5).forEach((line, idx)=>{
-            pdf.text(line, mx + 1.4, my + 3.3 + idx * 3.2);
-          });
-        }
+    function buildPdfDetailDom(opts = {}){
+      const marker = opts.marker || {};
+      const number = Number(opts.number || 0);
+      const beforeSrc = String(opts.beforeSrc || "");
+      const afterSrc = String(opts.afterSrc || "");
+      const beforeFallback = String(opts.beforeFallback || "写真なし");
+      const afterFallback = String(opts.afterFallback || "写真なし");
+      const pageNumber = Number(opts.pageNumber || 1);
+      const root = document.createElement("div");
+      root.style.width = "1100px";
+      root.style.minHeight = "1550px";
+      root.style.boxSizing = "border-box";
+      root.style.padding = "26px";
+      root.style.background = "#ffffff";
+      root.style.display = "flex";
+      root.style.flexDirection = "column";
+      root.style.gap = "14px";
+      root.style.fontFamily = "'Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif";
+      root.style.color = "#0f172a";
+
+      const title = document.createElement("div");
+      title.textContent = "指摘詳細";
+      title.style.fontSize = "28px";
+      title.style.fontWeight = "800";
+      title.style.color = "#0f172a";
+      root.appendChild(title);
+
+      const infoWrap = document.createElement("div");
+      infoWrap.style.border = "1px solid #dbe2ea";
+      infoWrap.style.borderRadius = "12px";
+      infoWrap.style.padding = "12px 14px";
+      infoWrap.style.background = "#ffffff";
+      buildDetailInfoRows(marker, number).forEach(row=>{
+        infoWrap.appendChild(createDetailRow(row.label, row.value));
       });
-      renderTextNotesForPdf(pdf, { area: actualArea });
-      pdf.setTextColor(100, 116, 139);
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(9);
-      pdf.text(`ページ ${pdf.getNumberOfPages()}`, pageW - margin - 16, pageH - 3.5);
+      root.appendChild(infoWrap);
+
+      const photos = document.createElement("div");
+      photos.style.display = "grid";
+      photos.style.gridTemplateColumns = "1fr 1fr";
+      photos.style.gap = "12px";
+      photos.appendChild(createPhotoBlock("Before写真", beforeSrc, beforeFallback));
+      photos.appendChild(createPhotoBlock("After写真", afterSrc, afterFallback));
+      root.appendChild(photos);
+
+      const footer = document.createElement("div");
+      footer.style.marginTop = "auto";
+      footer.style.fontSize = "16px";
+      footer.style.color = "#64748b";
+      footer.style.textAlign = "right";
+      footer.textContent = `Page ${Math.max(1, pageNumber)}`;
+      root.appendChild(footer);
+      return root;
+    }
+
+    async function buildPdfDetailPageImage(marker, number, pageNumber){
+      const pair = getMarkerPhotoPair(marker);
+      const beforeResult = await resolveImageForPdf(pair.before);
+      const afterResult = await resolveImageForPdf(pair.after);
+      const detailDom = buildPdfDetailDom({
+        marker,
+        number,
+        beforeSrc: beforeResult.dataUrl,
+        afterSrc: afterResult.dataUrl,
+        beforeFallback: beforeResult.error ? "写真読込失敗" : "写真なし",
+        afterFallback: afterResult.error ? "写真読込失敗" : "写真なし",
+        pageNumber,
+      });
+      const host = createPdfHiddenRoot(1120);
+      host.appendChild(detailDom);
+      await waitForImagesReady(detailDom);
+      await new Promise(resolve=>setTimeout(resolve, 200));
+      const h2c = await loadHtml2Canvas();
+      const canvas = await h2c(detailDom, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+      });
+      host.remove();
+      return canvas.toDataURL("image/png");
+    }
+
+    function buildAsciiToken(value, fallback){
+      const normalized = String(value || "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "");
+      const ascii = normalized
+        .replace(/[^A-Za-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .replace(/_+/g, "_");
+      return ascii || fallback;
+    }
+
+    function buildInspectionPdfFileName(){
+      const header = getPdfHeaderData();
+      const siteToken = buildAsciiToken(header.site_name, "site");
+      const floorToken = buildAsciiToken(header.floor_name, "floor");
+      const ts = new Date().toISOString().slice(0, 10);
+      return toSafeFileName(`inspection_${siteToken}_${floorToken}_${ts}.pdf`);
     }
 
     async function buildPdfMarkerDetailPages(pdf, orderedMarkers, options = {}){
@@ -6030,15 +6269,10 @@
         if(!useCurrentFirstPage){
           pdf.addPage("a4", "portrait");
         }
-        const pageW = pdf.internal.pageSize.getWidth();
-        pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(16);
-        pdf.setTextColor(30, 41, 59);
-        pdf.text("指摘詳細", 14, 18);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(11);
-        pdf.setTextColor(100, 116, 139);
-        pdf.text("対象の指摘はありません。", 14, 30);
+        const pageNo = pdf.getNumberOfPages();
+        const emptyMarker = { type: "-", memo: "対象の指摘はありません。" };
+        const imageData = await buildPdfDetailPageImage(emptyMarker, 0, pageNo);
+        addDetailImageToPdf(pdf, imageData);
         return;
       }
       for(let i = 0; i < orderedMarkers.length; i++){
@@ -6046,58 +6280,9 @@
           pdf.addPage("a4", "portrait");
         }
         const { marker, number } = orderedMarkers[i];
-        const pageW = pdf.internal.pageSize.getWidth();
-        const pageH = pdf.internal.pageSize.getHeight();
-        const margin = 12;
-        const contentW = pageW - margin * 2;
-
-        pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(15);
-        pdf.setTextColor(15, 23, 42);
-        pdf.text("指摘詳細", margin, 14);
-
-        const mainVendor = getVendorDisplayName(marker) || "未設定";
-        const assigned = Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names : [];
-        const subs = Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : [];
-        const relatedVendors = Array.from(new Set([...subs, ...assigned])).filter(name=>name && name !== mainVendor && name !== "全業者");
-        const statusLabel = normalizeMarkerStatus(marker) === "completed" ? "完了" : "未対応";
-        const memoText = String(marker.memo || "").trim() || "なし";
-
-        let cursorY = 23;
-        const lineH = 6;
-        const rows = [
-          `指摘 No.${number}`,
-          `指摘種別: ${marker.type || "-"}`,
-          `担当業者: ${mainVendor}`,
-          `関連業者: ${relatedVendors.length ? relatedVendors.join("、") : "なし"}`,
-          `ステータス: ${statusLabel}`,
-        ];
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(11);
-        rows.forEach(row=>{
-          pdf.setTextColor(30, 41, 59);
-          pdf.text(row, margin, cursorY);
-          cursorY += lineH;
-        });
-        const memoLines = pdf.splitTextToSize(`メモ: ${memoText}`, contentW);
-        memoLines.forEach(line=>{
-          pdf.setTextColor(30, 41, 59);
-          pdf.text(line, margin, cursorY);
-          cursorY += 5;
-        });
-
-        const photosTop = cursorY + 2;
-        const photoH = Math.max(70, pageH - photosTop - 14);
-        const gap = 6;
-        const cellW = (contentW - gap) / 2;
-        const pair = getMarkerPhotoPair(marker);
-        await drawPhotoCell(pdf, { x: margin, y: photosTop, w: cellW, h: photoH }, "Before", pair.before);
-        await drawPhotoCell(pdf, { x: margin + cellW + gap, y: photosTop, w: cellW, h: photoH }, "After", pair.after);
-
-        pdf.setTextColor(100, 116, 139);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(9);
-        pdf.text(`ページ ${pdf.getNumberOfPages()}`, pageW - margin - 16, pageH - 4);
+        const pageNo = pdf.getNumberOfPages();
+        const imageData = await buildPdfDetailPageImage(marker, number, pageNo);
+        addDetailImageToPdf(pdf, imageData);
       }
     }
 
@@ -6109,6 +6294,7 @@
       const orderedMarkers = getOrderedMarkersForPdf({ statusFilter, vendorName });
       const includesDrawing = mode !== "details_only";
       const includesDetails = mode !== "drawing_only";
+      await loadHtml2Canvas();
       const JsPdf = await loadJsPdf();
       const pdf = new JsPdf({
         orientation: includesDrawing ? "landscape" : "portrait",
@@ -6117,7 +6303,8 @@
         compress: true,
       });
       if(includesDrawing){
-        await buildPdfDrawingPage(pdf, orderedMarkers, { statusFilter, vendorName });
+        const drawingImageData = await buildPdfDrawingPageImage({ pageNumber: 1 });
+        addDrawingImageToPdf(pdf, drawingImageData);
       }
       if(includesDetails){
         await buildPdfMarkerDetailPages(pdf, orderedMarkers, {
@@ -6126,10 +6313,7 @@
           vendorName,
         });
       }
-      const siteName = (selectedSite?.site_name || $("inpSiteName")?.value || "inspection").trim() || "inspection";
-      const floorName = (selectedFloor?.floor_name || $("inpFloorName")?.value || "floor").trim() || "floor";
-      const ts = new Date().toISOString().slice(0, 10);
-      const fileName = toSafeFileName(`${siteName}_${floorName}_${ts}.pdf`);
+      const fileName = buildInspectionPdfFileName();
       pdf.save(fileName);
       toast(`PDF出力しました（${orderedMarkers.length}件）`);
     }
