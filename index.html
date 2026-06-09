@@ -91,13 +91,16 @@
     .tag.cloud-err{border-color:#fca5a5;color:#991b1b;background:#fef2f2}
     .mapping-panel{display:none;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f8fafc}
     .mapping-panel.open{display:block}
-    .mapping-grid{display:grid;grid-template-columns:minmax(80px,1fr) auto minmax(140px,1.2fr) auto;gap:8px;align-items:center}
+    .mapping-grid{display:grid;grid-template-columns:minmax(80px,1fr) auto minmax(220px,1.8fr) auto;gap:8px;align-items:center}
     .mapping-head{font-size:12px;font-weight:700;color:#334155;padding-bottom:4px;border-bottom:1px dashed #cbd5e1}
     .mapping-row{padding:6px 0;border-bottom:1px solid #e2e8f0}
     .mapping-row:last-child{border-bottom:none}
     .mapping-row select{width:100%;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:7px 9px;background:#fff}
     .mapping-row input[type="checkbox"]{width:16px;height:16px}
     .mapping-state{font-size:11px;color:var(--muted);white-space:nowrap}
+    .mapping-vendor-slots{display:grid;grid-template-columns:1fr;gap:6px}
+    .mapping-vendor-slot{display:grid;grid-template-columns:96px 1fr;gap:6px;align-items:center}
+    .mapping-vendor-slot span{font-size:12px;color:#334155}
     .vendor-mgmt{margin:10px 0 14px;padding:10px;border:1px solid #dbeafe;border-radius:12px;background:#fff}
     .vendor-mgmt-title{font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px}
     .vendor-mgmt-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
@@ -188,6 +191,7 @@
       #quickTypeChips .type-chip{font-size:14px;min-height:40px;padding:8px 13px}
       #quickMarkerEditor .qe-actions .btn{min-width:90px}
       #quickMarkerEditor .qe-photo-grid{grid-template-columns:1fr}
+      .mapping-vendor-slot{grid-template-columns:84px 1fr}
     }
     @media (max-width: 860px){
       .mapping-grid{grid-template-columns:1fr auto;gap:6px}
@@ -250,7 +254,7 @@
       </div>
       <div class="mapping-panel" id="mappingPanel">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-          <strong style="font-size:13px">指摘種別ごとの標準担当業者</strong>
+          <strong style="font-size:13px">指摘種別ごとの担当業者設定（メイン/サブメイン）</strong>
           <span class="small" id="mappingPanelStatus">未保存の変更はありません</span>
         </div>
         <div class="vendor-mgmt">
@@ -337,6 +341,7 @@
                   <select id="quickMarkerVendor"></select>
                   <button class="btn" id="quickMarkerVendorClear" type="button">クリア</button>
                 </div>
+                <div id="quickRelatedVendors" class="qe-label" style="margin-top:6px;color:#64748b">関連業者：なし</div>
               </div>
             </div>
             <div class="qe-row">
@@ -655,7 +660,13 @@
           vendor_status: m.vendor_status || "assigned",
           vendor_source: m.vendor_source || "auto",
           vendor_manual_override: !!m.vendor_manual_override,
+          primary_vendor_id: m.primary_vendor_id || null,
           assigned_vendor_names: Array.isArray(m.assigned_vendor_names) ? [...m.assigned_vendor_names] : [],
+          assigned_vendor_ids: Array.isArray(m.assigned_vendor_ids) ? [...m.assigned_vendor_ids] : [],
+          main_vendor_id: m.main_vendor_id || null,
+          main_vendor_name: m.main_vendor_name || null,
+          sub_vendor_ids: Array.isArray(m.sub_vendor_ids) ? [...m.sub_vendor_ids] : [],
+          sub_vendor_names: Array.isArray(m.sub_vendor_names) ? [...m.sub_vendor_names] : [],
           primary_vendor_name: m.primary_vendor_name || null,
           original_auto_vendor_id: m.original_auto_vendor_id || null,
           original_auto_vendor_name: m.original_auto_vendor_name || null,
@@ -726,7 +737,12 @@
           ensureMarkerPhotoState(m);
           const assignedVendorNames = m.is_common
             ? ["全業者"]
-            : (m.is_vendor_unassigned || !m.vendor_name ? [] : [m.vendor_name]);
+            : (Array.isArray(m.assigned_vendor_names) ? [...m.assigned_vendor_names] : []);
+          const assignedVendorIds = m.is_common
+            ? ["ALL_VENDORS"]
+            : (Array.isArray(m.assigned_vendor_ids) ? [...m.assigned_vendor_ids] : []);
+          const subVendorNames = Array.isArray(m.sub_vendor_names) ? [...m.sub_vendor_names] : [];
+          const subVendorIds = Array.isArray(m.sub_vendor_ids) ? [...m.sub_vendor_ids] : [];
           rows.push({
             inspection_id: inspectionId,
             drawing_id: markerDrawingId,
@@ -756,7 +772,13 @@
               vendor_status: m.vendor_status || "assigned",
               vendor_source: m.vendor_source || "auto",
               vendor_manual_override: !!m.vendor_manual_override,
+              primary_vendor_id: m.primary_vendor_id || m.vendor_id || null,
+              main_vendor_id: m.main_vendor_id || m.vendor_id || null,
+              main_vendor_name: m.main_vendor_name || m.vendor_name || m.vendor || "",
+              assigned_vendor_ids: assignedVendorIds,
               assigned_vendor_names: assignedVendorNames,
+              sub_vendor_ids: subVendorIds,
+              sub_vendor_names: subVendorNames,
               primary_vendor_name: m.primary_vendor_name || (assignedVendorNames[0] || null),
               original_auto_vendor_id: m.original_auto_vendor_id || null,
               original_auto_vendor_name: m.original_auto_vendor_name || null,
@@ -793,7 +815,13 @@
             vendor_status: row.vendor_status || md.vendor_status || "assigned",
             vendor_source: row.vendor_source || md.vendor_source || "auto",
             vendor_manual_override: !!md.vendor_manual_override,
+            primary_vendor_id: md.primary_vendor_id || md.vendor_id || null,
             assigned_vendor_names: Array.isArray(md.assigned_vendor_names) ? [...md.assigned_vendor_names] : [],
+            assigned_vendor_ids: Array.isArray(md.assigned_vendor_ids) ? [...md.assigned_vendor_ids] : [],
+            main_vendor_id: md.main_vendor_id || md.vendor_id || null,
+            main_vendor_name: md.main_vendor_name || md.primary_vendor_name || row.vendor_name || md.vendor_name || "",
+            sub_vendor_ids: Array.isArray(md.sub_vendor_ids) ? [...md.sub_vendor_ids] : [],
+            sub_vendor_names: Array.isArray(md.sub_vendor_names) ? [...md.sub_vendor_names] : [],
             primary_vendor_name: md.primary_vendor_name || null,
             original_auto_vendor_id: md.original_auto_vendor_id || null,
             original_auto_vendor_name: md.original_auto_vendor_name || null,
@@ -1481,13 +1509,50 @@
     let inspectionCategories = [];
     let inspectionVendors = [];
     let categoryVendorMappingsByName = {};
+    let categoryVendorAssignments = {};
     let mappingPanelDirty = false;
+    const CATEGORY_VENDOR_ROLE_CONFIG = [
+      { role: "main", label: "メイン業者", order: 1, isPrimary: true },
+      { role: "sub1", label: "サブメイン1", order: 2, isPrimary: false },
+      { role: "sub2", label: "サブメイン2", order: 3, isPrimary: false },
+      { role: "sub3", label: "サブメイン3", order: 4, isPrimary: false },
+      { role: "sub4", label: "サブメイン4", order: 5, isPrimary: false },
+    ];
+    const CATEGORY_VENDOR_ROLES = CATEGORY_VENDOR_ROLE_CONFIG.map(r=>r.role);
     const VENDOR_DELETE_BLOCK_NAMES = new Set(["業者未定", "全業者"]);
 
     function isActiveStatus(value){
       if(value == null) return true;
       const v = String(value).toLowerCase();
       return v === "active" || v === "enabled" || v === "1" || v === "true";
+    }
+
+    function emptyCategoryAssignment(){
+      return {
+        main: null,
+        sub1: null,
+        sub2: null,
+        sub3: null,
+        sub4: null,
+        all: [],
+      };
+    }
+
+    function roleConfigByName(role){
+      return CATEGORY_VENDOR_ROLE_CONFIG.find(r=>r.role === role) || CATEGORY_VENDOR_ROLE_CONFIG[0];
+    }
+
+    function dedupeVendorRecords(records){
+      const list = [];
+      const seen = new Set();
+      (Array.isArray(records) ? records : []).forEach(v=>{
+        if(!v || !v.name) return;
+        const key = String(v.name);
+        if(seen.has(key)) return;
+        seen.add(key);
+        list.push(v);
+      });
+      return list;
     }
 
     function compareByDisplayOrder(a, b){
@@ -1711,9 +1776,22 @@
         }
         Object.values(categoryVendorMappingsByName).forEach(map=>{
           if(!map || map.category_name === "共通") return;
+          let touched = false;
+          CATEGORY_VENDOR_ROLES.forEach(role=>{
+            const keyId = `${role}_vendor_id`;
+            const keyName = `${role}_vendor_name`;
+            if(map[keyId] === vendorId || map[keyName] === name){
+              map[keyId] = null;
+              map[keyName] = "";
+              touched = true;
+            }
+          });
           if(map.default_vendor_id === vendorId || map.default_vendor_name === name){
             map.default_vendor_id = "UNASSIGNED_VENDOR";
             map.default_vendor_name = "業者未定";
+            touched = true;
+          }
+          if(touched){
             map.auto_assign_enabled = false;
             map.dirty = true;
             mappingPanelDirty = true;
@@ -1750,7 +1828,7 @@
     function getVendorDisplayName(marker){
       if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return "全業者";
       if(marker.is_vendor_unassigned || marker.vendor_source === "unassigned" || marker.vendor_name === "業者未定") return "業者未定";
-      return marker.vendor_name || marker.vendor || "";
+      return marker.main_vendor_name || marker.primary_vendor_name || marker.vendor_name || marker.vendor || "";
     }
 
     function updateVendorStateLabel(marker){
@@ -1776,9 +1854,10 @@
       }
     }
 
-    async function loadCategoryVendorMappings(){
+    async function loadCategoryVendorAssignments(){
       try{
         let categories = [];
+        let assignments = [];
         if(isSupabaseConfigured()){
           const sb = getSupabase();
           const catRes = await sb.from("inspection_categories")
@@ -1787,13 +1866,22 @@
             .order("display_order", { ascending: true });
           if(catRes.error) throw catRes.error;
           categories = (catRes.data || []).filter(c=>isActiveStatus(c.status) && c.name !== "確認");
+          const assignmentRes = await sb.from("inspection_category_vendor_assignments")
+            .select("id,category_id,category_name,vendor_id,vendor_name,role,role_order,is_primary,display_order,status")
+            .eq("status", "active")
+            .order("display_order", { ascending: true })
+            .order("role_order", { ascending: true });
+          if(assignmentRes.error) throw assignmentRes.error;
+          assignments = assignmentRes.data || [];
         }else{
           categories = FALLBACK_CATEGORIES.filter(c=>c.name !== "確認");
+          assignments = [];
         }
         categories.sort(compareByDisplayOrder);
         inspectionCategories = categories;
         await loadVendorMaster();
         categoryVendorMappingsByName = {};
+        categoryVendorAssignments = {};
         categories.forEach(c=>{
           categoryVendorMappingsByName[c.name] = {
             id: c.id,
@@ -1803,12 +1891,90 @@
             auto_assign_enabled: c.auto_assign_enabled !== false,
             display_order: c.display_order,
             status: c.status || "active",
+            main_vendor_id: null,
+            main_vendor_name: "",
+            sub1_vendor_id: null,
+            sub1_vendor_name: "",
+            sub2_vendor_id: null,
+            sub2_vendor_name: "",
+            sub3_vendor_id: null,
+            sub3_vendor_name: "",
+            sub4_vendor_id: null,
+            sub4_vendor_name: "",
             dirty: false,
           };
+          categoryVendorAssignments[c.name] = emptyCategoryAssignment();
         });
+        assignments.forEach(row=>{
+          if(!row || !isActiveStatus(row.status)) return;
+          const categoryName = row.category_name || inspectionCategories.find(c=>c.id === row.category_id)?.name || "";
+          const role = String(row.role || "").toLowerCase();
+          const map = categoryVendorMappingsByName[categoryName];
+          const assignMap = categoryVendorAssignments[categoryName];
+          if(!map || !assignMap || !CATEGORY_VENDOR_ROLES.includes(role)) return;
+          const vendor = {
+            id: row.vendor_id || getVendorRecordByName(row.vendor_name || "")?.id || null,
+            name: row.vendor_name || getVendorRecordByName(row.vendor_name || "")?.name || "",
+            role,
+          };
+          if(!vendor.name) return;
+          assignMap[role] = vendor;
+          map[`${role}_vendor_id`] = vendor.id;
+          map[`${role}_vendor_name`] = vendor.name;
+        });
+        Object.entries(categoryVendorMappingsByName).forEach(([categoryName, map])=>{
+          if(categoryName === "共通"){
+            map.main_vendor_id = "ALL_VENDORS";
+            map.main_vendor_name = "全業者";
+            map.sub1_vendor_id = null;
+            map.sub1_vendor_name = "";
+            map.sub2_vendor_id = null;
+            map.sub2_vendor_name = "";
+            map.sub3_vendor_id = null;
+            map.sub3_vendor_name = "";
+            map.sub4_vendor_id = null;
+            map.sub4_vendor_name = "";
+            categoryVendorAssignments[categoryName] = {
+              main: { id: "ALL_VENDORS", name: "全業者", role: "main" },
+              sub1: null,
+              sub2: null,
+              sub3: null,
+              sub4: null,
+              all: [{ id: "ALL_VENDORS", name: "全業者", role: "main" }],
+            };
+            map.default_vendor_id = "ALL_VENDORS";
+            map.default_vendor_name = "全業者";
+            map.auto_assign_enabled = true;
+            return;
+          }
+          if(!map.main_vendor_name){
+            map.main_vendor_name = map.default_vendor_name || "";
+            map.main_vendor_id = map.default_vendor_id || getVendorRecordByName(map.main_vendor_name || "")?.id || null;
+          }
+          const staged = [];
+          CATEGORY_VENDOR_ROLES.forEach(role=>{
+            const name = map[`${role}_vendor_name`] || "";
+            if(!name) return;
+            const resolved = getVendorRecordByName(name);
+            staged.push({
+              id: map[`${role}_vendor_id`] || resolved?.id || null,
+              name: resolved?.name || name,
+              role,
+            });
+          });
+          const all = dedupeVendorRecords(staged);
+          const byRole = { main: null, sub1: null, sub2: null, sub3: null, sub4: null };
+          all.forEach(v=>{ byRole[v.role] = v; });
+          categoryVendorAssignments[categoryName] = { ...byRole, all };
+          if(byRole.main){
+            map.default_vendor_name = byRole.main.name;
+            map.default_vendor_id = byRole.main.id;
+          }
+        });
+        mappingPanelDirty = false;
         renderCategorySelects();
         refreshAllVendorSelects();
-        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        applyCategoryVendorAssignmentToMarker($("typeSelect").value, null, true);
         updateVendorStateLabel();
         setMappingPanelStatus("紐づけ設定を読み込みました", "ok");
       }catch(e){
@@ -1816,6 +1982,7 @@
         inspectionCategories = FALLBACK_CATEGORIES.filter(c=>c.name !== "確認").sort(compareByDisplayOrder);
         inspectionVendors = ensureSpecialVendors(FALLBACK_VENDORS.filter(v=>v.name !== "共通")).sort(compareByDisplayOrder);
         categoryVendorMappingsByName = {};
+        categoryVendorAssignments = {};
         inspectionCategories.forEach(c=>{
           categoryVendorMappingsByName[c.name] = {
             id: c.id,
@@ -1825,84 +1992,102 @@
             auto_assign_enabled: c.auto_assign_enabled !== false,
             display_order: c.display_order,
             status: c.status || "active",
+            main_vendor_id: c.name === "共通" ? "ALL_VENDORS" : (c.default_vendor_id || null),
+            main_vendor_name: c.name === "共通" ? "全業者" : (c.default_vendor_name || ""),
+            sub1_vendor_id: null, sub1_vendor_name: "",
+            sub2_vendor_id: null, sub2_vendor_name: "",
+            sub3_vendor_id: null, sub3_vendor_name: "",
+            sub4_vendor_id: null, sub4_vendor_name: "",
             dirty: false,
           };
+          categoryVendorAssignments[c.name] = c.name === "共通"
+            ? { main: { id: "ALL_VENDORS", name: "全業者", role: "main" }, sub1: null, sub2: null, sub3: null, sub4: null, all: [{ id: "ALL_VENDORS", name: "全業者", role: "main" }] }
+            : emptyCategoryAssignment();
         });
+        mappingPanelDirty = false;
         renderCategorySelects();
         refreshAllVendorSelects();
-        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        applyCategoryVendorAssignmentToMarker($("typeSelect").value, null, true);
         updateVendorStateLabel();
         setMappingPanelStatus("Supabase未接続のため固定設定で動作中", "error");
       }
     }
 
-    function renderCategoryVendorSettings(){
+    function renderCategoryVendorAssignmentSettings(){
       const root = $("mappingSettingsList");
       const rows = inspectionCategories.length ? inspectionCategories : FALLBACK_CATEGORIES;
-      const vendorOptions = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
+      const activeVendors = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
         .filter(v=>v.name !== "共通")
-        .sort(compareByDisplayOrder)
-        .map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`)
+        .sort(compareByDisplayOrder);
+      const baseOptions = [`<option value="">未設定</option>`]
+        .concat(activeVendors.map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
         .join("");
+      const slotHtml = CATEGORY_VENDOR_ROLE_CONFIG.map(conf=>`
+        <div class="mapping-vendor-slot">
+          <span>${escapeHtml(conf.label)}</span>
+          <select data-role="${escapeHtml(conf.role)}">${baseOptions}</select>
+        </div>
+      `).join("");
       const head = `
         <div class="mapping-grid mapping-head">
           <div>指摘種別</div>
           <div>自動</div>
-          <div>標準担当業者</div>
+          <div>業者設定</div>
           <div>状態</div>
         </div>
       `;
       const body = rows.map(c=>{
         const map = categoryVendorMappingsByName[c.name] || {};
-        const vendorName = c.name === "共通" ? "全業者" : (map.default_vendor_name || c.default_vendor_name || "業者未定");
-        const on = map.auto_assign_enabled !== false;
+        const on = c.name === "共通" ? true : map.auto_assign_enabled !== false;
         const state = map.dirty ? "未保存" : "保存済み";
         return `
           <div class="mapping-row mapping-grid" data-category="${escapeHtml(c.name)}">
             <div>${escapeHtml(c.name)}</div>
             <div><input type="checkbox" data-role="auto" ${on ? "checked" : ""} ${c.name === "共通" ? "disabled" : ""}></div>
-            <div class="mapping-full"><select data-role="vendor" ${c.name === "共通" ? "disabled" : ""}>${vendorOptions}</select></div>
+            <div class="mapping-full mapping-vendor-slots">${slotHtml}</div>
             <div class="mapping-state" data-role="state">${state}</div>
           </div>
         `;
       }).join("");
       root.innerHTML = head + body;
       rows.forEach(c=>{
-        const row = root.querySelector(`.mapping-row[data-category="${cssEscape(c.name)}"]`);
-        if(!row) return;
-        const vendorSelect = row.querySelector('select[data-role="vendor"]');
         const map = categoryVendorMappingsByName[c.name];
-        if(vendorSelect){
-          const currentVendorName = c.name === "共通" ? "全業者" : (map?.default_vendor_name || "業者未定");
-          const exists = Array.from(vendorSelect.options).some(opt=>opt.value === currentVendorName);
-          vendorSelect.value = exists ? currentVendorName : "業者未定";
-          if(map && c.name !== "共通" && !exists){
-            map.default_vendor_name = "業者未定";
-            map.default_vendor_id = "UNASSIGNED_VENDOR";
-            map.auto_assign_enabled = false;
-            map.dirty = true;
-            mappingPanelDirty = true;
+        const row = root.querySelector(`.mapping-row[data-category="${cssEscape(c.name)}"]`);
+        if(!map || !row) return;
+        CATEGORY_VENDOR_ROLE_CONFIG.forEach(conf=>{
+          const sel = row.querySelector(`select[data-role="${cssEscape(conf.role)}"]`);
+          if(!sel) return;
+          const currentName = c.name === "共通"
+            ? (conf.role === "main" ? "全業者" : "")
+            : (map[`${conf.role}_vendor_name`] || "");
+          const exists = Array.from(sel.options).some(opt=>opt.value === currentName);
+          sel.value = exists ? currentName : "";
+          sel.disabled = c.name === "共通" && conf.role !== "main";
+          if(c.name === "共通" && conf.role === "main"){
+            sel.value = "全業者";
+            sel.disabled = true;
           }
-          vendorSelect.addEventListener("change", ()=>{
-            const selectedName = vendorSelect.value;
+          sel.addEventListener("change", ()=>{
+            if(c.name === "共通" && conf.role !== "main") return;
+            const selectedName = c.name === "共通" && conf.role === "main" ? "全業者" : (sel.value || "");
             const vendor = getVendorRecordByName(selectedName);
-            if(map){
-              map.default_vendor_name = selectedName;
-              map.default_vendor_id = vendor?.id || null;
-              map.dirty = true;
+            map[`${conf.role}_vendor_name`] = selectedName;
+            map[`${conf.role}_vendor_id`] = vendor?.id || null;
+            if(conf.role === "main"){
+              map.default_vendor_name = selectedName || "業者未定";
+              map.default_vendor_id = vendor?.id || (selectedName ? null : "UNASSIGNED_VENDOR");
             }
+            map.dirty = true;
             row.querySelector('[data-role="state"]').textContent = "未保存";
             mappingPanelDirty = true;
             setMappingPanelStatus("未保存の変更があります", "warn");
           });
-        }
+        });
         const autoChk = row.querySelector('input[data-role="auto"]');
         if(autoChk){
           autoChk.addEventListener("change", ()=>{
-            if(map){
-              map.auto_assign_enabled = !!autoChk.checked;
-              map.dirty = true;
-            }
+            map.auto_assign_enabled = !!autoChk.checked;
+            map.dirty = true;
             row.querySelector('[data-role="state"]').textContent = "未保存";
             mappingPanelDirty = true;
             setMappingPanelStatus("未保存の変更があります", "warn");
@@ -1911,7 +2096,7 @@
       });
     }
 
-    async function saveCategoryVendorMappings(){
+    async function saveCategoryVendorAssignmentSettings(){
       const changed = Object.values(categoryVendorMappingsByName).filter(m=>m.dirty);
       if(changed.length === 0){
         setMappingPanelStatus("未保存の変更はありません", "ok");
@@ -1920,27 +2105,95 @@
       if(!isSupabaseConfigured()){
         setMappingPanelStatus("Supabase未接続のため保存できません（画面反映のみ）", "error");
         changed.forEach(m=>{ m.dirty = false; });
-        renderCategoryVendorSettings();
+        renderCategoryVendorAssignmentSettings();
         return;
       }
       try{
         const sb = getSupabase();
+        const now = new Date().toISOString();
+        let dedupedCount = 0;
         for(const map of changed){
+          let roleEntries = CATEGORY_VENDOR_ROLES.map(role=>{
+            const name = map[`${role}_vendor_name`] || "";
+            if(!name) return null;
+            const vendor = getVendorRecordByName(name);
+            return { role, name, id: vendor?.id || map[`${role}_vendor_id`] || null };
+          }).filter(Boolean);
+          if(map.category_name === "共通"){
+            roleEntries = [{ role: "main", name: "全業者", id: "ALL_VENDORS" }];
+            map.auto_assign_enabled = true;
+          }
+          const uniqByName = new Set();
+          const deduped = [];
+          roleEntries.forEach(ent=>{
+            const key = String(ent.name || "");
+            if(!key) return;
+            if(uniqByName.has(key)){
+              dedupedCount += 1;
+              return;
+            }
+            uniqByName.add(key);
+            deduped.push(ent);
+          });
+          const main = deduped.find(v=>v.role === "main") || null;
+          const defaultVendorName = map.category_name === "共通"
+            ? "全業者"
+            : (main?.name || "業者未定");
+          const defaultVendorId = map.category_name === "共通"
+            ? "ALL_VENDORS"
+            : (main?.id || "UNASSIGNED_VENDOR");
           const payload = {
-            default_vendor_id: map.category_name === "共通" ? "ALL_VENDORS" : map.default_vendor_id,
-            default_vendor_name: map.category_name === "共通" ? "全業者" : map.default_vendor_name,
-            auto_assign_enabled: map.category_name === "共通" ? true : !!map.auto_assign_enabled,
+            default_vendor_id: defaultVendorId,
+            default_vendor_name: defaultVendorName,
+            auto_assign_enabled: map.category_name === "共通" ? true : (!!map.auto_assign_enabled && !!main),
+            updated_at: now,
           };
-          const { error } = await sb.from("inspection_categories")
+          const { error: categoryErr } = await sb.from("inspection_categories")
             .update(payload)
             .eq("id", map.id);
-          if(error) throw error;
+          if(categoryErr) throw categoryErr;
+          const { error: deactivateErr } = await sb.from("inspection_category_vendor_assignments")
+            .update({ status: "inactive", updated_at: now })
+            .eq("category_id", map.id)
+            .eq("status", "active");
+          if(deactivateErr) throw deactivateErr;
+          const insertRows = deduped.map(ent=>{
+            const roleMeta = roleConfigByName(ent.role);
+            return {
+              category_id: map.id,
+              category_name: map.category_name,
+              vendor_id: ent.id,
+              vendor_name: ent.name,
+              role: ent.role,
+              role_order: roleMeta.order,
+              is_primary: roleMeta.isPrimary,
+              display_order: roleMeta.order,
+              status: "active",
+              created_at: now,
+              updated_at: now,
+            };
+          });
+          if(insertRows.length){
+            const { error: insertErr } = await sb.from("inspection_category_vendor_assignments").insert(insertRows);
+            if(insertErr) throw insertErr;
+          }
+          CATEGORY_VENDOR_ROLES.forEach(role=>{
+            const found = deduped.find(v=>v.role === role);
+            map[`${role}_vendor_name`] = found?.name || "";
+            map[`${role}_vendor_id`] = found?.id || null;
+          });
+          map.default_vendor_name = defaultVendorName;
+          map.default_vendor_id = defaultVendorId;
+          map.auto_assign_enabled = payload.auto_assign_enabled;
           map.dirty = false;
         }
         mappingPanelDirty = false;
-        renderCategoryVendorSettings();
+        await loadCategoryVendorAssignments();
         setMappingPanelStatus("紐づけ設定を保存しました", "ok");
-        applyDefaultVendorByCategory($("typeSelect").value, null, true);
+        if(dedupedCount > 0){
+          toast(`重複業者 ${dedupedCount} 件を除外して保存しました。`);
+        }
+        applyCategoryVendorAssignmentToMarker($("typeSelect").value, null, true);
         updateVendorStateLabel();
       }catch(e){
         console.error(e);
@@ -1948,29 +2201,52 @@
       }
     }
 
-    function getDefaultVendorForCategory(categoryName){
+    function getVendorsForCategory(categoryName){
+      if(categoryName === "共通"){
+        return [{ id: "ALL_VENDORS", name: "全業者", role: "main" }];
+      }
+      const map = categoryVendorMappingsByName[categoryName];
+      if(!map || map.auto_assign_enabled === false) return [];
+      const list = CATEGORY_VENDOR_ROLES.map(role=>{
+        const name = map[`${role}_vendor_name`] || "";
+        if(!name) return null;
+        const vendor = getVendorRecordByName(name);
+        return {
+          id: map[`${role}_vendor_id`] || vendor?.id || null,
+          name: vendor?.name || name,
+          role,
+        };
+      }).filter(Boolean);
+      return dedupeVendorRecords(list);
+    }
+
+    function getPrimaryVendorForCategory(categoryName){
       if(categoryName === "共通"){
         return { id: "ALL_VENDORS", name: "全業者", source: "common", auto_assign_enabled: true };
       }
       const map = categoryVendorMappingsByName[categoryName];
-      if(!map) return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
-      if(map.auto_assign_enabled === false){
+      if(!map || map.auto_assign_enabled === false){
         return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
       }
-      const resolved = getVendorRecordByName(map.default_vendor_name || "");
-      if(!resolved){
-        return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
+      const vendors = getVendorsForCategory(categoryName);
+      const main = vendors.find(v=>v.role === "main");
+      if(main && main.name){
+        return { id: main.id, name: main.name, source: "auto", auto_assign_enabled: true };
       }
-      return {
-        id: resolved.id || map.default_vendor_id || null,
-        name: resolved.name || map.default_vendor_name || "業者未定",
-        source: "auto",
-        auto_assign_enabled: true,
-      };
+      const fallbackName = map.default_vendor_name || "";
+      const fallbackVendor = getVendorRecordByName(fallbackName);
+      if(fallbackName && fallbackName !== "業者未定"){
+        return {
+          id: fallbackVendor?.id || map.default_vendor_id || null,
+          name: fallbackVendor?.name || fallbackName,
+          source: "auto",
+          auto_assign_enabled: true,
+        };
+      }
+      return { id: "UNASSIGNED_VENDOR", name: "業者未定", source: "unassigned", auto_assign_enabled: false };
     }
 
-    function applyDefaultVendorByCategory(categoryName, targetMarker, force = false){
-      const vendor = getDefaultVendorForCategory(categoryName);
+    function applyCategoryVendorAssignmentToMarker(categoryName, targetMarker, force = false){
       if(targetMarker && targetMarker.vendor_manual_override && !force) return false;
       const marker = targetMarker || null;
       if(categoryName === "共通"){
@@ -1979,6 +2255,14 @@
           marker.vendor = "全業者";
           marker.vendor_id = "ALL_VENDORS";
           marker.vendor_name = "全業者";
+          marker.primary_vendor_id = "ALL_VENDORS";
+          marker.primary_vendor_name = "全業者";
+          marker.main_vendor_id = "ALL_VENDORS";
+          marker.main_vendor_name = "全業者";
+          marker.assigned_vendor_ids = ["ALL_VENDORS"];
+          marker.assigned_vendor_names = ["全業者"];
+          marker.sub_vendor_ids = [];
+          marker.sub_vendor_names = [];
           marker.vendor_status = "common";
           marker.vendor_source = "common";
           marker.vendor_manual_override = false;
@@ -1992,12 +2276,29 @@
         updateVendorStateLabel(marker);
         return true;
       }
-      if(vendor.source === "unassigned" || vendor.name === "業者未定"){
+      const allVendors = getVendorsForCategory(categoryName);
+      const main = getPrimaryVendorForCategory(categoryName);
+      const subs = allVendors.filter(v=>v.role !== "main");
+      const assignedNames = dedupeVendorRecords(main.name && main.name !== "業者未定"
+        ? [{ id: main.id, name: main.name, role: "main" }, ...subs]
+        : subs);
+      const assignedIds = assignedNames.map(v=>v.id).filter(Boolean);
+      const subNames = dedupeVendorRecords(subs).map(v=>v.name);
+      const subIds = dedupeVendorRecords(subs).map(v=>v.id).filter(Boolean);
+      if(main.source === "unassigned" || main.name === "業者未定"){
         if(marker){
           marker.type = categoryName;
           marker.vendor = "業者未定";
           marker.vendor_id = "UNASSIGNED_VENDOR";
           marker.vendor_name = "業者未定";
+          marker.primary_vendor_id = "UNASSIGNED_VENDOR";
+          marker.primary_vendor_name = "業者未定";
+          marker.main_vendor_id = "UNASSIGNED_VENDOR";
+          marker.main_vendor_name = "業者未定";
+          marker.assigned_vendor_ids = assignedIds;
+          marker.assigned_vendor_names = assignedNames.map(v=>v.name);
+          marker.sub_vendor_ids = subIds;
+          marker.sub_vendor_names = subNames;
           marker.vendor_status = "undecided";
           marker.vendor_source = "unassigned";
           marker.vendor_manual_override = false;
@@ -2013,21 +2314,49 @@
       }
       if(marker){
         marker.type = categoryName;
-        marker.vendor = vendor.name;
-        marker.vendor_id = vendor.id;
-        marker.vendor_name = vendor.name;
+        marker.vendor = main.name;
+        marker.vendor_id = main.id;
+        marker.vendor_name = main.name;
+        marker.primary_vendor_id = main.id;
+        marker.primary_vendor_name = main.name;
+        marker.main_vendor_id = main.id;
+        marker.main_vendor_name = main.name;
+        marker.assigned_vendor_ids = assignedIds;
+        marker.assigned_vendor_names = assignedNames.map(v=>v.name);
+        marker.sub_vendor_ids = subIds;
+        marker.sub_vendor_names = subNames;
         marker.vendor_status = "assigned";
         marker.vendor_source = "auto";
         marker.vendor_manual_override = false;
-        marker.original_auto_vendor_id = vendor.id;
-        marker.original_auto_vendor_name = vendor.name;
+        marker.original_auto_vendor_id = main.id;
+        marker.original_auto_vendor_name = main.name;
         marker.is_common = false;
         marker.is_vendor_unassigned = false;
       }
-      $("vendorSelect").value = vendor.name;
-      $("fsVendorSelect").value = vendor.name;
+      $("vendorSelect").value = main.name;
+      $("fsVendorSelect").value = main.name;
       updateVendorStateLabel(marker);
       return true;
+    }
+
+    async function loadCategoryVendorMappings(){
+      return loadCategoryVendorAssignments();
+    }
+
+    function renderCategoryVendorSettings(){
+      return renderCategoryVendorAssignmentSettings();
+    }
+
+    async function saveCategoryVendorMappings(){
+      return saveCategoryVendorAssignmentSettings();
+    }
+
+    function getDefaultVendorForCategory(categoryName){
+      return getPrimaryVendorForCategory(categoryName);
+    }
+
+    function applyDefaultVendorByCategory(categoryName, targetMarker, force = false){
+      return applyCategoryVendorAssignmentToMarker(categoryName, targetMarker, force);
     }
 
     function markVendorManualOverride(targetMarker){
@@ -2042,16 +2371,28 @@
       targetMarker.vendor_id = vendor?.id || (selectedName === "業者未定" ? "UNASSIGNED_VENDOR" : null);
       targetMarker.vendor_name = selectedName;
       if(selectedName === "業者未定"){
+        targetMarker.primary_vendor_id = "UNASSIGNED_VENDOR";
+        targetMarker.primary_vendor_name = "業者未定";
+        targetMarker.main_vendor_id = "UNASSIGNED_VENDOR";
+        targetMarker.main_vendor_name = "業者未定";
         targetMarker.vendor_status = "undecided";
         targetMarker.vendor_source = "unassigned";
         targetMarker.vendor_manual_override = false;
         targetMarker.is_vendor_unassigned = true;
       }else{
+        targetMarker.primary_vendor_id = targetMarker.vendor_id;
+        targetMarker.primary_vendor_name = selectedName;
+        targetMarker.main_vendor_id = targetMarker.vendor_id;
+        targetMarker.main_vendor_name = selectedName;
         targetMarker.vendor_status = "assigned";
         targetMarker.vendor_source = "manual";
         targetMarker.vendor_manual_override = true;
         targetMarker.is_vendor_unassigned = false;
       }
+      if(!Array.isArray(targetMarker.assigned_vendor_names)) targetMarker.assigned_vendor_names = [];
+      if(!Array.isArray(targetMarker.assigned_vendor_ids)) targetMarker.assigned_vendor_ids = [];
+      if(!Array.isArray(targetMarker.sub_vendor_names)) targetMarker.sub_vendor_names = [];
+      if(!Array.isArray(targetMarker.sub_vendor_ids)) targetMarker.sub_vendor_ids = [];
       targetMarker.is_common = false;
       updateVendorStateLabel(targetMarker);
     }
@@ -2071,6 +2412,12 @@
         original_auto_vendor_name: marker.original_auto_vendor_name,
         is_common: marker.is_common,
         is_vendor_unassigned: marker.is_vendor_unassigned,
+        main_vendor_name: marker.main_vendor_name,
+        main_vendor_id: marker.main_vendor_id,
+        primary_vendor_id: marker.primary_vendor_id,
+        assigned_vendor_ids: marker.assigned_vendor_ids,
+        sub_vendor_names: marker.sub_vendor_names,
+        sub_vendor_ids: marker.sub_vendor_ids,
       });
       if(marker.vendor_name === "共通"){
         marker.vendor_name = "全業者";
@@ -2083,8 +2430,14 @@
         marker.vendor_status = "common";
         marker.vendor_source = "common";
         marker.vendor_manual_override = false;
+        marker.primary_vendor_id = "ALL_VENDORS";
         marker.assigned_vendor_names = ["全業者"];
+        marker.assigned_vendor_ids = ["ALL_VENDORS"];
+        marker.sub_vendor_ids = [];
+        marker.sub_vendor_names = [];
         marker.primary_vendor_name = "全業者";
+        marker.main_vendor_id = "ALL_VENDORS";
+        marker.main_vendor_name = "全業者";
         marker.original_auto_vendor_name = "全業者";
         marker.original_auto_vendor_id = "ALL_VENDORS";
         marker.is_common = true;
@@ -2097,38 +2450,19 @@
         marker.vendor_source = "unassigned";
         marker.vendor_manual_override = false;
         marker.assigned_vendor_names = [];
+        marker.assigned_vendor_ids = [];
+        marker.sub_vendor_ids = [];
+        marker.sub_vendor_names = [];
+        marker.primary_vendor_id = "UNASSIGNED_VENDOR";
         marker.primary_vendor_name = null;
+        marker.main_vendor_id = "UNASSIGNED_VENDOR";
+        marker.main_vendor_name = "業者未定";
         marker.is_common = false;
         marker.is_vendor_unassigned = true;
-      }else if(marker.vendor_source === "manual" || marker.vendor_manual_override){
-        marker.vendor_name = marker.vendor_name || marker.vendor || "";
-        if(!marker.vendor_name){
-          marker.vendor = "業者未定";
-          marker.vendor_name = "業者未定";
-          marker.vendor_id = "UNASSIGNED_VENDOR";
-          marker.vendor_status = "undecided";
-          marker.vendor_source = "unassigned";
-          marker.vendor_manual_override = false;
-          marker.assigned_vendor_names = [];
-          marker.primary_vendor_name = null;
-          marker.is_common = false;
-          marker.is_vendor_unassigned = true;
-        }else{
-          marker.vendor_source = "manual";
-          marker.vendor_status = "assigned";
-          marker.vendor_manual_override = true;
-          marker.is_common = false;
-          marker.is_vendor_unassigned = false;
-          marker.vendor = marker.vendor_name;
-          marker.assigned_vendor_names = [marker.vendor_name];
-          marker.primary_vendor_name = marker.vendor_name;
-          if(!marker.vendor_id){
-            marker.vendor_id = getVendorRecordByName(marker.vendor_name || "")?.id || null;
-          }
-        }
       }else{
-        const vName = marker.vendor_name || marker.vendor || "";
-        if(!vName || vName === "業者未定"){
+        const manual = marker.vendor_source === "manual" || !!marker.vendor_manual_override;
+        const rawName = marker.main_vendor_name || marker.primary_vendor_name || marker.vendor_name || marker.vendor || "";
+        if(!rawName || rawName === "業者未定"){
           marker.vendor = "業者未定";
           marker.vendor_name = "業者未定";
           marker.vendor_id = "UNASSIGNED_VENDOR";
@@ -2136,19 +2470,41 @@
           marker.vendor_source = "unassigned";
           marker.vendor_manual_override = false;
           marker.assigned_vendor_names = [];
+          marker.assigned_vendor_ids = [];
+          marker.sub_vendor_names = [];
+          marker.sub_vendor_ids = [];
+          marker.primary_vendor_id = "UNASSIGNED_VENDOR";
           marker.primary_vendor_name = null;
+          marker.main_vendor_id = "UNASSIGNED_VENDOR";
+          marker.main_vendor_name = "業者未定";
           marker.is_common = false;
           marker.is_vendor_unassigned = true;
         }else{
-          const vendor = getVendorRecordByName(vName);
-          marker.vendor = vName;
-          marker.vendor_name = vName;
-          marker.vendor_id = vendor?.id || marker.vendor_id || null;
+          const mainVendor = getVendorRecordByName(rawName);
+          const mainName = mainVendor?.name || rawName;
+          const mainId = mainVendor?.id || marker.main_vendor_id || marker.primary_vendor_id || marker.vendor_id || null;
+          const subNames = dedupeVendorRecords((Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : []).map(name=>({ name })))
+            .map(v=>v.name)
+            .filter(name=>name && name !== mainName && name !== "全業者" && name !== "業者未定");
+          const assignedNames = dedupeVendorRecords([
+            { name: mainName },
+            ...subNames.map(name=>({ name })),
+            ...(Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names.map(name=>({ name })) : []),
+          ]).map(v=>v.name).filter(name=>name && name !== "全業者");
+          marker.vendor = mainName;
+          marker.vendor_name = mainName;
+          marker.vendor_id = mainId;
+          marker.main_vendor_id = mainId;
+          marker.main_vendor_name = mainName;
+          marker.primary_vendor_id = mainId;
+          marker.primary_vendor_name = mainName;
+          marker.sub_vendor_names = subNames;
+          marker.sub_vendor_ids = subNames.map(name=>getVendorRecordByName(name)?.id || null).filter(Boolean);
+          marker.assigned_vendor_names = assignedNames;
+          marker.assigned_vendor_ids = assignedNames.map(name=>getVendorRecordByName(name)?.id || (name === mainName ? mainId : null)).filter(Boolean);
           marker.vendor_status = "assigned";
-          marker.vendor_source = "auto";
-          marker.vendor_manual_override = false;
-          marker.assigned_vendor_names = [vName];
-          marker.primary_vendor_name = vName;
+          marker.vendor_source = manual ? "manual" : "auto";
+          marker.vendor_manual_override = manual;
           marker.is_common = false;
           marker.is_vendor_unassigned = false;
         }
@@ -2170,6 +2526,12 @@
         original_auto_vendor_name: marker.original_auto_vendor_name,
         is_common: marker.is_common,
         is_vendor_unassigned: marker.is_vendor_unassigned,
+        main_vendor_name: marker.main_vendor_name,
+        main_vendor_id: marker.main_vendor_id,
+        primary_vendor_id: marker.primary_vendor_id,
+        assigned_vendor_ids: marker.assigned_vendor_ids,
+        sub_vendor_names: marker.sub_vendor_names,
+        sub_vendor_ids: marker.sub_vendor_ids,
       });
       return before !== after;
     }
@@ -2218,7 +2580,11 @@
     function shouldShowMarkerForVendor(marker, selectedVendor){
       if(!selectedVendor || selectedVendor === "全て" || selectedVendor === "全業者") return true;
       if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return true;
-      return getVendorDisplayName(marker) === selectedVendor;
+      const assigned = Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names : [];
+      const subNames = Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : [];
+      if(assigned.includes(selectedVendor)) return true;
+      if(subNames.includes(selectedVendor)) return true;
+      return getVendorDisplayName(marker) === selectedVendor || marker.vendor_name === selectedVendor;
     }
 
     function cssEscape(value){
@@ -2566,6 +2932,8 @@
       $("quickMarkerType").value = d.type || "共通";
       $("quickMarkerVendor").value = d.vendor_name || "";
       $("quickMarkerMemo").value = d.memo || "";
+      const related = Array.isArray(d.sub_vendor_names) && d.sub_vendor_names.length ? d.sub_vendor_names.join("、") : "なし";
+      $("quickRelatedVendors").textContent = `関連業者：${related}`;
       renderQuickTypeChips(d.type || "共通");
       renderQuickPhotoSection(d);
     }
@@ -2574,36 +2942,7 @@
       if(!marker) return false;
       marker.type = categoryName || "共通";
       if(marker.vendor_manual_override) return false;
-      if(categoryName === "共通"){
-        marker.vendor_name = "";
-        marker.vendor_id = null;
-        marker.vendor = "";
-        marker.vendor_source = "common";
-        marker.is_common = true;
-        marker.is_vendor_unassigned = false;
-        marker.original_auto_vendor_id = "ALL_VENDORS";
-        marker.original_auto_vendor_name = "全業者";
-        return true;
-      }
-      const vendor = getDefaultVendorForCategory(categoryName);
-      if(vendor.source === "unassigned" || vendor.name === "業者未定"){
-        marker.vendor_name = "";
-        marker.vendor_id = null;
-        marker.vendor = "";
-        marker.vendor_source = "unassigned";
-        marker.is_vendor_unassigned = true;
-        marker.is_common = false;
-        return true;
-      }
-      marker.vendor_name = vendor.name || "";
-      marker.vendor_id = vendor.id || null;
-      marker.vendor = vendor.name || "";
-      marker.vendor_source = "auto";
-      marker.is_common = false;
-      marker.is_vendor_unassigned = !vendor.name;
-      marker.original_auto_vendor_id = vendor.id || null;
-      marker.original_auto_vendor_name = vendor.name || "";
-      return true;
+      return applyCategoryVendorAssignmentToMarker(categoryName, marker, true);
     }
 
     function clearMarkerVendor(marker){
@@ -2611,6 +2950,14 @@
       marker.vendor_name = "業者未定";
       marker.vendor_id = "UNASSIGNED_VENDOR";
       marker.vendor = "業者未定";
+      marker.primary_vendor_name = "業者未定";
+      marker.primary_vendor_id = "UNASSIGNED_VENDOR";
+      marker.main_vendor_name = "業者未定";
+      marker.main_vendor_id = "UNASSIGNED_VENDOR";
+      marker.assigned_vendor_names = [];
+      marker.assigned_vendor_ids = [];
+      marker.sub_vendor_names = [];
+      marker.sub_vendor_ids = [];
       marker.vendor_status = "undecided";
       marker.vendor_manual_override = false;
       marker.vendor_source = "unassigned";
@@ -2785,10 +3132,19 @@
         draft: {
           type: marker.type || "共通",
           vendor_name: marker.vendor_name || marker.vendor || "",
+          vendor_id: marker.vendor_id || null,
           vendor_status: marker.vendor_status || "assigned",
           memo: marker.memo || "",
           vendor_manual_override: !!marker.vendor_manual_override,
           vendor_source: marker.vendor_source || "auto",
+          primary_vendor_id: marker.primary_vendor_id || marker.vendor_id || null,
+          primary_vendor_name: marker.primary_vendor_name || marker.vendor_name || marker.vendor || "",
+          main_vendor_id: marker.main_vendor_id || marker.vendor_id || null,
+          main_vendor_name: marker.main_vendor_name || marker.vendor_name || marker.vendor || "",
+          assigned_vendor_ids: Array.isArray(marker.assigned_vendor_ids) ? [...marker.assigned_vendor_ids] : [],
+          assigned_vendor_names: Array.isArray(marker.assigned_vendor_names) ? [...marker.assigned_vendor_names] : [],
+          sub_vendor_ids: Array.isArray(marker.sub_vendor_ids) ? [...marker.sub_vendor_ids] : [],
+          sub_vendor_names: Array.isArray(marker.sub_vendor_names) ? [...marker.sub_vendor_names] : [],
           beforePhoto: clonePhotoInfo(marker.beforePhoto),
           afterPhoto: clonePhotoInfo(marker.afterPhoto),
           beforePhotoFile: null,
@@ -2832,11 +3188,17 @@
         vendor: "",
         vendor_id: null,
         vendor_name: "",
+        primary_vendor_id: "ALL_VENDORS",
+        primary_vendor_name: "全業者",
+        main_vendor_id: "ALL_VENDORS",
+        main_vendor_name: "全業者",
+        assigned_vendor_ids: ["ALL_VENDORS"],
         vendor_status: "common",
         vendor_source: "common",
         vendor_manual_override: false,
         assigned_vendor_names: ["全業者"],
-        primary_vendor_name: "全業者",
+        sub_vendor_ids: [],
+        sub_vendor_names: [],
         original_auto_vendor_id: "ALL_VENDORS",
         original_auto_vendor_name: "全業者",
         is_common: true,
@@ -2881,9 +3243,17 @@
       marker.type = d.type || "共通";
       marker.memo = d.memo || "";
       if(marker.type === "共通"){
-        marker.vendor = d.vendor_name || "全業者";
-        marker.vendor_name = d.vendor_name || "全業者";
-        marker.vendor_id = marker.vendor_name ? (getVendorRecordByName(marker.vendor_name)?.id || "ALL_VENDORS") : null;
+        marker.vendor = "全業者";
+        marker.vendor_name = "全業者";
+        marker.vendor_id = "ALL_VENDORS";
+        marker.primary_vendor_id = "ALL_VENDORS";
+        marker.primary_vendor_name = "全業者";
+        marker.main_vendor_id = "ALL_VENDORS";
+        marker.main_vendor_name = "全業者";
+        marker.assigned_vendor_ids = ["ALL_VENDORS"];
+        marker.assigned_vendor_names = ["全業者"];
+        marker.sub_vendor_ids = [];
+        marker.sub_vendor_names = [];
         marker.vendor_status = "common";
         marker.vendor_source = "common";
         marker.vendor_manual_override = false;
@@ -2895,6 +3265,14 @@
         marker.vendor = "業者未定";
         marker.vendor_name = "業者未定";
         marker.vendor_id = "UNASSIGNED_VENDOR";
+        marker.primary_vendor_id = "UNASSIGNED_VENDOR";
+        marker.primary_vendor_name = "業者未定";
+        marker.main_vendor_id = "UNASSIGNED_VENDOR";
+        marker.main_vendor_name = "業者未定";
+        marker.assigned_vendor_ids = Array.isArray(d.assigned_vendor_ids) ? [...d.assigned_vendor_ids] : [];
+        marker.assigned_vendor_names = Array.isArray(d.assigned_vendor_names) ? [...d.assigned_vendor_names] : [];
+        marker.sub_vendor_ids = Array.isArray(d.sub_vendor_ids) ? [...d.sub_vendor_ids] : [];
+        marker.sub_vendor_names = Array.isArray(d.sub_vendor_names) ? [...d.sub_vendor_names] : [];
         marker.vendor_status = "undecided";
         marker.vendor_source = "unassigned";
         marker.vendor_manual_override = false;
@@ -2905,6 +3283,14 @@
         marker.vendor = d.vendor_name;
         marker.vendor_name = d.vendor_name;
         marker.vendor_id = vendor?.id || null;
+        marker.primary_vendor_id = marker.vendor_id;
+        marker.primary_vendor_name = d.vendor_name;
+        marker.main_vendor_id = marker.vendor_id;
+        marker.main_vendor_name = d.vendor_name;
+        marker.assigned_vendor_ids = Array.isArray(d.assigned_vendor_ids) ? [...d.assigned_vendor_ids] : [];
+        marker.assigned_vendor_names = Array.isArray(d.assigned_vendor_names) ? [...d.assigned_vendor_names] : [];
+        marker.sub_vendor_ids = Array.isArray(d.sub_vendor_ids) ? [...d.sub_vendor_ids] : [];
+        marker.sub_vendor_names = Array.isArray(d.sub_vendor_names) ? [...d.sub_vendor_names] : [];
         marker.vendor_status = "assigned";
         marker.vendor_source = d.vendor_manual_override ? "manual" : "auto";
         marker.vendor_manual_override = !!d.vendor_manual_override;
@@ -2913,6 +3299,9 @@
         if(!d.vendor_manual_override){
           marker.original_auto_vendor_id = marker.vendor_id;
           marker.original_auto_vendor_name = marker.vendor_name;
+        }else{
+          marker.vendor_source = "manual";
+          marker.vendor_manual_override = true;
         }
       }
       marker.beforePhoto = clonePhotoInfo(d.beforePhoto);
@@ -3357,10 +3746,19 @@
     });
     $("quickMarkerVendor").addEventListener("change", ()=>{
       if(!quickEditorState) return;
-      quickEditorState.draft.vendor_name = $("quickMarkerVendor").value || "";
+      const selected = $("quickMarkerVendor").value || "";
+      const vendor = getVendorRecordByName(selected);
+      quickEditorState.draft.vendor_name = selected;
+      quickEditorState.draft.vendor_id = vendor?.id || (selected === "業者未定" ? "UNASSIGNED_VENDOR" : null);
+      quickEditorState.draft.primary_vendor_name = selected || "業者未定";
+      quickEditorState.draft.primary_vendor_id = vendor?.id || (selected === "業者未定" ? "UNASSIGNED_VENDOR" : null);
+      quickEditorState.draft.main_vendor_name = selected || "業者未定";
+      quickEditorState.draft.main_vendor_id = vendor?.id || (selected === "業者未定" ? "UNASSIGNED_VENDOR" : null);
       quickEditorState.draft.vendor_manual_override = true;
-      quickEditorState.draft.vendor_source = quickEditorState.draft.vendor_name ? "manual" : "manual";
+      quickEditorState.draft.vendor_source = selected ? "manual" : "unassigned";
       quickEditorState.draft.is_common = false;
+      quickEditorState.draft.is_vendor_unassigned = !selected || selected === "業者未定";
+      updateQuickEditorUiFromDraft();
     });
     $("quickMarkerVendorClear").addEventListener("click", ()=>{
       if(!quickEditorState) return;
