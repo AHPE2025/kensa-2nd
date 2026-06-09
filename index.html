@@ -143,6 +143,11 @@
       border-color:#2563eb;
       color:#fff;
     }
+    .input-mode-indicator{
+      font-size:12px;
+      color:#334155;
+      font-weight:600;
+    }
     #textNotesLayer{
       position:absolute;
       inset:0;
@@ -150,6 +155,7 @@
       pointer-events:none;
       touch-action:none;
     }
+    .text-notes-layer{pointer-events:none}
     .text-note-box{
       position:absolute;
       background:#ffffff;
@@ -561,6 +567,7 @@
             <div class="input-mode">
               <button class="mode-btn active" id="btnInputModePin" type="button">ピン追加</button>
               <button class="mode-btn" id="btnInputModeText" type="button">テキスト追加</button>
+              <span id="inputModeIndicator" class="input-mode-indicator">現在：ピン追加</span>
             </div>
           </div>
           <div class="field" style="min-width:140px;flex:1">
@@ -603,7 +610,7 @@
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <canvas id="bg"></canvas>
           <svg id="overlay"></svg>
-          <div id="textNotesLayer"></div>
+          <div id="textNotesLayer" class="text-notes-layer"></div>
           <div id="quickMarkerEditor">
             <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
             <div class="qe-row" id="quickTypeChips"></div>
@@ -3781,7 +3788,7 @@
     let selectedTextNoteId = null;
     let filterVendor = "";
     let filterStatus = "open";
-    let inputMode = store.inputMode === "text" ? "text" : "pin";
+    let inputMode = "pin";
 
     function activeKey(){
       const bg = store.activeBg;
@@ -4474,11 +4481,25 @@
     }
 
     function setInputMode(mode){
-      inputMode = mode === "text" ? "text" : "pin";
-      store.inputMode = inputMode;
+      const nextMode = (mode === "pin" || mode === "text") ? mode : "pin";
+      inputMode = nextMode;
+      store.inputMode = nextMode;
+      $("btnInputModePin")?.classList.toggle("active", nextMode === "pin");
+      $("btnInputModeText")?.classList.toggle("active", nextMode === "text");
+      const indicator = $("inputModeIndicator");
+      if(indicator){
+        indicator.textContent = nextMode === "text" ? "現在：テキスト追加" : "現在：ピン追加";
+      }
+      if(nextMode === "pin"){
+        textNoteDrag = null;
+        selectedTextNoteId = null;
+        closeTextNoteEditor();
+        redrawTextNotes();
+      }else{
+        closeQuickMarkerEditor({ keepDraft: false });
+      }
       saveStore();
-      $("btnInputModePin")?.classList.toggle("active", inputMode === "pin");
-      $("btnInputModeText")?.classList.toggle("active", inputMode === "text");
+      console.log(`inputMode changed: ${nextMode}`);
     }
 
     function textNoteTypeLabel(noteType){
@@ -4679,12 +4700,13 @@
     function createDraftMarkerAt(x, y){
       console.debug("[marker] createDraftMarkerAt実行", { x, y });
       const ratio = canvasPxToImgRatio(x, y);
+      const selectedCategory = String($("typeSelect")?.value || "共通");
       const m = {
         id: newId(),
         x: ratio.x, y: ratio.y,
         dx: DEFAULT_BUBBLE_DX,
         dy: DEFAULT_BUBBLE_DY,
-        type: "共通",
+        type: selectedCategory || "共通",
         vendor: "",
         vendor_id: null,
         vendor_name: "",
@@ -4721,6 +4743,7 @@
         afterPhotoDeletePath: null,
       };
       safeNormalizeMarkerOffset(m);
+      applyDefaultVendorByCategory(m.type || "共通", m, true);
       markers().push(m);
       selectedId = m.id;
       selectedTextNoteId = null;
@@ -5095,24 +5118,44 @@
       if(now < suppressTapCreateUntil) return true;
       if(e?.type === "click" && now - lastPointerDownAt < 400) return true;
       if(quickEditorState && quickMarkerEditor && quickMarkerEditor.contains(e.target)) return true;
+      if(textNoteEditorState && textNoteEditor && textNoteEditor.contains(e.target)) return true;
       return false;
     }
 
     function handleStagePointerTap(e, source = "stage"){
       if(shouldIgnoreBlankCreate(e)) return;
+      if(drag || pendingDrag || textNoteDrag) return;
+      const target = e?.target;
+      if(target?.closest){
+        if(target.closest("g[data-id]")) return;
+        if(target.closest("[data-role]")) return;
+        if(target.closest(".text-note-box")) return;
+        if(target.closest("#quickMarkerEditor")) return;
+        if(target.closest("#textNoteEditor")) return;
+      }
       if(e?.type === "touchstart"){
         suppressTapCreateUntil = Date.now() + 450;
         if(typeof e.preventDefault === "function") e.preventDefault();
       }
       const p = svgPointFromAnyEvent(e);
-      console.debug("stage tapped", { source, x: p.x, y: p.y });
+      console.log("stage tapped");
+      console.log(`inputMode: ${inputMode}`);
+      console.debug("stage tapped detail", { source, x: p.x, y: p.y });
       selectedId = null;
-      closeQuickMarkerEditor({ keepDraft: false });
-      closeTextNoteEditor();
       if(inputMode === "text"){
-        createTextNoteAt(p.x, p.y);
+        console.log("creating text note");
+        closeQuickMarkerEditor({ keepDraft: false });
+        const note = createTextNoteAt(p.x, p.y);
+        redrawOverlay();
+        saveStore();
+        if(note) console.log("text note created");
       }else{
-        createDraftMarkerAt(p.x, p.y);
+        console.log("creating marker");
+        closeTextNoteEditor();
+        const marker = createDraftMarkerAt(p.x, p.y);
+        redrawOverlay();
+        saveStore();
+        if(marker) console.log("marker created");
       }
     }
 
