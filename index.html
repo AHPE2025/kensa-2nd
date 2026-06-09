@@ -35,9 +35,9 @@
     .hint{font-size:12px;color:var(--muted);line-height:1.5}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .divider{height:1px;background:var(--line);margin:12px 0}
-    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:hidden;aspect-ratio:16/9;}
-    canvas#bg{position:absolute;top:0;left:0;display:block;}
-    svg#overlay{position:absolute;top:0;left:0;touch-action:none}
+    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:hidden;aspect-ratio:16/9;z-index:0;}
+    canvas#bg{position:absolute;top:0;left:0;display:block;z-index:1;}
+    svg#overlay{position:absolute;top:0;left:0;touch-action:none;z-index:5;pointer-events:auto}
     .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:#fff}
     .status{display:flex;gap:10px;flex-wrap:wrap}
     .toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:var(--shadow);max-width:520px;display:none;white-space:pre-wrap}
@@ -151,10 +151,12 @@
     #textNotesLayer{
       position:absolute;
       inset:0;
-      z-index:4;
+      z-index:30;
       pointer-events:none;
       touch-action:none;
     }
+    .marker-layer{pointer-events:auto}
+    .bubble-layer{pointer-events:auto}
     .text-notes-layer{pointer-events:none}
     .text-note-box{
       position:absolute;
@@ -4698,12 +4700,28 @@
     }
 
     function createDraftMarkerAt(x, y){
-      console.debug("[marker] createDraftMarkerAt実行", { x, y });
-      const ratio = canvasPxToImgRatio(x, y);
+      const key = activeKey();
+      console.debug("activeKey in create", key);
+      const ratioRaw = canvasPxToImgRatio(x, y);
+      const ratio = {
+        x: clamp(Number.isFinite(Number(ratioRaw?.x)) ? Number(ratioRaw.x) : 0.5, 0, 1),
+        y: clamp(Number.isFinite(Number(ratioRaw?.y)) ? Number(ratioRaw.y) : 0.5, 0, 1),
+      };
+      console.debug("[marker] createDraftMarkerAt実行", { key, x, y, ratioRaw, ratio });
       const selectedCategory = String($("typeSelect")?.value || "共通");
+      const nowIso = new Date().toISOString();
+      const pageNumber = store?.activeBg?.kind === "pdf"
+        ? (parseInt(String(store?.activeBg?.page ?? "1"), 10) || 1)
+        : 0;
+      if(!store.markersByKey) store.markersByKey = {};
+      if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
+      const markerId = newId();
       const m = {
-        id: newId(),
-        x: ratio.x, y: ratio.y,
+        id: markerId,
+        local_marker_id: markerId,
+        page_number: pageNumber,
+        x: ratio.x,
+        y: ratio.y,
         dx: DEFAULT_BUBBLE_DX,
         dy: DEFAULT_BUBBLE_DY,
         type: selectedCategory || "共通",
@@ -4725,11 +4743,14 @@
         original_auto_vendor_name: "全業者",
         is_common: true,
         is_vendor_unassigned: false,
+        memo: "",
         status: "open",
         completed_at: null,
         completed_by: "",
-        memo: "",
+        created_at: nowIso,
+        updated_at: nowIso,
         createdAt: Date.now(),
+        bubble_moved: false,
         bubbleMoved: false,
         cloud_marker_id: null,
         supabase_marker_id: null,
@@ -4744,11 +4765,22 @@
       };
       safeNormalizeMarkerOffset(m);
       applyDefaultVendorByCategory(m.type || "共通", m, true);
-      markers().push(m);
+      store.markersByKey[key].push(m);
+      console.debug("marker created data:", {
+        key,
+        marker: m,
+        page_number: m.page_number,
+        x: m.x,
+        y: m.y,
+        count: store.markersByKey[key]?.length ?? 0,
+      });
+      console.debug("activeKey after create", activeKey());
       selectedId = m.id;
       selectedTextNoteId = null;
       redrawOverlay();
       redrawList();
+      saveStore();
+      requestAnimationFrame(()=> redrawOverlay());
       syncButtons();
       syncSelectorsFromSelectedMarker();
       try{
@@ -4756,7 +4788,6 @@
       }catch(err){
         console.error("openQuickMarkerEditor起動エラー", err);
       }
-      console.debug("draft marker created", { markerId: m.id });
       return m;
     }
 
@@ -4923,9 +4954,16 @@
     }
 
     function redrawOverlay(){
+      const key = activeKey();
+      console.debug("activeKey in redrawOverlay", key);
+      if(!store.markersByKey) store.markersByKey = {};
+      if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
+      const markersForKey = store.markersByKey[key];
+      const arr = markersForKey.filter(m=>normalizeMarkerStatus(m) !== "deleted");
+      console.debug("redrawOverlay start:", { key, markerCount: arr.length });
+      console.debug("redrawOverlay markers source", { key, totalCount: markersForKey.length, markerCount: arr.length });
       while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
 
-      const arr = markers();
       let offsetFixed = false;
       arr.forEach(m=>{
         if(safeNormalizeMarkerOffset(m)) offsetFixed = true;
@@ -4936,16 +4974,27 @@
       const hit = svgEl("rect", { x:0,y:0,width:stageW,height:stageH, fill:"transparent", "pointer-events":"all" });
       overlay.appendChild(hit);
 
+      const bubbleLayer = svgEl("g", { "data-layer":"bubble", "class":"bubble-layer" });
+      const markerLayer = svgEl("g", { "data-layer":"marker", "class":"marker-layer" });
+      overlay.appendChild(bubbleLayer);
+      overlay.appendChild(markerLayer);
+
       arr.forEach((m, idx)=>{
         const isSel = m.id === selectedId;
-        const group = svgEl("g", { "data-id": m.id });
+        const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
+        const my = clamp(Number.isFinite(Number(m.y)) ? Number(m.y) : 0.5, 0, 1);
+        const mdx = Number.isFinite(Number(m.dx)) ? Number(m.dx) : DEFAULT_BUBBLE_DX;
+        const mdy = Number.isFinite(Number(m.dy)) ? Number(m.dy) : DEFAULT_BUBBLE_DY;
+        const anchorGroup = svgEl("g", { "data-id": m.id });
+        const bubbleGroup = svgEl("g", { "data-id": m.id });
 
         // line from anchor to bubble
         // 画像比率→canvas px 変換
-        const _a = imgRatioToCanvasPx(m.x, m.y);
+        const _a = imgRatioToCanvasPx(mx, my);
         const ax = _a.x, ay = _a.y;
-        const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
+        const _b = imgRatioToCanvasPx(mx + mdx, my + mdy);
         const bx = _b.x, by = _b.y;
+        console.debug("render marker:", { id: m.id, x: mx, y: my, px: ax, py: ay });
         // 線の終点は吹き出しの中心（回転しても常にここに繋がる）
         const linex2 = bx + BUBBLE_W / 2;
         const liney2 = by + BUBBLE_H / 2;
@@ -4955,7 +5004,7 @@
           "stroke-width": isSel ? 2.5 : 2,
           "stroke-opacity": isSel ? 0.85 : 0.65,
         });
-        group.appendChild(line);
+        bubbleGroup.appendChild(line);
 
         // bubble（先に描画し、ピンを上に重ねて常に見えるようにする）
         const rot = isFullscreen ? fsRotation : 0;
@@ -4982,10 +5031,9 @@
         const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
         t2.textContent = `${statusLine} / ${line2}`;
         bubbleG.appendChild(t2);
+        bubbleGroup.appendChild(bubbleG);
 
-        group.appendChild(bubbleG);
-
-        // anchor point（吹き出しより手前＝上に描画）
+        // anchor point（ピン本体）
         const anchor = svgEl("circle", {
           cx: ax, cy: ay, r: isSel ? 8 : 7,
           fill: "#dc2626",
@@ -4995,9 +5043,21 @@
         });
         if(isSel) anchor.classList.add("sel");
         anchor.setAttribute("data-role","anchor");
-        group.appendChild(anchor);
+        anchorGroup.appendChild(anchor);
+        const pinNumber = svgEl("text", {
+          x: ax,
+          y: ay + 3.5,
+          "text-anchor":"middle",
+          "font-size":"9",
+          "font-weight":"800",
+          fill:"#ffffff",
+          "pointer-events":"none",
+        });
+        pinNumber.textContent = String(idx + 1);
+        anchorGroup.appendChild(pinNumber);
 
-        overlay.appendChild(group);
+        bubbleLayer.appendChild(bubbleGroup);
+        markerLayer.appendChild(anchorGroup);
       });
       if(quickEditorState){
         const target = getMarkerById(quickEditorState.markerId);
@@ -5010,6 +5070,7 @@
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
       redrawTextNotes();
+      console.debug("redrawOverlay done");
     }
 
     // -------------------- List Rendering --------------------
@@ -5150,6 +5211,7 @@
         saveStore();
         if(note) console.log("text note created");
       }else{
+        console.log(`activeKey before create: ${activeKey()}`);
         console.log("creating marker");
         closeTextNoteEditor();
         const marker = createDraftMarkerAt(p.x, p.y);
