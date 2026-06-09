@@ -190,6 +190,43 @@
       box-shadow:0 2px 8px rgba(0,0,0,.35);
       pointer-events:auto;
     }
+    #stageWrap{
+      position:relative;
+      overflow:visible;
+    }
+    #bg,
+    #bg canvas,
+    #bg img{
+      position:relative;
+      z-index:1;
+    }
+    svg#overlay,
+    #overlay{
+      position:absolute;
+      left:0;
+      top:0;
+      z-index:20;
+      overflow:visible;
+    }
+    #markerForceLayer{
+      position:absolute;
+      z-index:999 !important;
+      pointer-events:none;
+      overflow:visible;
+    }
+    .marker-force-dot{
+      position:absolute;
+      z-index:1000 !important;
+      width:18px;
+      height:18px;
+      background:#dc2626;
+      border:3px solid #fff;
+      border-radius:9999px;
+      box-shadow:0 2px 8px rgba(0,0,0,.35);
+      transform:translate(-50%, -50%);
+      pointer-events:auto;
+      cursor:pointer;
+    }
     .marker-bubble,
     .bubble,
     .pin-bubble{
@@ -2202,10 +2239,10 @@
           return true;
         }catch(error){
           console.error("[autosave] error", error);
-          setAllMarkerSyncStatus("pending");
-          updateSaveStatus("local", "ローカル保存中");
           saveStore();
-          toast("クラウド保存に失敗しました。ローカルには保存されています");
+          if (typeof updateSaveStatus === "function") {
+            updateSaveStatus("local", "ローカル保存中");
+          }
           return false;
         }
       }catch(e){
@@ -4161,6 +4198,109 @@
       });
     }
 
+    function forceRenderMarkers() {
+      const stageWrap = document.getElementById("stageWrap");
+      if (!stageWrap) {
+        console.error("[forceRenderMarkers] stageWrap not found");
+        return;
+      }
+
+      const key = activeKey();
+      const markers = (store.markersByKey && store.markersByKey[key]) ? store.markersByKey[key] : [];
+
+      let layer = document.getElementById("markerForceLayer");
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.id = "markerForceLayer";
+        stageWrap.appendChild(layer);
+      }
+
+      stageWrap.appendChild(layer);
+
+      const stageRect = stageWrap.getBoundingClientRect();
+
+      let rect = null;
+
+      if (typeof getImageRect === "function") {
+        rect = getImageRect();
+      }
+
+      if (!rect || !rect.width || !rect.height) {
+        const bg = document.getElementById("bg");
+        if (bg) rect = bg.getBoundingClientRect();
+      }
+
+      if (!rect || !rect.width || !rect.height) {
+        rect = stageRect;
+      }
+
+      const left = rect.left - stageRect.left;
+      const top = rect.top - stageRect.top;
+
+      layer.style.position = "absolute";
+      layer.style.left = left + "px";
+      layer.style.top = top + "px";
+      layer.style.width = rect.width + "px";
+      layer.style.height = rect.height + "px";
+      layer.style.zIndex = "999";
+      layer.style.pointerEvents = "none";
+      layer.style.overflow = "visible";
+
+      layer.innerHTML = "";
+
+      markers
+        .filter(m => m && m.status !== "deleted")
+        .forEach((m, index) => {
+          const x = Number(m.x);
+          const y = Number(m.y);
+
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            console.warn("[forceRenderMarkers] invalid marker position", m);
+            return;
+          }
+
+          const dot = document.createElement("div");
+          dot.className = "marker-force-dot";
+          dot.dataset.markerId = m.id || m.local_marker_id || "";
+
+          dot.style.position = "absolute";
+          dot.style.left = (Math.max(0, Math.min(1, x)) * rect.width) + "px";
+          dot.style.top = (Math.max(0, Math.min(1, y)) * rect.height) + "px";
+          dot.style.width = "18px";
+          dot.style.height = "18px";
+          dot.style.background = "#dc2626";
+          dot.style.border = "3px solid #ffffff";
+          dot.style.borderRadius = "9999px";
+          dot.style.boxShadow = "0 2px 8px rgba(0,0,0,.35)";
+          dot.style.transform = "translate(-50%, -50%)";
+          dot.style.zIndex = "1000";
+          dot.style.pointerEvents = "auto";
+          dot.style.cursor = "pointer";
+
+          dot.title = `${index + 1}. ${m.vendor_name || ""} / ${m.type || ""}`;
+
+          dot.addEventListener("click", function(e) {
+            e.stopPropagation();
+            selectedId = m.id;
+            if (typeof openQuickMarkerEditor === "function") {
+              openQuickMarkerEditor(m, { isNew: false });
+            }
+            if (typeof redrawOverlay === "function") redrawOverlay();
+            forceRenderMarkers();
+          });
+
+          layer.appendChild(dot);
+        });
+
+      console.debug("[forceRenderMarkers]", {
+        key,
+        markerCount: markers.length,
+        visibleDots: layer.children.length,
+        rect,
+        layerRect: layer.getBoundingClientRect()
+      });
+    }
+
     function resizeStage(){
       // devicePixelRatioを考慮してcanvasを物理ピクセルサイズで確保する
       // これにより高DPI(Retina)ディスプレイでもシャープに表示される
@@ -5141,11 +5281,21 @@
       console.debug("activeKey after create", activeKey());
       selectedId = m.id;
       selectedTextNoteId = null;
-      redrawOverlay();
-      redrawList();
       saveStore();
-      markDirty("marker created");
-      requestAnimationFrame(()=> redrawOverlay());
+      if (typeof redrawOverlay === "function") {
+        redrawOverlay();
+      }
+      forceRenderMarkers();
+      requestAnimationFrame(() => {
+        if (typeof redrawOverlay === "function") redrawOverlay();
+        forceRenderMarkers();
+      });
+      try{
+        markDirty("marker created");
+      }catch(e){
+        console.warn("[marker created] markDirty failed but marker stays local", e);
+      }
+      redrawList();
       syncButtons();
       syncSelectorsFromSelectedMarker();
       try{
@@ -5491,6 +5641,9 @@
           zIndex: getComputedStyle(el).zIndex
         }))
       });
+      if (typeof forceRenderMarkers === "function") {
+        forceRenderMarkers();
+      }
       console.debug("redrawOverlay done");
     }
 
