@@ -953,6 +953,8 @@
           obj.markersByKey = {};
           obj.textNotesByKey = {};
         }
+        // 前回表示中だったPDFは起動時に自動復元しない（フロアを開いた時に対象フロアだけ読む）
+        obj.activeBg = { kind:"none" };
         console.debug("loadStore done", { source: "storage" });
         return obj;
       }catch(e){
@@ -990,6 +992,8 @@
     let selectedSite = null;
     let selectedFloorId = null;
     let selectedFloor = null;
+    let currentFloorId = null;
+    let currentFloorName = "";
     let selectedInspectionId = null;
     let selectedVendorWorkName = "";
     let inspectionSitesCache = [];
@@ -1052,7 +1056,7 @@
     }
 
     function hasUnsavedPhotos(){
-      for(const arr of Object.values(store.markersByKey || {})){
+      for(const [, arr] of getCurrentFloorMarkerEntries()){
         if(!Array.isArray(arr)) continue;
         for(const marker of arr){
           if(marker?.beforePhotoFile instanceof File) return true;
@@ -1184,6 +1188,7 @@
       const out = {};
       const src = store.markersByKey || {};
       for(const [key, arr] of Object.entries(src)){
+        if(!keyMatchesFloor(key, currentFloorId)) continue;
         if(!Array.isArray(arr)) continue;
         out[key] = arr.map(m=>({
           status: normalizeMarkerStatus(m),
@@ -1226,33 +1231,131 @@
       return out;
     }
 
+    function getScopedFloorId(floorId){
+      const resolved = floorId ?? currentFloorId ?? selectedFloorId ?? selectedFloor?.id ?? null;
+      return resolved ? String(resolved) : "no_floor";
+    }
+
+    function makeTemplateKeyForFloor(floorId){
+      return `floor:${getScopedFloorId(floorId)}:template`;
+    }
+
+    function makeDrawingPageKey(floorId, drawingId, pageNumber){
+      const floorKey = getScopedFloorId(floorId);
+      const safeDrawingId = String(drawingId || "no_drawing");
+      const safePage = Math.max(1, Number.isFinite(Number(pageNumber)) ? Number(pageNumber) : 1);
+      return `floor:${floorKey}:drawing:${safeDrawingId}:page:${safePage}`;
+    }
+
+    function keyMatchesFloor(key, floorId){
+      const floorKey = getScopedFloorId(floorId);
+      return String(key || "").startsWith(`floor:${floorKey}:`);
+    }
+
+    function getCurrentFloorMarkerEntries(){
+      return Object.entries(store?.markersByKey || {})
+        .filter(([key])=>keyMatchesFloor(key, currentFloorId));
+    }
+
+    function getCurrentFloorTextNoteEntries(){
+      return Object.entries(store?.textNotesByKey || {})
+        .filter(([key])=>keyMatchesFloor(key, currentFloorId));
+    }
+
     function parseMarkerKey(key){
-      if(key === "template") return { page_number: 0, pdfId: null, markerKey: "template" };
-      const m = /^pdf:([^:]+):(\d+)$/.exec(key);
-      if(m) return { page_number: parseInt(m[2],10), pdfId: m[1], markerKey: key };
-      return { page_number: 1, pdfId: null, markerKey: key };
+      const src = String(key || "");
+      const floorTemplateMatch = /^floor:([^:]+):template$/.exec(src);
+      if(floorTemplateMatch){
+        return {
+          page_number: 0,
+          pdfId: null,
+          drawing_id: null,
+          floor_id: floorTemplateMatch[1],
+          markerKey: src,
+        };
+      }
+      const floorPdfMatch = /^floor:([^:]+):drawing:([^:]+):page:(\d+)$/.exec(src);
+      if(floorPdfMatch){
+        return {
+          page_number: parseInt(floorPdfMatch[3], 10),
+          pdfId: floorPdfMatch[2],
+          drawing_id: floorPdfMatch[2],
+          floor_id: floorPdfMatch[1],
+          markerKey: src,
+        };
+      }
+      if(src === "template"){
+        return {
+          page_number: 0,
+          pdfId: null,
+          drawing_id: null,
+          floor_id: null,
+          markerKey: src,
+        };
+      }
+      const legacyPdfMatch = /^pdf:([^:]+):(\d+)$/.exec(src);
+      if(legacyPdfMatch){
+        return {
+          page_number: parseInt(legacyPdfMatch[2], 10),
+          pdfId: legacyPdfMatch[1],
+          drawing_id: legacyPdfMatch[1],
+          floor_id: null,
+          markerKey: src,
+        };
+      }
+      return {
+        page_number: 1,
+        pdfId: null,
+        drawing_id: null,
+        floor_id: null,
+        markerKey: src || makeTemplateKeyForFloor(currentFloorId),
+      };
     }
 
     function markerKeyFromRow(row){
-      if(row.drawing_id && row.page_number > 0) return `pdf:${row.drawing_id}:${row.page_number}`;
-      if(row.marker_data?.drawingId && row.page_number > 0) return `pdf:${row.marker_data.drawingId}:${row.page_number}`;
-      if(row.marker_data?.markerKey) return row.marker_data.markerKey;
-      const pdfId = row.marker_data?.pdfId;
-      if(pdfId != null && row.page_number > 0) return `pdf:${pdfId}:${row.page_number}`;
-      if(row.page_number === 0) return "template";
-      return "template";
+      const floorId = row.floor_id || row.marker_data?.floor_id || currentFloorId || selectedFloorId || null;
+      const pageNumber = Number(row.page_number || 0);
+      const drawingId = row.drawing_id || row.marker_data?.drawingId || row.marker_data?.pdfId || null;
+      if(drawingId && pageNumber > 0) return makeDrawingPageKey(floorId, drawingId, pageNumber);
+      if(row.page_number === 0) return makeTemplateKeyForFloor(floorId);
+      if(row.marker_data?.markerKey){
+        const parsed = parseMarkerKey(row.marker_data.markerKey);
+        if(parsed.page_number > 0 && parsed.drawing_id){
+          return makeDrawingPageKey(parsed.floor_id || floorId, parsed.drawing_id, parsed.page_number);
+        }
+      }
+      return makeTemplateKeyForFloor(floorId);
     }
 
     function parseTextNoteKey(key){
-      if(key === "template") return { page_number: 0, drawing_id: null, noteKey: "template" };
-      const m = /^pdf:([^:]+):(\d+)$/.exec(String(key || ""));
-      if(m) return { page_number: parseInt(m[2], 10), drawing_id: m[1], noteKey: key };
-      return { page_number: 1, drawing_id: null, noteKey: key || "template" };
+      const src = String(key || "");
+      const floorTemplateMatch = /^floor:([^:]+):template$/.exec(src);
+      if(floorTemplateMatch){
+        return { page_number: 0, drawing_id: null, floor_id: floorTemplateMatch[1], noteKey: src };
+      }
+      const floorPdfMatch = /^floor:([^:]+):drawing:([^:]+):page:(\d+)$/.exec(src);
+      if(floorPdfMatch){
+        return {
+          page_number: parseInt(floorPdfMatch[3], 10),
+          drawing_id: floorPdfMatch[2],
+          floor_id: floorPdfMatch[1],
+          noteKey: src,
+        };
+      }
+      if(src === "template") return { page_number: 0, drawing_id: null, floor_id: null, noteKey: "template" };
+      const legacyPdfMatch = /^pdf:([^:]+):(\d+)$/.exec(src);
+      if(legacyPdfMatch){
+        return { page_number: parseInt(legacyPdfMatch[2], 10), drawing_id: legacyPdfMatch[1], floor_id: null, noteKey: src };
+      }
+      return { page_number: 1, drawing_id: null, floor_id: null, noteKey: src || makeTemplateKeyForFloor(currentFloorId) };
     }
 
     function textNoteKeyFromRow(row){
-      if(row.drawing_id && Number(row.page_number) > 0) return `pdf:${row.drawing_id}:${Number(row.page_number)}`;
-      return "template";
+      const floorId = row.floor_id || currentFloorId || selectedFloorId || null;
+      if(row.drawing_id && Number(row.page_number) > 0){
+        return makeDrawingPageKey(floorId, row.drawing_id, Number(row.page_number));
+      }
+      return makeTemplateKeyForFloor(floorId);
     }
 
     function remapMarkersPdfIdentity(oldId, newId){
@@ -1260,10 +1363,10 @@
       const mbk = store.markersByKey || {};
       const entries = Object.entries(mbk);
       entries.forEach(([key, arr])=>{
-        const m = /^pdf:([^:]+):(\d+)$/.exec(key);
-        if(!m) return;
-        if(m[1] !== String(oldId)) return;
-        const nextKey = `pdf:${newId}:${m[2]}`;
+        const parsed = parseMarkerKey(key);
+        if(String(parsed?.drawing_id || "") !== String(oldId)) return;
+        if(!(Number(parsed?.page_number) > 0)) return;
+        const nextKey = makeDrawingPageKey(parsed.floor_id, newId, parsed.page_number);
         if(!Array.isArray(mbk[nextKey])) mbk[nextKey] = [];
         if(Array.isArray(arr)) mbk[nextKey].push(...arr);
         delete mbk[key];
@@ -1275,10 +1378,10 @@
       const byKey = store.textNotesByKey || {};
       const entries = Object.entries(byKey);
       entries.forEach(([key, arr])=>{
-        const m = /^pdf:([^:]+):(\d+)$/.exec(key);
-        if(!m) return;
-        if(m[1] !== String(oldId)) return;
-        const nextKey = `pdf:${newId}:${m[2]}`;
+        const parsed = parseTextNoteKey(key);
+        if(String(parsed?.drawing_id || "") !== String(oldId)) return;
+        if(!(Number(parsed?.page_number) > 0)) return;
+        const nextKey = makeDrawingPageKey(parsed.floor_id, newId, parsed.page_number);
         if(!Array.isArray(byKey[nextKey])) byKey[nextKey] = [];
         if(Array.isArray(arr)) byKey[nextKey].push(...arr);
         delete byKey[key];
@@ -1292,11 +1395,12 @@
       const activeDrawingId = bg.kind === "pdf" ? (bg.drawingId || currentDrawingId || null) : null;
       const activePdfIdentity = resolvePdfIdentity(bg);
       for(const [key, arr] of Object.entries(mbk)){
+        if(!keyMatchesFloor(key, currentFloorId)) continue;
         if(!Array.isArray(arr)) continue;
-        const { page_number, pdfId, markerKey } = parseMarkerKey(key);
-        const markerDrawingId = (pdfId && activeDrawingId && pdfId === activePdfIdentity)
+        const { page_number, pdfId, drawing_id, markerKey } = parseMarkerKey(key);
+        const markerDrawingId = drawing_id || ((pdfId && activeDrawingId && pdfId === activePdfIdentity)
           ? activeDrawingId
-          : (pdfId === activeDrawingId ? activeDrawingId : null);
+          : (pdfId === activeDrawingId ? activeDrawingId : null));
         arr.forEach((m, idx)=>{
           const normalizedStatus = normalizeMarkerStatus(m);
           normalizeMarkerVendorState(m);
@@ -1441,7 +1545,7 @@
     function setAllMarkerSyncStatus(status){
       const nextStatus = status === "synced" ? "synced" : "pending";
       let changed = false;
-      for(const arr of Object.values(store.markersByKey || {})){
+      for(const [, arr] of getCurrentFloorMarkerEntries()){
         if(!Array.isArray(arr)) continue;
         arr.forEach(marker=>{
           if(marker.sync_status !== nextStatus){
@@ -1505,26 +1609,16 @@
 
     function applyLoadedInspectionToStore(insp, markerRows){
       const settings = insp.settings || {};
-      if(settings.activeBg){
-        const prevCache = store.activeBg?.pageCache;
-        store.activeBg = { ...settings.activeBg, pageCache: prevCache || {} };
+      const floorScopeId = getScopedFloorId(insp.floor_id || selectedFloorId || currentFloorId);
+      const loadedMarkersByKey = markerRowsToMarkersByKey(markerRows, null);
+      if(!store.markersByKey || typeof store.markersByKey !== "object"){
+        store.markersByKey = {};
       }
-      if(insp.current_drawing_id){
-        currentDrawingId = insp.current_drawing_id;
-        if(store.activeBg?.kind === "pdf"){
-          store.activeBg.drawingId = insp.current_drawing_id;
-          store.activeBg.pdfId = String(insp.current_drawing_id);
-        }
-      }
-      store.markersByKey = markerRowsToMarkersByKey(
-        markerRows,
-        settings.markersByKey
-      );
+      Object.keys(store.markersByKey).forEach(key=>{
+        if(keyMatchesFloor(key, floorScopeId)) delete store.markersByKey[key];
+      });
+      Object.assign(store.markersByKey, loadedMarkersByKey);
       normalizeAllMarkersInStore();
-      if(insp.current_page && store.activeBg?.kind === "pdf"){
-        store.activeBg.page = insp.current_page;
-        $("pageInput").value = String(insp.current_page);
-      }
       if(typeof settings.normalRotation === "number"){
         normalRotation = settings.normalRotation;
       }
@@ -1547,6 +1641,44 @@
       syncSelectorsFromSelectedMarker();
       if(isFullscreen) updateFsInfo();
       updateCloudCurrentIdLabel();
+    }
+
+    function clearCurrentFloorDrawingState(){
+      currentDrawingId = null;
+      currentDrawingStoragePath = null;
+      lastPdfFile = null;
+      cachedPdfDoc = null;
+      cachedPdfFileRef = null;
+      if(!store || typeof store !== "object") return;
+      if(!store.markersByKey || typeof store.markersByKey !== "object") store.markersByKey = {};
+      if(!store.textNotesByKey || typeof store.textNotesByKey !== "object") store.textNotesByKey = {};
+      store.activeBg = { kind: "none" };
+      const pageInputEl = $("pageInput");
+      if(pageInputEl) pageInputEl.value = "1";
+      const pdfInputEl = $("pdfInput");
+      if(pdfInputEl) pdfInputEl.value = "";
+      updatePageInfo();
+    }
+
+    function resetFloorRuntimeState(){
+      selectedId = null;
+      selectedTextNoteId = null;
+      closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
+      closeTextNoteEditor();
+      clearCurrentFloorDrawingState();
+      const markerLayer = document.getElementById("markerForceLayer");
+      if(markerLayer) markerLayer.innerHTML = "";
+      const overlayEl = document.getElementById("overlay");
+      if(overlayEl) overlayEl.innerHTML = "";
+      const notesLayer = document.getElementById("textNotesLayer");
+      if(notesLayer) notesLayer.innerHTML = "";
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      if(isFullscreen) updateFsInfo();
+      saveStore();
     }
 
     async function uploadPdfToSupabase(file){
@@ -1720,6 +1852,7 @@
       const byKey = store.textNotesByKey || {};
       const floorName = selectedFloor?.floor_name || $("inpFloorName").value || null;
       for(const [key, arr] of Object.entries(byKey)){
+        if(!keyMatchesFloor(key, currentFloorId)) continue;
         if(!Array.isArray(arr)) continue;
         const { page_number, drawing_id } = parseTextNoteKey(key);
         arr.forEach((noteRaw, idx)=>{
@@ -1772,15 +1905,21 @@
       return { textNoteCount: rows.length };
     }
 
-    async function loadTextNotesFromCloud(inspectionId){
-      if(!inspectionId) return;
+    async function loadTextNotesFromCloud(inspectionId, floorId, drawingId = null){
+      if(!inspectionId || !floorId) return;
       const sb = getSupabase();
-      const { data, error } = await sb.from("drawing_text_notes")
+      let query = sb.from("drawing_text_notes")
         .select("*")
         .eq("inspection_id", inspectionId)
-        .eq("status", "active")
+        .eq("floor_id", floorId)
+        .neq("status", "deleted")
         .order("display_order", { ascending: true });
+      if(drawingId){
+        query = query.eq("drawing_id", drawingId);
+      }
+      const { data, error } = await query;
       if(error) throw error;
+      const floorScopeId = getScopedFloorId(floorId);
       const next = {};
       (data || []).forEach(row=>{
         const key = textNoteKeyFromRow(row);
@@ -1807,7 +1946,13 @@
           updated_at: row.updated_at,
         }));
       });
-      store.textNotesByKey = next;
+      if(!store.textNotesByKey || typeof store.textNotesByKey !== "object"){
+        store.textNotesByKey = {};
+      }
+      Object.keys(store.textNotesByKey).forEach(key=>{
+        if(keyMatchesFloor(key, floorScopeId)) delete store.textNotesByKey[key];
+      });
+      Object.assign(store.textNotesByKey, next);
       normalizeTextNotesByKey(store.textNotesByKey);
       saveStore();
       redrawOverlay();
@@ -1816,7 +1961,7 @@
 
     function mapSavedMarkerIdsToLocalMarkers(insertedRows){
       const idMap = new Map((insertedRows || []).map(r=>[String(r.local_marker_id), r.id]));
-      Object.values(store.markersByKey || {}).forEach(arr=>{
+      getCurrentFloorMarkerEntries().forEach(([, arr])=>{
         if(!Array.isArray(arr)) return;
         arr.forEach(m=>{
           const mappedId = idMap.get(String(m.id)) || null;
@@ -2051,12 +2196,6 @@
           .single();
         if(iErr) throw iErr;
 
-        const { data: markerRows, error: mErr } = await sb.from("markers")
-          .select("*")
-          .eq("inspection_id", inspectionId)
-          .order("sort_order", { ascending: true });
-        if(mErr) throw mErr;
-
         currentInspectionId = inspectionId;
         selectedInspectionId = inspectionId;
         selectedCloudInspectionId = inspectionId;
@@ -2081,13 +2220,42 @@
           selectedFloor = { ...(selectedFloor || {}), floor_name: insp.floor_name };
           selectedFloorId = selectedFloor?.id || null;
         }
-        currentDrawingId = insp.current_drawing_id || null;
-        if(!currentDrawingId) currentDrawingStoragePath = null;
+        currentFloorId = selectedFloorId || insp.floor_id || currentFloorId || null;
+        currentFloorName = selectedFloor?.floor_name || insp.floor_name || "";
+
+        resetFloorRuntimeState();
         applyInspectionForm(insp);
-        applyLoadedInspectionToStore(insp, markerRows || []);
+        let drawingRow = null;
+        if(currentFloorId){
+          const { data: drawingRows, error: dErr } = await sb.from("drawings")
+            .select("*")
+            .eq("inspection_id", inspectionId)
+            .eq("floor_id", currentFloorId)
+            .neq("status", "deleted")
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if(dErr) throw dErr;
+          drawingRow = drawingRows?.[0] || null;
+        }
+
+        let markerRows = [];
+        if(drawingRow?.id){
+          const { data, error: mErr } = await sb.from("markers")
+            .select("*")
+            .eq("inspection_id", inspectionId)
+            .eq("floor_id", currentFloorId)
+            .eq("drawing_id", drawingRow.id)
+            .neq("status", "deleted")
+            .order("sort_order", { ascending: true });
+          if(mErr) throw mErr;
+          markerRows = data || [];
+        }
+
+        applyLoadedInspectionToStore(insp, markerRows);
         try{
-          const localMarkers = Object.values(store.markersByKey || {})
-            .flatMap(arr=>Array.isArray(arr) ? arr : []);
+          const localMarkers = Object.entries(store.markersByKey || {})
+            .filter(([key])=>keyMatchesFloor(key, currentFloorId))
+            .flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
           const markerIds = localMarkers
             .map(m=>m.cloud_marker_id || m.supabase_marker_id || null)
             .filter(Boolean);
@@ -2097,9 +2265,9 @@
           showCloudError("写真情報の復元", e);
         }
 
-        if(insp.current_drawing_id){
+        if(drawingRow?.id){
           try{
-            await loadPdfFromSupabaseDrawing(insp.current_drawing_id, insp.current_page || 1);
+            await loadPdfFromSupabaseDrawing(drawingRow.id, insp.current_page || 1);
             if(store.activeBg?.kind === "pdf"){
               store.activeBg.kind = "pdf";
             }
@@ -2109,15 +2277,26 @@
           }
         }
         try{
-          await loadTextNotesFromCloud(inspectionId);
+          if(drawingRow?.id){
+            await loadTextNotesFromCloud(inspectionId, currentFloorId, drawingRow.id);
+          }else{
+            Object.keys(store.textNotesByKey || {}).forEach(key=>{
+              if(keyMatchesFloor(key, currentFloorId)) delete store.textNotesByKey[key];
+            });
+            saveStore();
+          }
         }catch(e){
           showCloudError("テキストメモの復元", e);
         }
 
         refreshUiAfterDataChange();
         updateCurrentContextLabels();
-        const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
-        const tn = Object.values(store.textNotesByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.filter(v=>normalizeTextNote(v).status === "active").length:0),0);
+        const n = Object.entries(store.markersByKey || {})
+          .filter(([key])=>keyMatchesFloor(key, currentFloorId))
+          .reduce((s,[,a])=>s+(Array.isArray(a)?a.length:0),0);
+        const tn = Object.entries(store.textNotesByKey || {})
+          .filter(([key])=>keyMatchesFloor(key, currentFloorId))
+          .reduce((s,[,a])=>s+(Array.isArray(a)?a.filter(v=>normalizeTextNote(v).status === "active").length:0),0);
         toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件 / テキスト合計: ${tn}件`);
         dirty = false;
         updateSaveStatus("saved");
@@ -2211,7 +2390,7 @@
           const markerSaveRes = await saveMarkersToCloud(inspectionId);
           const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
           let photoSavedCount = 0;
-          for(const arr of Object.values(store.markersByKey || {})){
+          for(const [, arr] of getCurrentFloorMarkerEntries()){
             if(!Array.isArray(arr)) continue;
             for(const marker of arr){
               photoSavedCount += await saveMarkerPhotosToCloud(marker);
@@ -2704,7 +2883,8 @@
           if(inspIds.length > 0){
             const { data: markers } = await sb.from("markers")
               .select("inspection_id, status")
-              .in("inspection_id", inspIds);
+              .in("inspection_id", inspIds)
+              .neq("status", "deleted");
             (markers || []).forEach(m=>{
               const floorKey = inspToFloor.get(String(m.inspection_id || ""));
               if(!floorKey || !summaryByFloor.has(floorKey)) return;
@@ -2721,7 +2901,8 @@
           const { data: drawings } = await sb.from("drawings")
             .select("id, floor_id")
             .in("floor_id", floorIds)
-            .eq("site_id", siteId);
+            .eq("site_id", siteId)
+            .neq("status", "deleted");
           (drawings || []).forEach(d=>{
             const floorKey = String(d.floor_id || "");
             if(!summaryByFloor.has(floorKey)) return;
@@ -2817,8 +2998,15 @@
     async function openFloor(floorId){
       const siteId = selectedSiteId;
       if(!siteId || !floorId) return;
-      selectedFloorId = floorId;
       try{
+        const previousFloorId = selectedFloorId || currentFloorId || null;
+        if(previousFloorId && String(previousFloorId) !== String(floorId)){
+          try{
+            await autoSaveToCloud("floor switch");
+          }catch(saveErr){
+            console.error("[floor switch] autosave failed", saveErr);
+          }
+        }
         let floor = floorsCache.find(f=>String(f.id) === String(floorId));
         if(!floor){
           const sb = getSupabase();
@@ -2833,7 +3021,11 @@
         if(!floor) throw new Error("対象フロアが見つかりません。");
         selectedFloor = floor;
         selectedFloorId = floor.id;
+        currentFloorId = floor.id;
+        currentFloorName = floor.floor_name || "";
         $("inpFloorName").value = floor.floor_name || "";
+        updateCurrentContextLabels();
+        resetFloorRuntimeState();
         const inspectionId = await ensureInspectionForFloor(siteId, floor.id);
         selectedInspectionId = inspectionId;
         await loadInspectionForFloor(siteId, floor.id);
@@ -2909,6 +3101,8 @@
 
     async function loadInspectionForFloor(siteId, floorId){
       if(!siteId || !floorId) return;
+      currentFloorId = floorId;
+      currentFloorName = selectedFloor?.floor_name || currentFloorName || "";
       const sb = getSupabase();
       const { data, error } = await sb.from("inspections")
         .select(INSPECTION_SELECT_COLUMNS)
@@ -2933,7 +3127,7 @@
       const vendorName = selectedVendorWorkName || vendorSelect.value || "";
       const statusFilter = $("vendorWorkStatusFilter")?.value || "open";
       list.innerHTML = "";
-      const markerRows = Object.entries(store.markersByKey || {}).flatMap(([key, arr])=>
+      const markerRows = getCurrentFloorMarkerEntries().flatMap(([key, arr])=>
         (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
       );
       const vendorFiltered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, vendorName));
@@ -4099,12 +4293,18 @@
     let inputMode = "pin";
 
     function activeKey(){
-      const bg = store.activeBg;
-      const pdfIdentity = resolvePdfIdentity(bg);
-      if(bg?.kind === "pdf" && pdfIdentity && bg.page){
-        return `pdf:${pdfIdentity}:${bg.page}`;
+      const bg = store.activeBg || { kind: "none" };
+      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || "no_floor";
+      const pageInputEl = document.getElementById("pageInput");
+      const pageFromInput = parseInt(String(pageInputEl?.value || "1"), 10);
+      const page = Number.isFinite(pageFromInput) && pageFromInput > 0
+        ? pageFromInput
+        : Math.max(1, Number(bg.page || 1));
+      const drawingId = bg?.drawingId || currentDrawingId || bg?.pdfId || null;
+      if(bg.kind === "pdf" && drawingId){
+        return makeDrawingPageKey(floorId, drawingId, page);
       }
-      return "template";
+      return makeTemplateKeyForFloor(floorId);
     }
     function markers(){
       const key = activeKey();
@@ -4698,7 +4898,7 @@
 
     function getMarkerById(markerId){
       if(!markerId) return null;
-      for(const arr of Object.values(store.markersByKey || {})){
+      for(const [, arr] of getCurrentFloorMarkerEntries()){
         if(!Array.isArray(arr)) continue;
         const found = arr.find(m=>m.id === markerId);
         if(found) return found;
@@ -5026,7 +5226,7 @@
 
     function getTextNoteByLocalId(localTextId){
       if(!localTextId) return null;
-      for(const arr of Object.values(store.textNotesByKey || {})){
+      for(const [, arr] of getCurrentFloorTextNoteEntries()){
         if(!Array.isArray(arr)) continue;
         const found = arr.find(n=>n.local_text_id === localTextId);
         if(found) return found;
@@ -5452,7 +5652,7 @@
       if(!markerId) return false;
       let deleted = false;
       let removedMarker = null;
-      for(const [key, arr] of Object.entries(store.markersByKey || {})){
+      for(const [key, arr] of getCurrentFloorMarkerEntries()){
         if(!Array.isArray(arr)) continue;
         const idx = arr.findIndex(m=>m.id === markerId);
         if(idx >= 0){
@@ -7215,22 +7415,23 @@
     function collectPdfScopedKeys(byKey, pdfIdentity){
       if(!byKey || typeof byKey !== "object") return [];
       if(!pdfIdentity) return [];
-      const prefix = `pdf:${String(pdfIdentity)}:`;
-      return Object.keys(byKey).filter(key=>key.startsWith(prefix));
+      return Object.keys(byKey).filter(key=>{
+        const markerParsed = parseMarkerKey(key);
+        if(String(markerParsed?.drawing_id || "") === String(pdfIdentity) && Number(markerParsed?.page_number) > 0){
+          return true;
+        }
+        const noteParsed = parseTextNoteKey(key);
+        if(String(noteParsed?.drawing_id || "") === String(pdfIdentity) && Number(noteParsed?.page_number) > 0){
+          return true;
+        }
+        return String(key).startsWith(`pdf:${String(pdfIdentity)}:`);
+      });
     }
 
     function clearCurrentPdfFromUi(){
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       closeTextNoteEditor();
-      store.activeBg = { kind: "none" };
-      $("pageInput").value = "1";
-      $("pdfInput").value = "";
-      lastPdfFile = null;
-      cachedPdfDoc = null;
-      cachedPdfFileRef = null;
-      currentDrawingId = null;
-      currentDrawingStoragePath = null;
-      updatePageInfo();
+      clearCurrentFloorDrawingState();
       redrawBackground();
       syncButtons();
       if(isFullscreen) updateFsInfo();
@@ -7464,7 +7665,8 @@
         await deleteTextNotesForCurrentDrawing(context);
         const drawingDeleteResult = await deleteDrawingFromSupabase(context.drawingId, context.storagePath);
 
-        if(String(keyBeforeDelete).startsWith("pdf:")){
+        const beforeDeleteKeyInfo = parseMarkerKey(keyBeforeDelete);
+        if(Number(beforeDeleteKeyInfo?.page_number) > 0 && beforeDeleteKeyInfo?.drawing_id){
           delete store.markersByKey[keyBeforeDelete];
           delete store.textNotesByKey[keyBeforeDelete];
         }
@@ -7594,7 +7796,7 @@
       const completedBtn = e.target.closest('button[data-act="mark-completed"]');
       if(completedBtn){
         const markerId = completedBtn.dataset.markerId || "";
-        const all = Object.values(store.markersByKey || {}).flatMap(arr=>Array.isArray(arr) ? arr : []);
+        const all = getCurrentFloorMarkerEntries().flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
         const marker = all.find(m=>String(m.id) === String(markerId));
         if(marker){
           setMarkerStatus(marker, "completed");
@@ -7609,7 +7811,7 @@
       const openBtn = e.target.closest('button[data-act="mark-open"]');
       if(openBtn){
         const markerId = openBtn.dataset.markerId || "";
-        const all = Object.values(store.markersByKey || {}).flatMap(arr=>Array.isArray(arr) ? arr : []);
+        const all = getCurrentFloorMarkerEntries().flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
         const marker = all.find(m=>String(m.id) === String(markerId));
         if(marker){
           setMarkerStatus(marker, "open");
