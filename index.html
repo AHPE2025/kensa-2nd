@@ -3004,16 +3004,49 @@
       }
     }
 
-    async function softDeleteFloorScopedRows(sb, tableName, floorId, siteId, now){
+    async function softDeleteFloorScopedRows(sb, tableName, floorId, siteId, now, options = {}){
+      const floorColumn = options.floorColumn || "floor_id";
+      const useSiteFilter = options.useSiteFilter !== false;
+      const payloads = [
+        { status: "deleted", deleted_at: now, updated_at: now },
+        { status: "deleted", updated_at: now },
+      ];
+      let lastError = null;
+      const tryWithSite = !!(siteId && useSiteFilter);
+      for(const payload of payloads){
+        const scopes = tryWithSite ? [true, false] : [false];
+        for(const withSite of scopes){
+          let query = sb.from(tableName).update(payload).eq(floorColumn, floorId);
+          if(withSite) query = query.eq("site_id", siteId);
+          const { error } = await query;
+          if(!error) return;
+          lastError = error;
+          if(withSite && isMissingColumnOrTableError(error)){
+            continue;
+          }
+          break;
+        }
+        if(lastError && !isMissingColumnOrTableError(lastError)) break;
+      }
+      if(lastError) throw lastError;
+    }
+
+    async function softDeleteMarkerPhotosByFloor(sb, floorId, siteId, now){
+      let markerQuery = sb.from("markers").select("id").eq("floor_id", floorId);
+      if(siteId) markerQuery = markerQuery.eq("site_id", siteId);
+      const { data: markerRows, error: markerFetchError } = await markerQuery;
+      if(markerFetchError) throw markerFetchError;
+      const markerIds = (markerRows || []).map(row=>row.id).filter(Boolean);
+      if(markerIds.length === 0) return;
       const payloads = [
         { status: "deleted", deleted_at: now, updated_at: now },
         { status: "deleted", updated_at: now },
       ];
       let lastError = null;
       for(const payload of payloads){
-        let query = sb.from(tableName).update(payload).eq("floor_id", floorId);
-        if(siteId) query = query.eq("site_id", siteId);
-        const { error } = await query;
+        const { error } = await sb.from("marker_photos")
+          .update(payload)
+          .in("marker_id", markerIds);
         if(!error) return;
         lastError = error;
         if(!isMissingColumnOrTableError(error)) break;
@@ -3154,12 +3187,12 @@
         const now = new Date().toISOString();
         const floorId = floor.id;
         const siteId = selectedSiteId || floor.site_id || null;
-        await softDeleteFloorScopedRows(sb, "site_floors", floorId, siteId, now);
+        await softDeleteFloorScopedRows(sb, "site_floors", floorId, siteId, now, { floorColumn: "id" });
         await softDeleteFloorScopedRows(sb, "drawings", floorId, siteId, now);
         await softDeleteDrawingPagesByFloor(sb, floorId, siteId, now);
         await softDeleteFloorScopedRows(sb, "markers", floorId, siteId, now);
         await softDeleteFloorScopedRows(sb, "drawing_text_notes", floorId, siteId, now);
-        await softDeleteFloorScopedRows(sb, "marker_photos", floorId, siteId, now);
+        await softDeleteMarkerPhotosByFloor(sb, floorId, siteId, now);
         try{
           await softDeleteFloorScopedRows(sb, "export_logs", floorId, siteId, now);
         }catch(exportLogErr){
