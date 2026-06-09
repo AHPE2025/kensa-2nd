@@ -186,8 +186,7 @@
       color:#fff;
       border-color:#1d4ed8;
     }
-    #floorInspectionView .cloud-panel{display:none}
-    #floorInspectionView.show-management .cloud-panel{display:block}
+    #floorInspectionView .cloud-panel{display:none !important}
     .floor-cloud-admin-hidden{display:none}
     #floorInspectionView .main-col > .card{margin-bottom:0}
     #floorInspectionView #stageWrap{aspect-ratio:4 / 3}
@@ -343,6 +342,7 @@
     .vendor-mgmt-empty{padding:10px;color:var(--muted);font-size:12px}
     .vendor-state{font-size:11px;color:#334155;background:#f8fafc;border:1px solid #dbeafe;border-radius:8px;padding:5px 8px;white-space:nowrap}
     .legacy-input-note{font-size:11px;color:#6b7280;padding:4px 8px;border:1px dashed #d1d5db;border-radius:10px;background:#f9fafb}
+    .settings-page-wrap .body{padding:14px}
     .input-mode{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .input-mode .mode-btn{
       border:1px solid #cbd5e1;
@@ -661,10 +661,10 @@
       <div class="card" style="margin-bottom:12px">
         <div class="body">
           <div class="grid">
-            <div class="field"><label>現場名</label><input id="detailSiteName" type="text" readonly /></div>
-            <div class="field"><label>検査日</label><input id="detailInspectionDate" type="text" readonly /></div>
-            <div class="field"><label>検査担当者</label><input id="detailInspectorName" type="text" readonly /></div>
-            <div class="field"><label>メモ</label><input id="detailMemo" type="text" readonly /></div>
+            <div class="field"><label>現場名</label><input id="detailSiteName" type="text" /></div>
+            <div class="field"><label>検査日</label><input id="detailInspectionDate" type="date" /></div>
+            <div class="field"><label>担当者</label><input id="detailInspectorName" type="text" /></div>
+            <div class="field"><label>メモ</label><input id="detailMemo" type="text" /></div>
           </div>
           <div class="divider"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -677,6 +677,7 @@
               <input id="newFloorOtherName" type="text" placeholder="任意のフロア名" />
             </div>
             <button class="btn primary" id="btnAddFloor" type="button">フロア追加</button>
+            <button class="btn" id="btnGoCategoryVendorSettings" type="button">指摘種別・業者紐づけ設定</button>
           </div>
           <div id="floorAddValidation" class="small" style="color:#b91c1c;min-height:18px;margin-top:4px"></div>
         </div>
@@ -692,6 +693,41 @@
             <div>操作</div>
           </div>
           <div id="floorList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="categoryVendorSettingsView" class="app-view">
+      <div class="inspection-header">
+        <div>
+          <strong style="font-size:16px">指摘種別・業者紐づけ設定</strong>
+          <div class="small">指摘種別ごとに、標準担当業者を設定できます。この設定は全現場で共通利用されます。</div>
+        </div>
+        <button class="btn" id="btnBackToInspectionDetailFromMapping" type="button">現場詳細に戻る</button>
+      </div>
+      <div class="card settings-page-wrap">
+        <div class="body">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <strong style="font-size:13px">指摘種別ごとの担当業者設定（メイン/サブメイン）</strong>
+            <span class="small" id="mappingPanelStatus">未保存の変更はありません</span>
+          </div>
+          <div class="vendor-mgmt">
+            <div class="vendor-mgmt-title">業者管理</div>
+            <div class="vendor-mgmt-form">
+              <div class="field">
+                <label>新しい業者名</label>
+                <input id="vendorNewName" type="text" placeholder="例：塗装" />
+              </div>
+              <button class="btn primary" id="btnAddVendor" type="button">業者を追加</button>
+            </div>
+            <div class="small" style="margin-top:8px">登録済み業者</div>
+            <div class="vendor-mgmt-list" id="vendorManagementList"></div>
+          </div>
+          <div id="mappingSettingsList"></div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary" id="btnSaveMappings" type="button">設定を保存</button>
+            <button class="btn" id="btnReloadMappings" type="button">再読み込み</button>
+          </div>
         </div>
       </div>
     </div>
@@ -794,17 +830,14 @@
     </div>
 
     <!-- ── Supabase クラウド ── -->
-    <div class="card cloud-panel">
-      <h3>
-        管理設定（通常は非表示）
-      </h3>
+    <div class="card cloud-panel floor-cloud-admin-hidden" aria-hidden="true" style="display:none">
       <div class="cloud-meta-row floor-cloud-admin-hidden">
         <input id="inpTitle" type="hidden" />
-        <input id="inpSiteName" type="text" placeholder="現場名" readonly />
-        <input id="inpInspectedAt" type="date" />
-        <input id="inpInspectorName" type="text" placeholder="検査担当者" />
-        <input id="inpSiteMemo" type="text" placeholder="メモ" />
-        <input id="inpFloorName" type="text" placeholder="フロア名" readonly />
+        <input id="inpSiteName" type="hidden" />
+        <input id="inpInspectedAt" type="hidden" />
+        <input id="inpInspectorName" type="hidden" />
+        <input id="inpSiteMemo" type="hidden" />
+        <input id="inpFloorName" type="hidden" />
       </div>
       <div class="cloud-actions floor-cloud-admin-hidden">
         <button class="btn" id="btnSupabaseTest" type="button">Supabase接続確認</button>
@@ -812,34 +845,7 @@
         <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn" id="btnCloudLoad" type="button">クラウド読み込み</button>
       </div>
-      <div class="small floor-cloud-admin-hidden" style="margin-top:6px">保存済み検査案件一覧（行を選択して「クラウド読み込み」、または各行の読み込み）</div>
-      <div class="cloud-list floor-cloud-admin-hidden" id="cloudInspectionList">
-        <div class="cloud-list-item" style="cursor:default;color:var(--muted)">接続設定後に一覧を取得できます</div>
-      </div>
-      <div class="mapping-toggle-wrap"><button class="btn" id="btnToggleMappingPanel" type="button">指摘種別・業者紐づけ設定</button></div>
-      <div class="mapping-panel" id="mappingPanel">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-          <strong style="font-size:13px">指摘種別ごとの担当業者設定（メイン/サブメイン）</strong>
-          <span class="small" id="mappingPanelStatus">未保存の変更はありません</span>
-        </div>
-        <div class="vendor-mgmt">
-          <div class="vendor-mgmt-title">業者管理</div>
-          <div class="vendor-mgmt-form">
-            <div class="field">
-              <label>新しい業者名</label>
-              <input id="vendorNewName" type="text" placeholder="例：塗装" />
-            </div>
-            <button class="btn primary" id="btnAddVendor" type="button">業者を追加</button>
-          </div>
-          <div class="small" style="margin-top:8px">登録済み業者</div>
-          <div class="vendor-mgmt-list" id="vendorManagementList"></div>
-        </div>
-        <div id="mappingSettingsList"></div>
-        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn primary" id="btnSaveMappings" type="button">紐づけ設定を保存</button>
-          <button class="btn" id="btnReloadMappings" type="button">再読み込み</button>
-        </div>
-      </div>
+      <div class="cloud-list floor-cloud-admin-hidden" id="cloudInspectionList"></div>
     </div>
 
     <!-- ── メインエリア ── -->
@@ -1199,6 +1205,8 @@
     let currentDrawingId = null;
     let currentDrawingStoragePath = null;
     let currentView = "inspection_list";
+    const SITE_DETAIL_SAVE_DEBOUNCE_MS = 800;
+    let siteDetailSaveTimer = null;
     let selectedSiteId = null;
     let selectedSite = null;
     let selectedFloorId = null;
@@ -2751,6 +2759,90 @@
       return d.toISOString().slice(0, 10);
     }
 
+    function applySiteDetailToRuntimeState(values){
+      const next = values || {};
+      const siteName = String(next.site_name || "").trim();
+      const inspectionDate = String(next.inspection_date || "").trim();
+      const inspectorName = String(next.inspector_name || "").trim();
+      const memo = String(next.memo || "").trim();
+      if(selectedSite){
+        selectedSite.site_name = siteName || null;
+        selectedSite.inspection_date = inspectionDate || null;
+        selectedSite.inspector_name = inspectorName || null;
+        selectedSite.memo = memo || null;
+      }
+      const targetSiteId = String(selectedSiteId || "");
+      const idx = inspectionSitesCache.findIndex(s=>String(s?.id || "") === targetSiteId);
+      if(idx >= 0){
+        inspectionSitesCache[idx] = {
+          ...inspectionSitesCache[idx],
+          site_name: siteName || null,
+          inspection_date: inspectionDate || null,
+          inspector_name: inspectorName || null,
+          memo: memo || null,
+        };
+      }
+      $("detailSiteTitle").textContent = displaySiteName(selectedSite);
+      $("detailSiteMeta").textContent = `${formatDateLabel(selectedSite?.inspection_date)} / ${selectedSite?.inspector_name || "担当者未設定"}`;
+      $("inpSiteName").value = siteName;
+      $("inpInspectedAt").value = inspectionDate;
+      $("inpInspectorName").value = inspectorName;
+      $("inpSiteMemo").value = memo;
+      updateCurrentContextLabels();
+    }
+
+    function readSiteDetailFromUi(){
+      return {
+        site_name: ($("detailSiteName")?.value || "").trim(),
+        inspection_date: ($("detailInspectionDate")?.value || "").trim(),
+        inspector_name: ($("detailInspectorName")?.value || "").trim(),
+        memo: ($("detailMemo")?.value || "").trim(),
+      };
+    }
+
+    async function saveSiteDetailToCloud(){
+      if(!selectedSiteId) return;
+      const values = readSiteDetailFromUi();
+      applySiteDetailToRuntimeState(values);
+      if(!isSupabaseConfigured()){
+        updateSaveStatus("local_only");
+        return;
+      }
+      try{
+        updateSaveStatus("saving");
+        const sb = getSupabase();
+        const payload = {
+          site_name: values.site_name || null,
+          inspection_date: values.inspection_date || null,
+          inspector_name: values.inspector_name || null,
+          memo: values.memo || null,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = await sb.from("sites").update(payload).eq("id", selectedSiteId);
+        if(error) throw error;
+        updateSaveStatus("saved");
+        await loadInspectionSites();
+      }catch(err){
+        console.error("[site detail save] failed", err);
+        updateSaveStatus("failed");
+        toast("現場情報の保存に失敗しました");
+      }
+    }
+
+    function scheduleSiteDetailSave(){
+      const values = readSiteDetailFromUi();
+      applySiteDetailToRuntimeState(values);
+      if(siteDetailSaveTimer){
+        clearTimeout(siteDetailSaveTimer);
+      }
+      siteDetailSaveTimer = setTimeout(()=>{
+        siteDetailSaveTimer = null;
+        saveSiteDetailToCloud().catch(err=>{
+          console.error("[site detail save] unexpected", err);
+        });
+      }, SITE_DETAIL_SAVE_DEBOUNCE_MS);
+    }
+
     function normalizeMarkerStatus(marker){
       const raw = (marker && typeof marker === "object") ? marker.status : marker;
       const s = String(raw == null ? "" : raw).trim().toLowerCase();
@@ -2820,6 +2912,7 @@
       const map = {
         inspection_list: "inspectionListView",
         inspection_detail: "inspectionDetailView",
+        category_vendor_settings: "categoryVendorSettingsView",
         floor_inspection: "floorInspectionView",
         vendor_work: "vendorWorkView",
       };
@@ -2829,7 +2922,6 @@
       });
       const targetId = map[viewName];
       if($(targetId)) $(targetId).classList.add("active");
-      $("floorInspectionView")?.classList.remove("show-management");
       if(viewName !== "floor_inspection"){
         closeIssuePanel();
       }
@@ -2997,12 +3089,12 @@
         selectedInspectionId = null;
         $("detailSiteTitle").textContent = displaySiteName(site);
         $("detailSiteMeta").textContent = `${formatDateLabel(site.inspection_date)} / ${site.inspector_name || "担当者未設定"}`;
-        $("detailSiteName").value = displaySiteName(site);
-        $("detailInspectionDate").value = formatDateLabel(site.inspection_date);
+        $("detailSiteName").value = site.site_name || "";
+        $("detailInspectionDate").value = site.inspection_date || "";
         $("detailInspectorName").value = site.inspector_name || "";
         $("detailMemo").value = site.memo || "";
-        $("inpSiteName").value = displaySiteName(site);
-        $("inpInspectedAt").value = formatDateLabel(site.inspection_date);
+        $("inpSiteName").value = site.site_name || "";
+        $("inpInspectedAt").value = site.inspection_date || "";
         $("inpInspectorName").value = site.inspector_name || "";
         $("inpSiteMemo").value = site.memo || "";
         $("inpFloorName").value = "";
@@ -3382,9 +3474,15 @@
         renderFloorAddUi();
         setFloorAddValidation("");
         await loadFloors(selectedSiteId);
+        toast("フロアを追加しました");
       }catch(e){
         showCloudError("フロア追加", e);
       }
+    }
+
+    async function renderCategoryVendorSettingsPage(){
+      await loadCategoryVendorMappings();
+      showView("category_vendor_settings");
     }
 
     function setFloorChangeValidation(message){
@@ -8197,6 +8295,15 @@
     $("btnNewInspectionSite").addEventListener("click", ()=>{ showView("inspection_list"); });
     $("btnCreateInspectionSite").addEventListener("click", ()=>{ createInspectionSiteFromUi(); });
     $("btnBackToInspectionList").addEventListener("click", ()=>{ showView("inspection_list"); });
+    $("btnGoCategoryVendorSettings").addEventListener("click", ()=>{ renderCategoryVendorSettingsPage(); });
+    $("btnBackToInspectionDetailFromMapping").addEventListener("click", ()=>{ showView("inspection_detail"); });
+    ["detailSiteName", "detailInspectionDate", "detailInspectorName", "detailMemo"].forEach(id=>{
+      const el = $(id);
+      if(!el) return;
+      const handler = ()=>{ scheduleSiteDetailSave(); };
+      el.addEventListener("input", handler);
+      el.addEventListener("change", handler);
+    });
     $("newFloorSelect").addEventListener("change", ()=>{
       renderFloorAddUi();
       setFloorAddValidation("");
@@ -8213,10 +8320,7 @@
       renderVendorWorkList();
     });
     $("btnOpenMappingManager").addEventListener("click", ()=>{
-      showView("floor_inspection");
-      $("floorInspectionView")?.classList.add("show-management");
-      $("mappingPanel").classList.add("open");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      renderCategoryVendorSettingsPage();
     });
     $("inspectionSiteList").addEventListener("click", (e)=>{
       const btn = e.target.closest('button[data-act="open-site"]');
@@ -8290,13 +8394,6 @@
       syncButtons();
       syncSelectorsFromSelectedMarker();
       showView("floor_inspection");
-    });
-    $("btnToggleMappingPanel").addEventListener("click", ()=>{
-      const panel = $("mappingPanel");
-      panel.classList.toggle("open");
-      if(!panel.classList.contains("open")){
-        $("floorInspectionView")?.classList.remove("show-management");
-      }
     });
     $("btnToggleIssuePanel").addEventListener("click", ()=>{
       if(issuePanelOpen){
