@@ -933,8 +933,11 @@
     <!-- ── フロア操作バー（1段） ── -->
     <div class="card floor-main-toolbar toolbar-touch">
       <div class="toolbar-group left">
+        <button class="btn" id="btnUndoAction" type="button" disabled title="操作履歴を1つ戻します">↶ 戻る</button>
+        <button class="btn" id="btnRedoAction" type="button" disabled title="操作履歴を1つ進めます">↷ 進む</button>
         <input id="pdfInput" type="file" accept="application/pdf" />
         <button class="btn danger" id="btnDeletePdf" type="button" disabled>PDF削除</button>
+        <button class="btn" id="btnOpenPdfTrash" type="button" disabled>PDFゴミ箱</button>
         <button class="btn" id="btnPrevPage" type="button">◀ 前ページ</button>
         <span class="tag toolbar-page" id="pageInfo">PDF未選択</span>
         <button class="btn" id="btnNextPage" type="button">次ページ ▶</button>
@@ -1218,6 +1221,31 @@
       </div>
     </div>
   </div>
+  <div id="pdfTrashModalBackdrop" class="trash-modal-backdrop" aria-hidden="true">
+    <div id="pdfTrashModal" class="trash-modal" role="dialog" aria-modal="true" aria-labelledby="pdfTrashModalTitle">
+      <div class="trash-modal-head">
+        <div>
+          <div id="pdfTrashModalTitle" class="floor-change-modal-title" style="margin-bottom:4px">PDFゴミ箱</div>
+          <div class="small">削除したPDFは10日以内であれば復元できます。10日を過ぎると完全削除の対象になります。</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn danger" id="btnHardDeleteExpiredPdfTrash" type="button">10日経過PDFを完全削除</button>
+          <button class="btn" id="btnPdfTrashClose" type="button">閉じる</button>
+        </div>
+      </div>
+      <div class="list">
+        <div class="trash-row head">
+          <div>PDF名</div>
+          <div>フロア名</div>
+          <div>削除日時</div>
+          <div>完全削除予定日</div>
+          <div>ページ数</div>
+          <div>操作</div>
+        </div>
+        <div id="trashPdfList"></div>
+      </div>
+    </div>
+  </div>
   <div id="confirmModalBackdrop" class="confirm-modal-backdrop" aria-hidden="true">
     <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
       <div id="confirmModalTitle" class="floor-change-modal-title">確認</div>
@@ -1409,6 +1437,7 @@
     let inspectionSitesCache = [];
     let floorsCache = [];
     let trashFloorsCache = [];
+    let trashPdfCache = [];
     let floorChangeTargetFloor = null;
     let pendingConfirmResolver = null;
     const DRAWING_BUCKET = "inspection-drawings";
@@ -2209,6 +2238,9 @@
         .eq("id", drawingId)
         .single();
       if(dErr) throw dErr;
+      if(isTrashStatus(drawing?.status) || isDeletedStatus(drawing?.status)){
+        throw new Error("ゴミ箱内または削除済みのPDFは通常表示できません。");
+      }
       if(!drawing?.storage_path){
         throw new Error("drawings.storage_path が未設定です。");
       }
@@ -2791,7 +2823,7 @@
             .select("*")
             .eq("inspection_id", inspectionId)
             .eq("floor_id", currentFloorId)
-            .neq("status", "deleted")
+            .or("status.eq.active,status.is.null")
             .order("created_at", { ascending: false })
             .limit(1);
           if(dErr) throw dErr;
@@ -3248,6 +3280,7 @@
       $("currentInspectionDate").textContent = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt").value);
       $("currentFloorTitle").textContent = selectedFloor?.floor_name || "-";
       $("vendorViewMeta").textContent = `${displaySiteName(selectedSite)} / ${formatDateLabel(selectedSite?.inspection_date)} / ${selectedFloor?.floor_name || "-"}`;
+      updatePdfTrashButtonState();
     }
 
     function showView(viewName){
@@ -3267,6 +3300,7 @@
       if($(targetId)) $(targetId).classList.add("active");
       if(viewName !== "floor_inspection"){
         closeIssuePanel();
+        closePdfTrashModal();
       }
       if(viewName === "inspection_list"){
         loadInspectionSites();
@@ -3696,7 +3730,7 @@
         .select("id, floor_id")
         .in("floor_id", floorIds)
         .eq("site_id", siteId)
-        .neq("status", "deleted");
+        .or("status.eq.active,status.is.null");
       (drawings || []).forEach(d=>{
         const floorKey = String(d.floor_id || "");
         if(!summaryByFloor.has(floorKey)) return;
@@ -3797,6 +3831,171 @@
         }
         return [];
       }
+    }
+
+    function updatePdfTrashButtonState(){
+      const btn = $("btnOpenPdfTrash");
+      if(!btn) return;
+      const hasFloor = !!(selectedFloorId || currentFloorId);
+      const floorActive = isActiveFloorStatus(selectedFloor?.status);
+      btn.disabled = !(hasFloor && floorActive);
+    }
+
+    function closePdfTrashModal(){
+      const backdrop = $("pdfTrashModalBackdrop");
+      if(backdrop){
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+    }
+
+    function openPdfTrashModal(){
+      const backdrop = $("pdfTrashModalBackdrop");
+      if(backdrop){
+        backdrop.classList.add("open");
+        backdrop.setAttribute("aria-hidden", "false");
+      }
+    }
+
+    function renderTrashPdfList(rows){
+      const list = $("trashPdfList");
+      if(!list) return;
+      list.innerHTML = "";
+      if(!rows || rows.length === 0){
+        const row = document.createElement("div");
+        row.className = "trash-row";
+        row.style.gridTemplateColumns = "1fr";
+        row.innerHTML = `<div class="small">ゴミ箱にPDFはありません。</div>`;
+        list.appendChild(row);
+        return;
+      }
+      rows.forEach(pdf=>{
+        const { canHardDelete, hardDeleteAt } = computeTrashMeta(pdf);
+        const row = document.createElement("div");
+        row.className = "trash-row";
+        row.innerHTML = `
+          <div>${escapeHtml(pdf.file_name || "drawing.pdf")}</div>
+          <div>${escapeHtml(pdf.floor_name || selectedFloor?.floor_name || "-")}</div>
+          <div>${escapeHtml(formatDateTimeLabel(pdf.deleted_at))}</div>
+          <div>${escapeHtml(formatDateTimeLabel(hardDeleteAt))}</div>
+          <div>${Number(pdf.page_count || 0)}</div>
+          <div class="trash-actions">
+            ${canHardDelete ? `<span class="trash-expired">完全削除可能</span>` : ""}
+            <button class="btn" type="button" data-act="restore-pdf" data-id="${escapeHtml(String(pdf.id))}">復元</button>
+            <button class="btn danger" type="button" data-act="hard-delete-pdf" data-id="${escapeHtml(String(pdf.id))}">完全削除</button>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    async function loadTrashPdfs(options = {}){
+      const inspectionId = currentInspectionId || selectedInspectionId || null;
+      const floorId = currentFloorId || selectedFloorId || null;
+      if(!inspectionId || !floorId || !isSupabaseConfigured() || !isSupabaseSdkReady()){
+        trashPdfCache = [];
+        renderTrashPdfList([]);
+        updatePdfTrashButtonState();
+        return [];
+      }
+      if(!isActiveFloorStatus(selectedFloor?.status)){
+        trashPdfCache = [];
+        renderTrashPdfList([]);
+        updatePdfTrashButtonState();
+        return [];
+      }
+      try{
+        const sb = getSupabase();
+        const { data, error } = await sb.from("drawings")
+          .select("id,inspection_id,floor_id,floor_name,file_name,page_count,storage_path,status,previous_status,deleted_at,updated_at")
+          .eq("inspection_id", inspectionId)
+          .eq("floor_id", floorId)
+          .eq("status", "trash")
+          .order("deleted_at", { ascending: false });
+        if(error) throw error;
+        trashPdfCache = data || [];
+        if(options.render !== false){
+          renderTrashPdfList(trashPdfCache);
+        }
+        updatePdfTrashButtonState();
+        return trashPdfCache;
+      }catch(err){
+        trashPdfCache = [];
+        if(options.render !== false){
+          renderTrashPdfList([]);
+          showCloudError("PDFゴミ箱一覧の取得", err);
+        }
+        updatePdfTrashButtonState();
+        return [];
+      }
+    }
+
+    async function restorePdfFromTrashRow(row){
+      if(!row?.id) return false;
+      const ok = await askConfirm("このPDFを復元しますか？", {
+        title: "PDF復元",
+        okLabel: "復元",
+        cancelLabel: "キャンセル",
+        danger: false,
+      });
+      if(!ok) return false;
+      pushUndoSnapshot("PDF復元");
+      await restorePdfDrawingFromTrash(row.id, { targetPage: 1 });
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      updatePageInfo();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      markDirty("pdf restored");
+      updateUndoRedoButtons();
+      toast("PDFを復元しました");
+      return true;
+    }
+
+    async function hardDeletePdfFromTrashRow(row){
+      if(!row?.id) return false;
+      const ok = await askConfirm(
+        "完全削除すると、このPDFは復元できません。関連する図面ページデータも削除されます。本当に完全削除しますか？",
+        { title: "PDF完全削除", okLabel: "完全削除", cancelLabel: "キャンセル", danger: true }
+      );
+      if(!ok) return false;
+      await hardDeletePdfDrawing(row);
+      if(String(currentDrawingId || "") === String(row.id)){
+        clearCurrentPdfFromUi();
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+        updatePageInfo();
+      }
+      markDirty("pdf hard deleted");
+      toast("PDFを完全削除しました");
+      return true;
+    }
+
+    async function hardDeleteExpiredPdfTrashRows(){
+      if(!trashPdfCache.length){
+        toast("10日経過PDFはありません。");
+        return;
+      }
+      const expiredRows = trashPdfCache.filter(row=>computeTrashMeta(row).canHardDelete);
+      if(expiredRows.length === 0){
+        toast("10日経過PDFはありません。");
+        return;
+      }
+      const ok = await askConfirm(
+        `10日経過PDFを ${expiredRows.length} 件、完全削除します。よろしいですか？`,
+        { title: "10日経過PDFを完全削除", okLabel: "完全削除", cancelLabel: "キャンセル", danger: true }
+      );
+      if(!ok) return;
+      for(const row of expiredRows){
+        try{
+          await hardDeletePdfDrawing(row, { silent: true });
+        }catch(err){
+          logPdfDeleteError("hardDeleteExpiredPdfTrashRows", err, { drawingId: row?.id });
+        }
+      }
+      toast("10日経過PDFの完全削除を実行しました。");
     }
 
     function renderFloorList(floors){
@@ -4526,6 +4725,7 @@
       removeMarkerForceLayer();
       currentFloorId = floorId;
       currentFloorName = selectedFloor?.floor_name || currentFloorName || "";
+      clearUndoRedoHistory();
       const sb = getSupabase();
       const { data, error } = await sb.from("inspections")
         .select(INSPECTION_SELECT_COLUMNS)
@@ -6043,6 +6243,133 @@
       return store.textNotesByKey[key];
     }
 
+    function cloneStoreForSnapshot(){
+      const cloned = structuredClone(store || {});
+      if(cloned?.activeBg && typeof cloned.activeBg === "object"){
+        cloned.activeBg = { ...cloned.activeBg, pageCache: {} };
+      }
+      const byKey = cloned?.markersByKey || {};
+      Object.values(byKey).forEach(arr=>{
+        if(!Array.isArray(arr)) return;
+        arr.forEach(marker=>{
+          if(!marker || typeof marker !== "object") return;
+          marker.beforePhotoFile = null;
+          marker.afterPhotoFile = null;
+        });
+      });
+      return cloned;
+    }
+
+    function buildSnapshot(label){
+      const bg = store?.activeBg || { kind: "none" };
+      const pageInputVal = parseInt(String($("pageInput")?.value || "1"), 10);
+      return {
+        label: String(label || "操作"),
+        captured_at: new Date().toISOString(),
+        store: cloneStoreForSnapshot(),
+        activeBg: bg ? { ...bg, pageCache: {} } : { kind: "none" },
+        currentDrawingId: bg?.drawingId || currentDrawingId || null,
+        currentDrawingStoragePath: currentDrawingStoragePath || null,
+        currentPage: Number.isFinite(pageInputVal) ? Math.max(1, pageInputVal) : Math.max(1, Number(bg?.page || 1)),
+        normalRotation: Number(normalRotation || 0),
+        selectedMarkerId: selectedId || null,
+        selectedTextId: selectedTextNoteId || null,
+        inputMode: store?.inputMode || inputMode || "pin",
+      };
+    }
+
+    function updateUndoRedoButtons(){
+      const undoBtn = $("btnUndoAction");
+      const redoBtn = $("btnRedoAction");
+      if(undoBtn) undoBtn.disabled = undoStack.length === 0;
+      if(redoBtn) redoBtn.disabled = redoStack.length === 0;
+    }
+
+    function pushUndoSnapshot(label){
+      try{
+        undoStack.push(buildSnapshot(label));
+        if(undoStack.length > MAX_UNDO_STACK){
+          undoStack.splice(0, undoStack.length - MAX_UNDO_STACK);
+        }
+        redoStack.length = 0;
+        updateUndoRedoButtons();
+      }catch(err){
+        console.warn("[undo snapshot] push failed", err);
+      }
+    }
+
+    function clearUndoRedoHistory(){
+      undoStack.length = 0;
+      redoStack.length = 0;
+      updateUndoRedoButtons();
+    }
+
+    async function restoreSnapshot(snapshot){
+      if(!snapshot || !snapshot.store) return false;
+      const previousDrawingId = (store?.activeBg?.drawingId || currentDrawingId || null);
+      const targetDrawingId = snapshot.currentDrawingId || snapshot.activeBg?.drawingId || snapshot.activeBg?.pdfId || null;
+      const targetIsPdf = snapshot.activeBg?.kind === "pdf" && !!targetDrawingId;
+      if(targetDrawingId){
+        await restorePdfDrawingFromTrash(targetDrawingId, { silent: true, skipReload: true, targetPage: snapshot.currentPage || 1 });
+      }
+      if(previousDrawingId && !targetIsPdf && String(previousDrawingId) !== String(targetDrawingId)){
+        await movePdfDrawingToTrash(previousDrawingId, { skipConfirm: true, silent: true });
+      }
+      store = structuredClone(snapshot.store);
+      if(!store.activeBg) store.activeBg = { kind: "none" };
+      if(store.activeBg && typeof store.activeBg === "object"){
+        store.activeBg.pageCache = {};
+      }
+      selectedId = snapshot.selectedMarkerId || null;
+      selectedTextNoteId = snapshot.selectedTextId || null;
+      inputMode = snapshot.inputMode === "text" ? "text" : "pin";
+      normalRotation = Number(snapshot.normalRotation || 0);
+      currentDrawingId = targetIsPdf ? targetDrawingId : null;
+      currentDrawingStoragePath = targetIsPdf ? (snapshot.currentDrawingStoragePath || currentDrawingStoragePath || null) : null;
+      if($("pageInput")){
+        $("pageInput").value = String(Math.max(1, Number(snapshot.currentPage || store?.activeBg?.page || 1) || 1));
+      }
+      if(targetIsPdf){
+        try{
+          await loadPdfFromSupabaseDrawing(targetDrawingId, Number(snapshot.currentPage || 1) || 1);
+        }catch(err){
+          console.warn("[undo restore] pdf reload failed", err);
+          toast("PDFの復元読み込みに失敗しました。");
+        }
+      }else{
+        clearCurrentPdfFromUi();
+      }
+      setInputMode(inputMode);
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      updatePageInfo();
+      saveStore();
+      await autoSaveToCloud("undo/redo restore").catch(error=>{
+        console.warn("[undo redo autosave] failed", error);
+      });
+      updateUndoRedoButtons();
+      return true;
+    }
+
+    async function undoAction(){
+      if(undoStack.length === 0) return false;
+      const snapshot = undoStack.pop();
+      redoStack.push(buildSnapshot("redo-source"));
+      updateUndoRedoButtons();
+      return restoreSnapshot(snapshot);
+    }
+
+    async function redoAction(){
+      if(redoStack.length === 0) return false;
+      const snapshot = redoStack.pop();
+      undoStack.push(buildSnapshot("undo-source"));
+      updateUndoRedoButtons();
+      return restoreSnapshot(snapshot);
+    }
+
     // -------------------- Background Rendering --------------------
     const bgCanvas = $("bg");
     const ctx = bgCanvas.getContext("2d");
@@ -6055,6 +6382,11 @@
     let quickEditorState = null;
     let textNoteEditorState = null;
     const pendingPhotoStorageDeletes = new Set();
+    const undoStack = [];
+    const redoStack = [];
+    const MAX_UNDO_STACK = 40;
+    const dragUndoPushed = new Set();
+    const textDragUndoPushed = new Set();
 
     function removeMarkerForceLayer(){
       const layer = document.getElementById("markerForceLayer");
@@ -6840,6 +7172,7 @@
 
     function saveTextNoteFromEditor(note){
       if(!note) return;
+      pushUndoSnapshot("テキスト編集");
       const content = $("textNoteEditorContent")?.value ?? "";
       const noteType = $("textNoteEditorType")?.value || "memo";
       const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
@@ -6875,6 +7208,7 @@
       if(!note) return;
       const ok = confirm("このテキストメモを削除しますか？");
       if(!ok) return;
+      pushUndoSnapshot("テキスト削除");
       note.status = "deleted";
       note.updated_at = new Date().toISOString();
       if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
@@ -6885,6 +7219,7 @@
     }
 
     function createTextNoteAt(x, y){
+      pushUndoSnapshot("テキスト追加");
       const ratio = canvasPxToImgRatio(x, y);
       const now = new Date().toISOString();
       const note = normalizeTextNote({
@@ -6969,6 +7304,11 @@
           if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
           const target = getTextNoteByLocalId(textNoteDrag.local_text_id);
           if(!target) return;
+          const moveDistance = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY);
+          if(moveDistance >= 3 && !textDragUndoPushed.has(String(textNoteDrag.local_text_id || ""))){
+            pushUndoSnapshot("テキスト移動");
+            textDragUndoPushed.add(String(textNoteDrag.local_text_id || ""));
+          }
           const nx = textNoteDrag.baseX + (e.clientX - textNoteDrag.startX);
           const ny = textNoteDrag.baseY + (e.clientY - textNoteDrag.startY);
           const r = canvasPxToImgRatio(clamp(nx, 0, stageW), clamp(ny, 0, stageH));
@@ -6986,6 +7326,7 @@
         el.addEventListener("pointerup", (e)=>{
           if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
           const moved = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY) >= 3;
+          textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
           textNoteDrag = null;
           try{ el.releasePointerCapture(e.pointerId); }catch(_){}
           const target = getTextNoteByLocalId(note.local_text_id);
@@ -7007,6 +7348,7 @@
     }
 
     function createDraftMarkerAt(x, y){
+      pushUndoSnapshot("ピン追加");
       const key = activeKey();
       console.debug("activeKey in create", key);
       const ratioRaw = canvasPxToImgRatio(x, y);
@@ -7119,6 +7461,7 @@
         return;
       }
       const d = quickEditorState.draft;
+      pushUndoSnapshot("ピン編集");
       const prevStatus = normalizeMarkerStatus(marker);
       const prevType = marker.type || "";
       const prevVendor = marker.vendor_name || marker.vendor || "";
@@ -7232,6 +7575,9 @@
 
     function deleteMarkerById(markerId, options = {}){
       if(!markerId) return false;
+      if(!options.skipUndo){
+        pushUndoSnapshot("ピン削除");
+      }
       let deleted = false;
       let removedMarker = null;
       for(const [key, arr] of getCurrentFloorMarkerEntries()){
@@ -7278,7 +7624,8 @@
       if(!selectedId) return;
       const ok = confirm("この指摘を削除しますか？");
       if(!ok) return;
-      deleteMarkerById(selectedId);
+      pushUndoSnapshot("ピン削除");
+      deleteMarkerById(selectedId, { skipUndo: true });
     }
 
 
@@ -7642,6 +7989,10 @@
         const p = svgPointFromEvent(e);
         const dist = Math.hypot(p.x - pendingDrag.startX, p.y - pendingDrag.startY);
         if(dist >= DRAG_THRESHOLD){
+          if(!dragUndoPushed.has(String(pendingDrag.id || ""))){
+            pushUndoSnapshot(pendingDrag.role === "bubble" ? "吹き出し移動" : "ピン移動");
+            dragUndoPushed.add(String(pendingDrag.id || ""));
+          }
           drag = pendingDrag;
           pendingDrag = null;
         }
@@ -7702,6 +8053,7 @@
       }
       if(drag){
         try{ overlay.releasePointerCapture(drag.pointerId); }catch(_){}
+        dragUndoPushed.delete(String(drag.id || ""));
         drag = null;
         suppressTapCreateUntil = Date.now() + 220;
         saveStore();
@@ -7989,6 +8341,8 @@
       if(btnEM) btnEM.disabled = !selectedId;
       const fsEM = $("fsBtnEditMemo");
       if(fsEM) fsEM.disabled = !selectedId;
+      updatePdfTrashButtonState();
+      updateUndoRedoButtons();
     }
 
     function syncSelectorsFromSelectedMarker(){
@@ -9362,85 +9716,154 @@
       if(isFullscreen) updateFsInfo();
     }
 
-    async function deleteDrawingFromSupabase(drawingId, storagePath){
-      const ctx = {
-        drawingId,
-        storagePath,
-        inspectionId: currentInspectionId,
-        floorId: selectedFloorId,
-        siteId: selectedSiteId,
-      };
-      const result = { storageDeleteFailed: false };
-      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
-        return result;
-      }
+    function normalizeDrawingRestoreStatus(value){
+      const lowered = String(value || "").toLowerCase();
+      if(!lowered || lowered === "trash" || lowered === "deleted") return "active";
+      return lowered;
+    }
+
+    async function movePdfDrawingToTrash(drawingId, options = {}){
+      if(!drawingId) return false;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return true;
       const sb = getSupabase();
+      const now = new Date().toISOString();
+      const { data: drawingRow, error: readErr } = await sb.from("drawings")
+        .select("id,status,storage_path,inspection_id,floor_id,site_id")
+        .eq("id", drawingId)
+        .single();
+      if(readErr) throw readErr;
+      const prevDrawingStatus = drawingRow?.status || "active";
+      const payload = {
+        status: "trash",
+        previous_status: prevDrawingStatus || "active",
+        deleted_at: now,
+        updated_at: now,
+      };
+      const { error: drawingErr } = await sb.from("drawings")
+        .update(payload)
+        .eq("id", drawingId);
+      if(drawingErr) throw drawingErr;
+      const { data: pageRows, error: pageReadErr } = await sb.from("drawing_pages")
+        .select("id,status")
+        .eq("drawing_id", drawingId);
+      if(pageReadErr){
+        logPdfDeleteError("movePdfDrawingToTrash.pages.select", pageReadErr, { drawingId });
+      }else if(Array.isArray(pageRows) && pageRows.length > 0){
+        for(const page of pageRows){
+          const prevPageStatus = page?.status || "active";
+          const { error: pageErr } = await sb.from("drawing_pages")
+            .update({
+              status: "trash",
+              previous_status: prevPageStatus || "active",
+              deleted_at: now,
+              updated_at: now,
+            })
+            .eq("id", page.id);
+          if(pageErr) throw pageErr;
+        }
+      }
+      if((currentInspectionId || drawingRow?.inspection_id) && String(currentDrawingId || "") === String(drawingId)){
+        const { error: inspErr } = await sb.from("inspections")
+          .update({ current_drawing_id: null, current_page: 1 })
+          .eq("id", currentInspectionId || drawingRow?.inspection_id);
+        if(inspErr){
+          logPdfDeleteError("movePdfDrawingToTrash.inspections.clearCurrentDrawing", inspErr, { drawingId });
+        }
+      }
+      return true;
+    }
+
+    async function restorePdfDrawingFromTrash(drawingId, options = {}){
+      if(!drawingId) return false;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return false;
+      const sb = getSupabase();
+      const now = new Date().toISOString();
+      const { data: drawingRow, error: readErr } = await sb.from("drawings")
+        .select("id,status,previous_status,inspection_id")
+        .eq("id", drawingId)
+        .single();
+      if(readErr) throw readErr;
+      const restoreStatus = normalizeDrawingRestoreStatus(drawingRow?.previous_status || drawingRow?.status || "active");
+      const { error: drawingErr } = await sb.from("drawings")
+        .update({
+          status: restoreStatus,
+          previous_status: null,
+          deleted_at: null,
+          updated_at: now,
+        })
+        .eq("id", drawingId);
+      if(drawingErr) throw drawingErr;
+
+      const { data: pageRows, error: pageReadErr } = await sb.from("drawing_pages")
+        .select("id,status,previous_status")
+        .eq("drawing_id", drawingId);
+      if(pageReadErr){
+        logPdfDeleteError("restorePdfDrawingFromTrash.pages.select", pageReadErr, { drawingId });
+      }else if(Array.isArray(pageRows) && pageRows.length > 0){
+        for(const page of pageRows){
+          const pageStatus = normalizeDrawingRestoreStatus(page?.previous_status || page?.status || "active");
+          const { error: pageErr } = await sb.from("drawing_pages")
+            .update({
+              status: pageStatus,
+              previous_status: null,
+              deleted_at: null,
+              updated_at: now,
+            })
+            .eq("id", page.id);
+          if(pageErr) throw pageErr;
+        }
+      }
+      const restoreInspectionId = currentInspectionId || drawingRow?.inspection_id || null;
+      if(restoreInspectionId){
+        const targetPage = Number(options.targetPage || 1) || 1;
+        const { error: inspErr } = await sb.from("inspections")
+          .update({ current_drawing_id: drawingId, current_page: targetPage })
+          .eq("id", restoreInspectionId);
+        if(inspErr){
+          logPdfDeleteError("restorePdfDrawingFromTrash.inspections.setCurrentDrawing", inspErr, { drawingId });
+        }
+      }
+      if(!options.skipReload){
+        await loadPdfFromSupabaseDrawing(drawingId, Number(options.targetPage || 1) || 1);
+      }
+      return true;
+    }
+
+    async function hardDeletePdfDrawing(drawing, options = {}){
+      if(!drawing?.id) return false;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return false;
+      const sb = getSupabase();
+      const drawingId = drawing.id;
+      const storagePath = drawing.storage_path || null;
+      const { error: pageDeleteErr } = await sb.from("drawing_pages")
+        .delete()
+        .eq("drawing_id", drawingId);
+      if(pageDeleteErr) throw pageDeleteErr;
+      const { error: drawingDeleteErr } = await sb.from("drawings")
+        .delete()
+        .eq("id", drawingId);
+      if(drawingDeleteErr) throw drawingDeleteErr;
+      let storageDeleteFailed = false;
       if(storagePath){
         const rmRes = await sb.storage.from(DRAWING_BUCKET).remove([storagePath]);
         if(rmRes.error){
-          result.storageDeleteFailed = true;
-          logPdfDeleteError("deleteDrawingFromSupabase.storage.remove", rmRes.error, ctx);
-        }else{
-          console.log("[pdf-delete] storage removed", { bucket: DRAWING_BUCKET, storagePath });
+          storageDeleteFailed = true;
+          logPdfDeleteError("hardDeletePdfDrawing.storage.remove", rmRes.error, { drawingId, storagePath });
         }
       }
-      if(!drawingId){
-        if(currentInspectionId){
-          const { error: inspErr } = await sb.from("inspections")
-            .update({ current_drawing_id: null, current_page: 1 })
-            .eq("id", currentInspectionId);
-          if(inspErr){
-            logPdfDeleteError("deleteDrawingFromSupabase.inspections.clearCurrentDrawing", inspErr, ctx);
-          }
-        }
-        return result;
-      }
-
-      const now = new Date().toISOString();
-      const { error: dSoftErr } = await sb.from("drawings")
-        .update({ status: "deleted", deleted_at: now, updated_at: now })
-        .eq("id", drawingId);
-      if(dSoftErr){
-        if(canFallbackToHardDelete(dSoftErr)){
-          const { error: dHardErr } = await sb.from("drawings").delete().eq("id", drawingId);
-          if(dHardErr) throw dHardErr;
-        }else{
-          throw dSoftErr;
-        }
-      }else{
-        console.log("[pdf-delete] drawings updated", { drawingId });
-      }
-
-      try{
-        const { error: pageSoftErr } = await sb.from("drawing_pages")
-          .update({ status: "deleted", deleted_at: now, updated_at: now })
-          .eq("drawing_id", drawingId);
-        if(pageSoftErr){
-          if(canFallbackToHardDelete(pageSoftErr)){
-            const { error: pageHardErr } = await sb.from("drawing_pages")
-              .delete()
-              .eq("drawing_id", drawingId);
-            if(pageHardErr){
-              logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages.delete", pageHardErr, ctx);
-            }
-          }else{
-            logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages.softDelete", pageSoftErr, ctx);
-          }
-        }
-      }catch(pageErr){
-        logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages", pageErr, ctx);
-      }
-
       if(currentInspectionId){
         const { error: inspErr } = await sb.from("inspections")
           .update({ current_drawing_id: null, current_page: 1 })
-          .eq("id", currentInspectionId);
+          .eq("id", currentInspectionId)
+          .eq("current_drawing_id", drawingId);
         if(inspErr){
-          logPdfDeleteError("deleteDrawingFromSupabase.inspections.clearCurrentDrawing", inspErr, ctx);
+          logPdfDeleteError("hardDeletePdfDrawing.inspections.clearCurrentDrawing", inspErr, { drawingId });
         }
       }
-
-      return result;
+      if(!options.silent && storageDeleteFailed){
+        toast("PDFは完全削除しましたが、Storage削除に失敗しました。");
+      }
+      return true;
     }
 
     async function deleteMarkersForCurrentDrawing(ctx){
@@ -9554,46 +9977,19 @@
         toast("削除するPDFがありません");
         return false;
       }
+      const drawingId = bg.drawingId || currentDrawingId || null;
       if(!options.skipConfirm){
-        const ok = confirm("現在のPDF図面を削除します。PDF上のピン・テキストメモも削除されます。よろしいですか？");
+        const ok = await askConfirm(
+          "このPDFをゴミ箱に移動します。10日以内であれば復元できます。よろしいですか？",
+          { title: "PDF削除", okLabel: "ゴミ箱に移動", cancelLabel: "キャンセル", danger: true }
+        );
         if(!ok) return false;
       }
 
-      const keyBeforeDelete = activeKey();
-      const pdfIdentity = resolvePdfIdentity(bg);
-      const drawingId = bg.drawingId || currentDrawingId || null;
-      const context = {
-        keyBeforeDelete,
-        pdfIdentity,
-        drawingId,
-        storagePath: currentDrawingStoragePath || null,
-        inspectionId: currentInspectionId || null,
-        floorId: selectedFloorId || null,
-        siteId: selectedSiteId || null,
-      };
-
       try{
-        if(isSupabaseConfigured() && isSupabaseSdkReady() && context.drawingId && !context.storagePath){
-          const sb = getSupabase();
-          const { data, error } = await sb.from("drawings")
-            .select("storage_path")
-            .eq("id", context.drawingId)
-            .single();
-          if(error){
-            logPdfDeleteError("deleteCurrentPdfDrawing.fetchStoragePath", error, context);
-          }else if(data?.storage_path){
-            context.storagePath = data.storage_path;
-          }
-        }
-
-        await deleteMarkersForCurrentDrawing(context);
-        await deleteTextNotesForCurrentDrawing(context);
-        const drawingDeleteResult = await deleteDrawingFromSupabase(context.drawingId, context.storagePath);
-
-        const beforeDeleteKeyInfo = parseMarkerKey(keyBeforeDelete);
-        if(Number(beforeDeleteKeyInfo?.page_number) > 0 && beforeDeleteKeyInfo?.drawing_id){
-          delete store.markersByKey[keyBeforeDelete];
-          delete store.textNotesByKey[keyBeforeDelete];
+        pushUndoSnapshot("PDF削除");
+        if(drawingId){
+          await movePdfDrawingToTrash(drawingId, { skipConfirm: true });
         }
         selectedId = null;
         selectedTextNoteId = null;
@@ -9609,17 +10005,13 @@
         if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = filterStatus;
         updatePageInfo();
         saveStore();
-        markDirty("pdf deleted");
-        updateSaveStatus("dirty", "PDF削除済み");
-
-        if(drawingDeleteResult.storageDeleteFailed){
-          toast("PDFは画面から削除されましたが、Storage削除に失敗しました。管理者に確認してください。");
-        }else{
-          toast("PDF図面を削除しました");
-        }
+        markDirty("pdf moved to trash");
+        updateSaveStatus("dirty", "PDFゴミ箱へ移動済み");
+        updateUndoRedoButtons();
+        toast(drawingId ? "PDFをゴミ箱に移動しました" : "未保存PDFを画面から削除しました");
         return true;
       }catch(err){
-        logPdfDeleteError("deleteCurrentPdfDrawing", err, context);
+        logPdfDeleteError("deleteCurrentPdfDrawing", err, { drawingId, inspectionId: currentInspectionId, floorId: selectedFloorId });
         toast("PDF削除に失敗しました。通信状態を確認して再度お試しください。");
         return false;
       }
@@ -9631,7 +10023,7 @@
       if(!file) return;
       const bg = store.activeBg || { kind: "none" };
       if(bg.kind === "pdf"){
-        const okReplace = confirm("既存のPDF図面があります。差し替えると現在のPDF上のピン・テキストメモは削除されます。差し替えますか？");
+        const okReplace = confirm("既存のPDF図面があります。差し替えると現在のPDFはゴミ箱へ移動します。差し替えますか？");
         if(!okReplace){
           e.target.value = "";
           return;
@@ -9713,10 +10105,23 @@
       await loadTrashFloors(selectedSiteId);
       openTrashModal();
     });
+    $("btnOpenPdfTrash").addEventListener("click", async ()=>{
+      if(!isActiveFloorStatus(selectedFloor?.status)){
+        toast("ゴミ箱内フロアではPDFゴミ箱を表示できません。");
+        return;
+      }
+      await loadTrashPdfs();
+      openPdfTrashModal();
+    });
     $("btnTrashClose").addEventListener("click", ()=>{ closeTrashModal(); });
+    $("btnPdfTrashClose").addEventListener("click", ()=>{ closePdfTrashModal(); });
     $("btnHardDeleteExpiredTrash").addEventListener("click", async ()=>{
       await hardDeleteExpiredTrashFloors();
       await loadTrashFloors(selectedSiteId);
+    });
+    $("btnHardDeleteExpiredPdfTrash").addEventListener("click", async ()=>{
+      await hardDeleteExpiredPdfTrashRows();
+      await loadTrashPdfs();
     });
     $("trashFloorList").addEventListener("click", async (e)=>{
       const btn = e.target.closest("button[data-act]");
@@ -9744,6 +10149,26 @@
         }
       }
     });
+    $("trashPdfList").addEventListener("click", async (e)=>{
+      const btn = e.target.closest("button[data-act]");
+      if(!btn) return;
+      const drawingId = btn.dataset.id || "";
+      if(!drawingId) return;
+      const row = trashPdfCache.find(v=>String(v.id) === String(drawingId));
+      if(!row){
+        toast("対象PDFが見つかりません");
+        return;
+      }
+      if(btn.dataset.act === "restore-pdf"){
+        await restorePdfFromTrashRow(row);
+        await loadTrashPdfs();
+        return;
+      }
+      if(btn.dataset.act === "hard-delete-pdf"){
+        await hardDeletePdfFromTrashRow(row);
+        await loadTrashPdfs();
+      }
+    });
     $("confirmModalCancel").addEventListener("click", ()=>{ closeConfirmModal(false); });
     $("confirmModalOk").addEventListener("click", ()=>{ closeConfirmModal(true); });
     $("confirmModalBackdrop").addEventListener("click", (e)=>{
@@ -9754,6 +10179,11 @@
     $("trashModalBackdrop").addEventListener("click", (e)=>{
       if(e.target === $("trashModalBackdrop")){
         closeTrashModal();
+      }
+    });
+    $("pdfTrashModalBackdrop").addEventListener("click", (e)=>{
+      if(e.target === $("pdfTrashModalBackdrop")){
+        closePdfTrashModal();
       }
     });
     $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
@@ -9905,6 +10335,9 @@
       if($("trashModalBackdrop")?.classList.contains("open")){
         closeTrashModal();
       }
+      if($("pdfTrashModalBackdrop")?.classList.contains("open")){
+        closePdfTrashModal();
+      }
       if($("confirmModalBackdrop")?.classList.contains("open")){
         closeConfirmModal(false);
       }
@@ -9929,6 +10362,12 @@
     $("btnDeletePdf").addEventListener("click", async ()=>{
       await deleteCurrentPdfDrawing();
     });
+    $("btnUndoAction").addEventListener("click", async ()=>{
+      await undoAction();
+    });
+    $("btnRedoAction").addEventListener("click", async ()=>{
+      await redoAction();
+    });
     $("btnEditMemo").addEventListener("click", ()=>{
       if(!selectedId) return;
       const m = markers().find(mm=>mm.id===selectedId);
@@ -9939,6 +10378,7 @@
       if(!ok) return;
       localStorage.removeItem(STORAGE_KEY);
       store = loadStore();
+      clearUndoRedoHistory();
       selectedId = null;
       selectedTextNoteId = null;
       filterVendor = "";
@@ -10215,14 +10655,18 @@
     // 回転ボタン
     // 通常モード回転ボタン
     $("btnRotL").addEventListener("click", ()=>{
+      pushUndoSnapshot("図面回転");
       normalRotation = (normalRotation - 90 + 360) % 360;
       redrawBackground();
       redrawOverlay();
+      markDirty("drawing rotated");
     });
     $("btnRotR").addEventListener("click", ()=>{
+      pushUndoSnapshot("図面回転");
       normalRotation = (normalRotation + 90) % 360;
       redrawBackground();
       redrawOverlay();
+      markDirty("drawing rotated");
     });
 
     $("fsBtnRotL").addEventListener("click", ()=>{
@@ -10366,6 +10810,8 @@
         initCloudUi();
         renderFloorAddUi();
         updateTrashButtonCount();
+        updatePdfTrashButtonState();
+        updateUndoRedoButtons();
         if(isSupabaseConfigured()){
           refreshCloudInspectionList().catch(()=>{});
           loadInspectionSites().catch(()=>{});
