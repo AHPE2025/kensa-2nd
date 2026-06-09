@@ -2903,6 +2903,39 @@
       return 999;
     }
 
+    function getFloorSortValue(floorName) {
+      const name = String(floorName || "").trim().toUpperCase();
+
+      if (name === "B3F" || name === "地下3F" || name === "地下3階") return -3;
+      if (name === "B2F" || name === "地下2F" || name === "地下2階") return -2;
+      if (name === "B1F" || name === "地下1F" || name === "地下1階") return -1;
+
+      const match = name.match(/^(\d+)F$/);
+      if (match) return Number(match[1]);
+
+      const matchJp = name.match(/^(\d+)階$/);
+      if (matchJp) return Number(matchJp[1]);
+
+      if (name === "RF") return 1000;
+      if (name === "屋上") return 1001;
+
+      return 9999;
+    }
+
+    function sortFloorsByLevel(floors) {
+      return [...(floors || [])].sort((a, b) => {
+        const aName = a.floor_name || a.name || a.label || "";
+        const bName = b.floor_name || b.name || b.label || "";
+
+        const av = getFloorSortValue(aName);
+        const bv = getFloorSortValue(bName);
+
+        if (av !== bv) return av - bv;
+
+        return String(aName).localeCompare(String(bName), "ja");
+      });
+    }
+
     function normalizeFloorName(name){
       return String(name || "").replace(/\s+/g, " ").trim().toLowerCase();
     }
@@ -3003,10 +3036,10 @@
             summaryByFloor.get(floorKey).drawing_registered = true;
           });
         }
-        floorsCache = floorRows.map(f=>({
+        floorsCache = sortFloorsByLevel(floorRows.map(f=>({
           ...f,
           ...(summaryByFloor.get(String(f.id)) || {}),
-        }));
+        })));
         renderFloorList(floorsCache);
       }catch(e){
         showCloudError("フロア一覧の取得", e);
@@ -3016,7 +3049,8 @@
     function renderFloorList(floors){
       const list = $("floorList");
       list.innerHTML = "";
-      if(!floors || floors.length === 0){
+      const sortedFloors = sortFloorsByLevel(floors);
+      if(!sortedFloors || sortedFloors.length === 0){
         const row = document.createElement("div");
         row.className = "floor-row";
         row.style.gridTemplateColumns = "1fr";
@@ -3024,7 +3058,7 @@
         list.appendChild(row);
         return;
       }
-      floors.forEach(f=>{
+      sortedFloors.forEach(f=>{
         const floorName = getFloorDisplayName(f) || "-";
         const row = document.createElement("div");
         row.className = "floor-row";
