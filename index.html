@@ -2827,6 +2827,20 @@
       return String(name || "").replace(/\s+/g, " ").trim().toLowerCase();
     }
 
+    function getFloorDisplayName(floor){
+      return String(floor?.floor_name || floor?.name || "").trim();
+    }
+
+    function isMissingColumnOrTableError(err){
+      const code = String(err?.code || "");
+      const blob = `${err?.message || ""} ${err?.details || ""} ${err?.hint || ""}`.toLowerCase();
+      return code === "42703"
+        || code === "PGRST204"
+        || code === "42P01"
+        || (blob.includes("column") && blob.includes("does not exist"))
+        || (blob.includes("relation") && blob.includes("does not exist"));
+    }
+
     function setFloorAddValidation(message){
       const el = $("floorAddValidation");
       if(el) el.textContent = message || "";
@@ -2859,11 +2873,11 @@
         const { data: floors, error } = await sb.from("site_floors")
           .select("id, site_id, floor_name, floor_order, status, created_at, updated_at")
           .eq("site_id", siteId)
-          .eq("status", "active")
+          .or("status.eq.active,status.is.null")
           .order("floor_order", { ascending: true })
           .order("floor_name", { ascending: true });
         if(error) throw error;
-        const floorRows = floors || [];
+        const floorRows = (floors || []).filter(f=>String(f?.status || "").toLowerCase() !== "deleted");
         const floorIds = floorRows.map(f=>f.id).filter(Boolean);
         const summaryByFloor = new Map(floorIds.map(id=>[String(id), {
           total_count: 0,
@@ -2931,18 +2945,103 @@
         return;
       }
       floors.forEach(f=>{
+        const floorName = getFloorDisplayName(f) || "-";
         const row = document.createElement("div");
         row.className = "floor-row";
         row.innerHTML = `
-          <div>${escapeHtml(f.floor_name || "-")}</div>
+          <div>${escapeHtml(floorName)}</div>
           <div>${Number(f.total_count || 0)}</div>
           <div>${Number(f.unresolved_count || 0)}</div>
           <div>${Number(f.completed_count || 0)}</div>
           <div>${f.drawing_registered ? "登録済み" : "未登録"}</div>
-          <div><button class="btn" type="button" data-act="open-floor" data-id="${escapeHtml(String(f.id))}">フロアを開く</button></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn" type="button" data-act="open-floor" data-id="${escapeHtml(String(f.id))}">フロアを開く</button>
+            <button class="btn" type="button" data-act="rename-floor" data-id="${escapeHtml(String(f.id))}">名前変更</button>
+            <button class="btn danger" type="button" data-act="delete-floor" data-id="${escapeHtml(String(f.id))}">削除</button>
+          </div>
         `;
         list.appendChild(row);
       });
+    }
+
+    async function refreshFloorList(){
+      if(!selectedSiteId) return;
+      await loadFloors(selectedSiteId);
+      updateCurrentContextLabels();
+    }
+
+    async function updateFloorRecordName(sb, floorId, siteId, nextName, now){
+      const candidates = [
+        { floor_name: nextName, name: nextName, updated_at: now },
+        { floor_name: nextName, updated_at: now },
+        { name: nextName, updated_at: now },
+      ];
+      let lastError = null;
+      for(const payload of candidates){
+        let query = sb.from("site_floors").update(payload).eq("id", floorId);
+        if(siteId) query = query.eq("site_id", siteId);
+        const { error } = await query;
+        if(!error) return;
+        lastError = error;
+        if(!isMissingColumnOrTableError(error)) break;
+      }
+      if(lastError) throw lastError;
+    }
+
+    async function updateTableFloorName(sb, tableName, floorId, siteId, nextName, now){
+      const payload = { floor_name: nextName, updated_at: now };
+      let query = sb.from(tableName).update(payload).eq("floor_id", floorId);
+      if(siteId) query = query.eq("site_id", siteId);
+      const { error } = await query;
+      if(error){
+        if(isMissingColumnOrTableError(error)){
+          let retryQuery = sb.from(tableName).update(payload).eq("floor_id", floorId);
+          const { error: retryError } = await retryQuery;
+          if(retryError && !isMissingColumnOrTableError(retryError)) throw retryError;
+          return;
+        }
+        throw error;
+      }
+    }
+
+    async function softDeleteFloorScopedRows(sb, tableName, floorId, siteId, now){
+      const payloads = [
+        { status: "deleted", deleted_at: now, updated_at: now },
+        { status: "deleted", updated_at: now },
+      ];
+      let lastError = null;
+      for(const payload of payloads){
+        let query = sb.from(tableName).update(payload).eq("floor_id", floorId);
+        if(siteId) query = query.eq("site_id", siteId);
+        const { error } = await query;
+        if(!error) return;
+        lastError = error;
+        if(!isMissingColumnOrTableError(error)) break;
+      }
+      if(lastError) throw lastError;
+    }
+
+    async function softDeleteDrawingPagesByFloor(sb, floorId, siteId, now){
+      let drawingIdQuery = sb.from("drawings").select("id").eq("floor_id", floorId);
+      if(siteId) drawingIdQuery = drawingIdQuery.eq("site_id", siteId);
+      const { data: drawingRows, error: drawingFetchError } = await drawingIdQuery;
+      if(drawingFetchError) throw drawingFetchError;
+      const drawingIds = (drawingRows || []).map(row=>row.id).filter(Boolean);
+      if(drawingIds.length === 0) return;
+      const payloads = [
+        { status: "deleted", deleted_at: now, updated_at: now },
+        { status: "deleted", updated_at: now },
+      ];
+      let lastError = null;
+      for(const payload of payloads){
+        const { error } = await sb.from("drawing_pages")
+          .update(payload)
+          .in("drawing_id", drawingIds);
+        if(!error) return;
+        lastError = error;
+        if(!isMissingColumnOrTableError(error)) break;
+      }
+      if(lastError) throw lastError;
     }
 
     async function createFloorFromUi(){
@@ -2968,7 +3067,7 @@
       }
 
       const normalizedFloorName = normalizeFloorName(floorName);
-      const duplicated = floorsCache.some(f=>normalizeFloorName(f.floor_name) === normalizedFloorName);
+      const duplicated = floorsCache.some(f=>normalizeFloorName(getFloorDisplayName(f)) === normalizedFloorName);
       if(duplicated){
         setFloorAddValidation("このフロアはすでに登録されています");
         return;
@@ -2992,6 +3091,96 @@
         await loadFloors(selectedSiteId);
       }catch(e){
         showCloudError("フロア追加", e);
+      }
+    }
+
+    async function renameFloor(floor){
+      if(!floor?.id){
+        toast("フロア名の変更に失敗しました");
+        return;
+      }
+      const currentName = getFloorDisplayName(floor);
+      const input = window.prompt("新しいフロア名", currentName);
+      if(input == null) return;
+      const nextName = String(input).replace(/\s+/g, " ").trim();
+      if(!nextName){
+        toast("フロア名を入力してください");
+        return;
+      }
+      const duplicated = floorsCache.some(f=>
+        String(f.id) !== String(floor.id)
+        && normalizeFloorName(getFloorDisplayName(f)) === normalizeFloorName(nextName)
+      );
+      if(duplicated){
+        toast("同じ名前のフロアがすでにあります");
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const now = new Date().toISOString();
+        const siteId = selectedSiteId || floor.site_id || null;
+        await updateFloorRecordName(sb, floor.id, siteId, nextName, now);
+        const floorNameTables = ["drawings", "markers", "drawing_text_notes", "marker_photos"];
+        for(const tableName of floorNameTables){
+          try{
+            await updateTableFloorName(sb, tableName, floor.id, siteId, nextName, now);
+          }catch(relErr){
+            console.warn("[floor rename] related floor_name update skipped", { tableName, relErr });
+          }
+        }
+        if(selectedFloorId && String(selectedFloorId) === String(floor.id)){
+          selectedFloor = { ...(selectedFloor || {}), floor_name: nextName, name: nextName };
+          currentFloorName = nextName;
+          $("inpFloorName").value = nextName;
+          updateCurrentContextLabels();
+        }
+        await refreshFloorList();
+        toast("フロア名を変更しました");
+      }catch(error){
+        console.error("[floor rename] error", error);
+        toast("フロア名の変更に失敗しました");
+      }
+    }
+
+    async function deleteFloor(floor){
+      if(!floor?.id){
+        toast("フロア削除に失敗しました");
+        return;
+      }
+      const ok = confirm("このフロアを削除します。\nこのフロアに登録されたPDF図面・ピン・テキストメモ・写真も一覧から表示されなくなります。\nよろしいですか？");
+      if(!ok) return;
+      try{
+        const sb = getSupabase();
+        const now = new Date().toISOString();
+        const floorId = floor.id;
+        const siteId = selectedSiteId || floor.site_id || null;
+        await softDeleteFloorScopedRows(sb, "site_floors", floorId, siteId, now);
+        await softDeleteFloorScopedRows(sb, "drawings", floorId, siteId, now);
+        await softDeleteDrawingPagesByFloor(sb, floorId, siteId, now);
+        await softDeleteFloorScopedRows(sb, "markers", floorId, siteId, now);
+        await softDeleteFloorScopedRows(sb, "drawing_text_notes", floorId, siteId, now);
+        await softDeleteFloorScopedRows(sb, "marker_photos", floorId, siteId, now);
+        try{
+          await softDeleteFloorScopedRows(sb, "export_logs", floorId, siteId, now);
+        }catch(exportLogErr){
+          if(!isMissingColumnOrTableError(exportLogErr)) throw exportLogErr;
+          console.warn("[floor delete] export_logs skipped", exportLogErr);
+        }
+        if(selectedFloorId && String(selectedFloorId) === String(floorId)){
+          selectedFloorId = null;
+          selectedFloor = null;
+          selectedInspectionId = null;
+          currentFloorId = null;
+          currentFloorName = "";
+          $("inpFloorName").value = "";
+          resetFloorRuntimeState();
+          showView("inspection_detail");
+        }
+        await refreshFloorList();
+        toast("フロアを削除しました");
+      }catch(error){
+        console.error("[floor delete] error", error);
+        toast("フロア削除に失敗しました");
       }
     }
 
@@ -7788,9 +7977,26 @@
       openInspectionSite(btn.dataset.id || "");
     });
     $("floorList").addEventListener("click", async (e)=>{
-      const btn = e.target.closest('button[data-act="open-floor"]');
+      const btn = e.target.closest("button[data-act]");
       if(!btn) return;
-      await openFloor(btn.dataset.id || "");
+      const floorId = btn.dataset.id || "";
+      if(!floorId) return;
+      if(btn.dataset.act === "open-floor"){
+        await openFloor(floorId);
+        return;
+      }
+      const floor = floorsCache.find(f=>String(f.id) === String(floorId));
+      if(!floor){
+        toast("対象フロアが見つかりません");
+        return;
+      }
+      if(btn.dataset.act === "rename-floor"){
+        await renameFloor(floor);
+        return;
+      }
+      if(btn.dataset.act === "delete-floor"){
+        await deleteFloor(floor);
+      }
     });
     $("vendorWorkList").addEventListener("click", async (e)=>{
       const completedBtn = e.target.closest('button[data-act="mark-completed"]');
