@@ -516,6 +516,7 @@
       <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
         <label style="white-space:nowrap;font-size:12px;color:var(--muted)">PDF</label>
         <input id="pdfInput" type="file" accept="application/pdf" style="font-size:12px" />
+        <button class="btn danger" id="btnDeletePdf" type="button" style="padding:7px 12px;font-size:13px" disabled>PDF削除</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <button class="btn" id="btnPrevPage" style="padding:7px 10px">◀</button>
@@ -5968,6 +5969,9 @@
 
     function syncButtons(){
       $("btnDeleteSelected").disabled = !selectedId;
+      const hasPdf = (store.activeBg?.kind === "pdf");
+      const btnDeletePdf = $("btnDeletePdf");
+      if(btnDeletePdf) btnDeletePdf.disabled = !hasPdf;
       const fsDel = $("fsBtnDelete");
       if(fsDel) fsDel.disabled = !selectedId;
       const btnEM = $("btnEditMemo");
@@ -6932,10 +6936,367 @@
       $("btnNextPage").disabled = !(bg.kind==="pdf" && bg.pageCount && bg.page<bg.pageCount);
     }
 
+    function logPdfDeleteError(functionName, err, ctx = {}){
+      console.error("[pdf-delete] failed", {
+        functionName,
+        drawingId: ctx?.drawingId ?? null,
+        storagePath: ctx?.storagePath ?? null,
+        inspectionId: ctx?.inspectionId ?? null,
+        floorId: ctx?.floorId ?? null,
+        siteId: ctx?.siteId ?? null,
+        message: err?.message ?? String(err ?? ""),
+        code: err?.code ?? null,
+        details: err?.details ?? null,
+        hint: err?.hint ?? null,
+      });
+    }
+
+    function canFallbackToHardDelete(err){
+      const code = String(err?.code || "");
+      const blob = `${err?.message || ""} ${err?.details || ""} ${err?.hint || ""}`.toLowerCase();
+      return code === "42703"
+        || code === "PGRST204"
+        || (blob.includes("status") && (blob.includes("column") || blob.includes("does not exist")));
+    }
+
+    function applyMarkerDrawingScopeQuery(query, ctx){
+      const hasDrawingId = !!ctx?.drawingId;
+      if(hasDrawingId){
+        query = query.eq("drawing_id", ctx.drawingId);
+      }else{
+        if(!ctx?.inspectionId || !ctx?.floorId){
+          return null;
+        }
+        query = query
+          .eq("inspection_id", ctx.inspectionId)
+          .eq("floor_id", ctx.floorId)
+          .gt("page_number", 0);
+      }
+      if(ctx?.inspectionId) query = query.eq("inspection_id", ctx.inspectionId);
+      if(ctx?.floorId) query = query.eq("floor_id", ctx.floorId);
+      if(ctx?.siteId) query = query.eq("site_id", ctx.siteId);
+      return query;
+    }
+
+    function applyTextNoteDrawingScopeQuery(query, ctx){
+      const hasDrawingId = !!ctx?.drawingId;
+      if(hasDrawingId){
+        query = query.eq("drawing_id", ctx.drawingId);
+      }else{
+        if(!ctx?.inspectionId || !ctx?.floorId){
+          return null;
+        }
+        query = query
+          .eq("inspection_id", ctx.inspectionId)
+          .eq("floor_id", ctx.floorId)
+          .gt("page_number", 0);
+      }
+      if(ctx?.inspectionId) query = query.eq("inspection_id", ctx.inspectionId);
+      if(ctx?.floorId) query = query.eq("floor_id", ctx.floorId);
+      if(ctx?.siteId) query = query.eq("site_id", ctx.siteId);
+      return query;
+    }
+
+    function collectPdfScopedKeys(byKey, pdfIdentity){
+      if(!byKey || typeof byKey !== "object") return [];
+      if(!pdfIdentity) return [];
+      const prefix = `pdf:${String(pdfIdentity)}:`;
+      return Object.keys(byKey).filter(key=>key.startsWith(prefix));
+    }
+
+    function clearCurrentPdfFromUi(){
+      closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
+      closeTextNoteEditor();
+      store.activeBg = { kind: "none" };
+      $("pageInput").value = "1";
+      $("pdfInput").value = "";
+      lastPdfFile = null;
+      cachedPdfDoc = null;
+      cachedPdfFileRef = null;
+      currentDrawingId = null;
+      currentDrawingStoragePath = null;
+      updatePageInfo();
+      redrawBackground();
+      syncButtons();
+      if(isFullscreen) updateFsInfo();
+    }
+
+    async function deleteDrawingFromSupabase(drawingId, storagePath){
+      const ctx = {
+        drawingId,
+        storagePath,
+        inspectionId: currentInspectionId,
+        floorId: selectedFloorId,
+        siteId: selectedSiteId,
+      };
+      const result = { storageDeleteFailed: false };
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+        return result;
+      }
+      const sb = getSupabase();
+      if(storagePath){
+        const rmRes = await sb.storage.from(DRAWING_BUCKET).remove([storagePath]);
+        if(rmRes.error){
+          result.storageDeleteFailed = true;
+          logPdfDeleteError("deleteDrawingFromSupabase.storage.remove", rmRes.error, ctx);
+        }else{
+          console.log("[pdf-delete] storage removed", { bucket: DRAWING_BUCKET, storagePath });
+        }
+      }
+      if(!drawingId){
+        if(currentInspectionId){
+          const { error: inspErr } = await sb.from("inspections")
+            .update({ current_drawing_id: null, current_page: 1 })
+            .eq("id", currentInspectionId);
+          if(inspErr){
+            logPdfDeleteError("deleteDrawingFromSupabase.inspections.clearCurrentDrawing", inspErr, ctx);
+          }
+        }
+        return result;
+      }
+
+      const now = new Date().toISOString();
+      const { error: dSoftErr } = await sb.from("drawings")
+        .update({ status: "deleted", deleted_at: now, updated_at: now })
+        .eq("id", drawingId);
+      if(dSoftErr){
+        if(canFallbackToHardDelete(dSoftErr)){
+          const { error: dHardErr } = await sb.from("drawings").delete().eq("id", drawingId);
+          if(dHardErr) throw dHardErr;
+        }else{
+          throw dSoftErr;
+        }
+      }else{
+        console.log("[pdf-delete] drawings updated", { drawingId });
+      }
+
+      try{
+        const { error: pageSoftErr } = await sb.from("drawing_pages")
+          .update({ status: "deleted", deleted_at: now, updated_at: now })
+          .eq("drawing_id", drawingId);
+        if(pageSoftErr){
+          if(canFallbackToHardDelete(pageSoftErr)){
+            const { error: pageHardErr } = await sb.from("drawing_pages")
+              .delete()
+              .eq("drawing_id", drawingId);
+            if(pageHardErr){
+              logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages.delete", pageHardErr, ctx);
+            }
+          }else{
+            logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages.softDelete", pageSoftErr, ctx);
+          }
+        }
+      }catch(pageErr){
+        logPdfDeleteError("deleteDrawingFromSupabase.drawing_pages", pageErr, ctx);
+      }
+
+      if(currentInspectionId){
+        const { error: inspErr } = await sb.from("inspections")
+          .update({ current_drawing_id: null, current_page: 1 })
+          .eq("id", currentInspectionId);
+        if(inspErr){
+          logPdfDeleteError("deleteDrawingFromSupabase.inspections.clearCurrentDrawing", inspErr, ctx);
+        }
+      }
+
+      return result;
+    }
+
+    async function deleteMarkersForCurrentDrawing(ctx){
+      const keyTarget = String(ctx?.pdfIdentity || "");
+      const markerKeys = collectPdfScopedKeys(store.markersByKey, keyTarget);
+      const localMarkers = [];
+      markerKeys.forEach(key=>{
+        const arr = Array.isArray(store.markersByKey?.[key]) ? store.markersByKey[key] : [];
+        arr.forEach(marker=>{
+          localMarkers.push(marker);
+          if(marker?.beforePhoto?.storage_path) queuePhotoStorageDelete(marker.beforePhoto.storage_path);
+          if(marker?.afterPhoto?.storage_path) queuePhotoStorageDelete(marker.afterPhoto.storage_path);
+        });
+        delete store.markersByKey[key];
+      });
+
+      if(quickEditorState){
+        const hit = localMarkers.some(marker=>String(marker?.id || "") === String(quickEditorState.markerId || ""));
+        if(hit){
+          quickEditorState = null;
+          quickMarkerEditor.style.display = "none";
+        }
+      }
+
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+        return;
+      }
+      const sb = getSupabase();
+      const now = new Date().toISOString();
+      const baseQuery = applyMarkerDrawingScopeQuery(sb.from("markers").select("id"), ctx);
+      if(!baseQuery) return;
+
+      const { data: markerRows, error: markerFetchErr } = await baseQuery;
+      if(markerFetchErr){
+        logPdfDeleteError("deleteMarkersForCurrentDrawing.selectMarkers", markerFetchErr, ctx);
+      }
+      const markerIds = (markerRows || []).map(row=>row.id).filter(Boolean);
+
+      let markerUpdateQuery = applyMarkerDrawingScopeQuery(
+        sb.from("markers").update({ status: "deleted", deleted_at: now, updated_at: now }),
+        ctx
+      );
+      if(markerUpdateQuery){
+        const { error: markerSoftErr } = await markerUpdateQuery;
+        if(markerSoftErr){
+          if(canFallbackToHardDelete(markerSoftErr)){
+            markerUpdateQuery = applyMarkerDrawingScopeQuery(sb.from("markers").delete(), ctx);
+            if(markerUpdateQuery){
+              const { error: markerHardErr } = await markerUpdateQuery;
+              if(markerHardErr) throw markerHardErr;
+            }
+          }else{
+            throw markerSoftErr;
+          }
+        }
+      }
+
+      if(markerIds.length > 0){
+        const { error: photoSoftErr } = await sb.from("marker_photos")
+          .update({ status: "deleted", deleted_at: now, updated_at: now })
+          .in("marker_id", markerIds);
+        if(photoSoftErr){
+          if(canFallbackToHardDelete(photoSoftErr)){
+            const { error: photoHardErr } = await sb.from("marker_photos")
+              .delete()
+              .in("marker_id", markerIds);
+            if(photoHardErr) throw photoHardErr;
+          }else{
+            throw photoSoftErr;
+          }
+        }
+      }
+    }
+
+    async function deleteTextNotesForCurrentDrawing(ctx){
+      const keyTarget = String(ctx?.pdfIdentity || "");
+      const textKeys = collectPdfScopedKeys(store.textNotesByKey, keyTarget);
+      textKeys.forEach(key=>{
+        delete store.textNotesByKey[key];
+      });
+
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+        return;
+      }
+      const sb = getSupabase();
+      const now = new Date().toISOString();
+      let textUpdateQuery = applyTextNoteDrawingScopeQuery(
+        sb.from("drawing_text_notes").update({ status: "deleted", deleted_at: now, updated_at: now }),
+        ctx
+      );
+      if(!textUpdateQuery) return;
+
+      const { error: softErr } = await textUpdateQuery;
+      if(softErr){
+        if(canFallbackToHardDelete(softErr)){
+          textUpdateQuery = applyTextNoteDrawingScopeQuery(sb.from("drawing_text_notes").delete(), ctx);
+          if(textUpdateQuery){
+            const { error: hardErr } = await textUpdateQuery;
+            if(hardErr) throw hardErr;
+          }
+        }else{
+          throw softErr;
+        }
+      }
+    }
+
+    async function deleteCurrentPdfDrawing(options = {}){
+      const bg = store.activeBg || { kind: "none" };
+      const hasPdf = bg.kind === "pdf";
+      if(!hasPdf){
+        toast("削除するPDFがありません");
+        return false;
+      }
+      if(!options.skipConfirm){
+        const ok = confirm("現在のPDF図面を削除します。PDF上のピン・テキストメモも削除されます。よろしいですか？");
+        if(!ok) return false;
+      }
+
+      const keyBeforeDelete = activeKey();
+      const pdfIdentity = resolvePdfIdentity(bg);
+      const drawingId = bg.drawingId || currentDrawingId || null;
+      const context = {
+        keyBeforeDelete,
+        pdfIdentity,
+        drawingId,
+        storagePath: currentDrawingStoragePath || null,
+        inspectionId: currentInspectionId || null,
+        floorId: selectedFloorId || null,
+        siteId: selectedSiteId || null,
+      };
+
+      try{
+        if(isSupabaseConfigured() && isSupabaseSdkReady() && context.drawingId && !context.storagePath){
+          const sb = getSupabase();
+          const { data, error } = await sb.from("drawings")
+            .select("storage_path")
+            .eq("id", context.drawingId)
+            .single();
+          if(error){
+            logPdfDeleteError("deleteCurrentPdfDrawing.fetchStoragePath", error, context);
+          }else if(data?.storage_path){
+            context.storagePath = data.storage_path;
+          }
+        }
+
+        await deleteMarkersForCurrentDrawing(context);
+        await deleteTextNotesForCurrentDrawing(context);
+        const drawingDeleteResult = await deleteDrawingFromSupabase(context.drawingId, context.storagePath);
+
+        if(String(keyBeforeDelete).startsWith("pdf:")){
+          delete store.markersByKey[keyBeforeDelete];
+          delete store.textNotesByKey[keyBeforeDelete];
+        }
+        selectedId = null;
+        selectedTextNoteId = null;
+        $("pageInput").value = "1";
+        clearCurrentPdfFromUi();
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+        syncSelectorsFromSelectedMarker();
+        updatePageInfo();
+        saveStore();
+        markDirty("pdf deleted");
+        updateSaveStatus("dirty", "PDF削除済み");
+
+        if(drawingDeleteResult.storageDeleteFailed){
+          toast("PDFは画面から削除されましたが、Storage削除に失敗しました。管理者に確認してください。");
+        }else{
+          toast("PDF図面を削除しました");
+        }
+        return true;
+      }catch(err){
+        logPdfDeleteError("deleteCurrentPdfDrawing", err, context);
+        toast("PDF削除に失敗しました。通信状態を確認して再度お試しください。");
+        return false;
+      }
+    }
+
     let lastPdfFile = null;
     $("pdfInput").addEventListener("change", async (e)=>{
       const file = e.target.files?.[0];
       if(!file) return;
+      const bg = store.activeBg || { kind: "none" };
+      if(bg.kind === "pdf"){
+        const okReplace = confirm("既存のPDF図面があります。差し替えると現在のPDF上のピン・テキストメモは削除されます。差し替えますか？");
+        if(!okReplace){
+          e.target.value = "";
+          return;
+        }
+        const deleted = await deleteCurrentPdfDrawing({ skipConfirm: true });
+        if(!deleted){
+          e.target.value = "";
+          return;
+        }
+      }
       lastPdfFile = file;
       currentDrawingId = null;
       currentDrawingStoragePath = null;
@@ -7093,6 +7454,9 @@
     });
     $("btnDeleteSelected").addEventListener("click", ()=>{
       deleteSelected();
+    });
+    $("btnDeletePdf").addEventListener("click", async ()=>{
+      await deleteCurrentPdfDrawing();
     });
     $("btnEditMemo").addEventListener("click", ()=>{
       if(!selectedId) return;
