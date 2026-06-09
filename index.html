@@ -393,11 +393,16 @@
           <div class="divider"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
             <div class="field" style="min-width:220px">
-              <label>フロア名</label>
-              <input id="newFloorName" type="text" placeholder="例：1F / 2F / 屋上" />
+              <label>フロア選択</label>
+              <select id="newFloorSelect"></select>
+            </div>
+            <div class="field" id="newFloorOtherWrap" style="min-width:220px;display:none">
+              <label>その他のフロア名</label>
+              <input id="newFloorOtherName" type="text" placeholder="任意のフロア名" />
             </div>
             <button class="btn primary" id="btnAddFloor" type="button">フロア追加</button>
           </div>
+          <div id="floorAddValidation" class="small" style="color:#b91c1c;min-height:18px;margin-top:4px"></div>
         </div>
       </div>
       <div class="card">
@@ -2276,10 +2281,65 @@
         $("inpInspectorName").value = site.inspector_name || "";
         $("inpSiteMemo").value = site.memo || "";
         $("inpFloorName").value = "";
+        renderFloorAddUi();
+        setFloorAddValidation("");
         await loadFloors(site.id);
         showView("inspection_detail");
       }catch(e){
         showCloudError("検査案件を開く", e);
+      }
+    }
+
+    function getFloorOptions(){
+      const options = [];
+      for(let i = -3; i <= -1; i += 1){
+        options.push({ floor_name: `地下${Math.abs(i)}F`, floor_order: i });
+      }
+      for(let i = 1; i <= 30; i += 1){
+        options.push({ floor_name: `${i}F`, floor_order: i });
+      }
+      options.push(
+        { floor_name: "屋上", floor_order: 100 },
+        { floor_name: "外構", floor_order: 200 },
+        { floor_name: "共用部", floor_order: 300 },
+        { floor_name: "その他", floor_order: 999 },
+      );
+      return options;
+    }
+
+    function getFloorOrder(floorName){
+      const name = String(floorName || "").trim();
+      const exact = getFloorOptions().find(opt=>opt.floor_name === name);
+      if(exact) return exact.floor_order;
+      return 999;
+    }
+
+    function normalizeFloorName(name){
+      return String(name || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+
+    function setFloorAddValidation(message){
+      const el = $("floorAddValidation");
+      if(el) el.textContent = message || "";
+    }
+
+    function renderFloorAddUi(){
+      const floorSelect = $("newFloorSelect");
+      const otherWrap = $("newFloorOtherWrap");
+      const otherInput = $("newFloorOtherName");
+      if(!floorSelect || !otherWrap || !otherInput) return;
+
+      const currentValue = floorSelect.value || "";
+      const options = getFloorOptions();
+      floorSelect.innerHTML = `<option value="">フロアを選択</option>${
+        options.map(opt=>`<option value="${escapeHtml(opt.floor_name)}">${escapeHtml(opt.floor_name)}</option>`).join("")
+      }`;
+      floorSelect.value = options.some(opt=>opt.floor_name === currentValue) ? currentValue : "";
+
+      const isOther = floorSelect.value === "その他";
+      otherWrap.style.display = isOther ? "" : "none";
+      if(!isOther){
+        otherInput.value = "";
       }
     }
 
@@ -2291,7 +2351,8 @@
           .select("id, site_id, floor_name, floor_order, status, created_at, updated_at")
           .eq("site_id", siteId)
           .eq("status", "active")
-          .order("floor_order", { ascending: true });
+          .order("floor_order", { ascending: true })
+          .order("floor_name", { ascending: true });
         if(error) throw error;
         const floorRows = floors || [];
         const floorIds = floorRows.map(f=>f.id).filter(Boolean);
@@ -2378,14 +2439,33 @@
         toast("先に検査案件を選択してください。");
         return;
       }
-      const floorName = ($("newFloorName").value || "").trim();
-      if(!floorName){
-        toast("フロア名を入力してください。");
+      setFloorAddValidation("");
+
+      const selectedFloor = ($("newFloorSelect").value || "").trim();
+      if(!selectedFloor){
+        setFloorAddValidation("フロアを選択してください");
         return;
       }
+
+      let floorName = selectedFloor;
+      if(selectedFloor === "その他"){
+        floorName = ($("newFloorOtherName").value || "").trim();
+        if(!floorName){
+          setFloorAddValidation("フロア名を入力してください");
+          return;
+        }
+      }
+
+      const normalizedFloorName = normalizeFloorName(floorName);
+      const duplicated = floorsCache.some(f=>normalizeFloorName(f.floor_name) === normalizedFloorName);
+      if(duplicated){
+        setFloorAddValidation("このフロアはすでに登録されています");
+        return;
+      }
+
       try{
         const sb = getSupabase();
-        const floorOrder = floorsCache.reduce((max, f)=>Math.max(max, Number(f.floor_order || 0)), 0) + 1;
+        const floorOrder = getFloorOrder(selectedFloor === "その他" ? "その他" : floorName);
         const payload = {
           site_id: selectedSiteId,
           floor_name: floorName,
@@ -2394,7 +2474,10 @@
         };
         const { error } = await sb.from("site_floors").insert(payload);
         if(error) throw error;
-        $("newFloorName").value = "";
+        $("newFloorSelect").value = "";
+        $("newFloorOtherName").value = "";
+        renderFloorAddUi();
+        setFloorAddValidation("");
         await loadFloors(selectedSiteId);
       }catch(e){
         showCloudError("フロア追加", e);
@@ -6184,6 +6267,10 @@
     $("btnNewInspectionSite").addEventListener("click", ()=>{ showView("inspection_list"); });
     $("btnCreateInspectionSite").addEventListener("click", ()=>{ createInspectionSiteFromUi(); });
     $("btnBackToInspectionList").addEventListener("click", ()=>{ showView("inspection_list"); });
+    $("newFloorSelect").addEventListener("change", ()=>{
+      renderFloorAddUi();
+      setFloorAddValidation("");
+    });
     $("btnAddFloor").addEventListener("click", ()=>{ createFloorFromUi(); });
     $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
     $("btnOpenVendorWork").addEventListener("click", ()=>{ openVendorWorkView($("vendorSelect").value || ""); });
@@ -6586,6 +6673,7 @@
         syncSelectorsFromSelectedMarker();
         updatePageInfo();
         initCloudUi();
+        renderFloorAddUi();
         if(isSupabaseConfigured()){
           refreshCloudInspectionList().catch(()=>{});
           loadInspectionSites().catch(()=>{});
