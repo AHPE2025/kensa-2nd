@@ -908,6 +908,8 @@
     let floorsCache = [];
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
+    const INSPECTION_SELECT_COLUMNS = "id, title, site_id, floor_id, floor_name, site_name, inspected_at, inspector_name, status, inspection_mode, settings, created_at, updated_at";
+    const INSPECTION_DETAIL_SELECT_COLUMNS = `${INSPECTION_SELECT_COLUMNS}, current_drawing_id, current_page`;
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
     const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
 
@@ -961,6 +963,19 @@
       console.error(title, err);
       toast("【エラー】" + title + "\n" + msg);
       setCloudStatus("エラー", "err");
+    }
+
+    function logFloorOpenError(functionName, err, siteId, floorId){
+      const src = err?.error || err?.cause || err || {};
+      console.error("[フロアオープンエラー]", {
+        functionName,
+        message: src?.message || String(src),
+        code: src?.code || null,
+        details: src?.details || null,
+        hint: src?.hint || null,
+        siteId: siteId || null,
+        floorId: floorId || null,
+      });
     }
 
     function toSafeFileName(name){
@@ -1795,7 +1810,7 @@
       try{
         const sb = getSupabase();
         const { data: insp, error: iErr } = await sb.from("inspections")
-          .select("*")
+          .select(INSPECTION_DETAIL_SELECT_COLUMNS)
           .eq("id", inspectionId)
           .single();
         if(iErr) throw iErr;
@@ -1999,7 +2014,7 @@
       try{
         const sb = getSupabase();
         const { data, error } = await sb.from("inspections")
-          .select("id, title, site_name, floor_name, status, inspected_at, created_at, updated_at, site_id, floor_id")
+          .select(INSPECTION_SELECT_COLUMNS)
           .order("updated_at", { ascending: false })
           .limit(50);
         if(error) throw error;
@@ -2485,50 +2500,85 @@
     }
 
     async function openFloor(floorId){
-      if(!selectedSiteId) return;
-      let floor = floorsCache.find(f=>String(f.id) === String(floorId));
-      if(!floor){
-        const sb = getSupabase();
-        const { data, error } = await sb.from("site_floors").select("*").eq("id", floorId).single();
-        if(error) throw error;
-        floor = data;
+      const siteId = selectedSiteId;
+      if(!siteId || !floorId) return;
+      selectedFloorId = floorId;
+      try{
+        let floor = floorsCache.find(f=>String(f.id) === String(floorId));
+        if(!floor){
+          const sb = getSupabase();
+          const { data, error } = await sb.from("site_floors")
+            .select("id, site_id, floor_name, floor_order, status, created_at, updated_at")
+            .eq("site_id", siteId)
+            .eq("id", floorId)
+            .single();
+          if(error) throw error;
+          floor = data;
+        }
+        if(!floor) throw new Error("対象フロアが見つかりません。");
+        selectedFloor = floor;
+        selectedFloorId = floor.id;
+        $("inpFloorName").value = floor.floor_name || "";
+        const inspectionId = await ensureInspectionForFloor(siteId, floor.id);
+        selectedInspectionId = inspectionId;
+        await loadInspectionForFloor(siteId, floor.id);
+        showView("floor_inspection");
+      }catch(e){
+        logFloorOpenError("openFloor", e, siteId, floorId);
+        toast("フロアを開けませんでした。Supabaseの inspections テーブル設定を確認してください。");
       }
-      selectedFloorId = floor.id;
-      selectedFloor = floor;
-      $("inpFloorName").value = floor.floor_name || "";
-      const inspectionId = await ensureInspectionForFloor(selectedSiteId, floor.id);
-      selectedInspectionId = inspectionId;
-      await loadInspectionForFloor(selectedSiteId, floor.id);
-      showView("floor_inspection");
     }
 
     async function ensureInspectionForFloor(siteId, floorId){
       if(!siteId || !floorId) throw new Error("site_id / floor_id が不足しています。");
-      const sb = getSupabase();
-      const { data: exists, error } = await sb.from("inspections")
-        .select("id, status, updated_at")
-        .eq("site_id", siteId)
-        .eq("floor_id", floorId)
-        .eq("status", "draft")
-        .order("updated_at", { ascending: false })
-        .limit(1);
-      if(error) throw error;
-      if(exists && exists.length > 0){
-        currentInspectionId = exists[0].id;
-        selectedInspectionId = exists[0].id;
-        selectedCloudInspectionId = exists[0].id;
-        return exists[0].id;
+      try{
+        const sb = getSupabase();
+        const { data: exists, error } = await sb.from("inspections")
+          .select(INSPECTION_SELECT_COLUMNS)
+          .eq("site_id", siteId)
+          .eq("floor_id", floorId)
+          .eq("status", "draft")
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        if(error) throw error;
+        if(exists && exists.length > 0){
+          currentInspectionId = exists[0].id;
+          selectedInspectionId = exists[0].id;
+          selectedCloudInspectionId = exists[0].id;
+          return exists[0].id;
+        }
+        const formData = readInspectionForm();
+        const floorName = (selectedFloor?.floor_name || formData.floor_name || $("inpFloorName").value || "").trim();
+        const siteName = (selectedSite?.site_name || formData.site_name || $("inpSiteName").value || "").trim();
+        const inspectedAtSource = selectedSite?.inspection_date || $("inpInspectedAt").value || "";
+        const inspectedAt = inspectedAtSource
+          ? new Date(`${inspectedAtSource}T00:00:00`).toISOString()
+          : null;
+        const payload = {
+          site_id: siteId,
+          floor_id: floorId,
+          floor_name: floorName || null,
+          site_name: siteName || null,
+          inspected_at: inspectedAt,
+          inspector_name: ($("inpInspectorName").value || "").trim() || null,
+          title: [siteName, floorName, "検査"].filter(Boolean).join(" ") || "無題の検査",
+          status: "draft",
+          inspection_mode: "floor",
+          settings: formData.settings || {},
+        };
+        const { data, error: insertErr } = await sb.from("inspections")
+          .insert(payload)
+          .select("id")
+          .single();
+        if(insertErr) throw insertErr;
+        currentInspectionId = data.id;
+        selectedInspectionId = data.id;
+        selectedCloudInspectionId = data.id;
+        return data.id;
+      }catch(e){
+        logFloorOpenError("ensureInspectionForFloor", e, siteId, floorId);
+        throw e;
       }
-      const payload = readInspectionForm();
-      const { data, error: insertErr } = await sb.from("inspections")
-        .insert(payload)
-        .select("id")
-        .single();
-      if(insertErr) throw insertErr;
-      currentInspectionId = data.id;
-      selectedInspectionId = data.id;
-      selectedCloudInspectionId = data.id;
-      return data.id;
     }
 
     async function saveCurrentFloorInspection(){
@@ -2546,7 +2596,7 @@
       if(!siteId || !floorId) return;
       const sb = getSupabase();
       const { data, error } = await sb.from("inspections")
-        .select("id, updated_at")
+        .select(INSPECTION_SELECT_COLUMNS)
         .eq("site_id", siteId)
         .eq("floor_id", floorId)
         .order("updated_at", { ascending: false })
@@ -6287,10 +6337,10 @@
       if(!btn) return;
       openInspectionSite(btn.dataset.id || "");
     });
-    $("floorList").addEventListener("click", (e)=>{
+    $("floorList").addEventListener("click", async (e)=>{
       const btn = e.target.closest('button[data-act="open-floor"]');
       if(!btn) return;
-      openFloor(btn.dataset.id || "");
+      await openFloor(btn.dataset.id || "");
     });
     $("vendorWorkList").addEventListener("click", async (e)=>{
       const completedBtn = e.target.closest('button[data-act="mark-completed"]');
