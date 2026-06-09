@@ -199,8 +199,83 @@
       font-weight:700;
       white-space:nowrap;
     }
-    .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+    .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
     .vendor-row:last-child{border-bottom:none}
+    .vendor-row-main{flex:1;min-width:0}
+    .vendor-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .vendor-photo-thumbs{display:flex;gap:12px;margin-top:10px;flex-wrap:wrap}
+    .vendor-photo-box{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#64748b}
+    .vendor-photo-label{font-weight:700;color:#334155}
+    .vendor-photo-thumb{
+      width:140px;
+      height:100px;
+      object-fit:cover;
+      border-radius:10px;
+      border:1px solid #e5e7eb;
+      background:#f8fafc;
+      cursor:pointer;
+      display:block;
+    }
+    .vendor-photo-empty{
+      width:140px;
+      height:100px;
+      border-radius:10px;
+      border:1px dashed #cbd5e1;
+      background:#f8fafc;
+      color:#94a3b8;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:12px;
+      padding:6px;
+      text-align:center;
+    }
+    .vendor-photo-error{color:#dc2626;border-style:solid;border-color:#fecaca;background:#fef2f2}
+    .photo-preview-overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(15, 23, 42, 0.78);
+      z-index:200000;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+    .photo-preview-modal{
+      position:relative;
+      max-width:92vw;
+      max-height:92vh;
+      background:#ffffff;
+      border-radius:16px;
+      padding:16px;
+      box-shadow:0 24px 80px rgba(15, 23, 42, 0.4);
+    }
+    .photo-preview-title{
+      font-weight:700;
+      margin-bottom:10px;
+      color:#0f172a;
+      padding-right:84px;
+    }
+    .photo-preview-img{
+      max-width:88vw;
+      max-height:78vh;
+      object-fit:contain;
+      display:block;
+      border-radius:10px;
+      background:#f8fafc;
+    }
+    .photo-preview-close{
+      position:absolute;
+      right:12px;
+      top:12px;
+      border:none;
+      background:#ef4444;
+      color:#ffffff;
+      border-radius:999px;
+      padding:8px 12px;
+      font-weight:700;
+      cursor:pointer;
+    }
     .floor-main-toolbar{
       margin-bottom:8px;
       padding:10px 12px;
@@ -1310,6 +1385,13 @@
     let currentFloorName = "";
     let selectedInspectionId = null;
     let selectedVendorWorkName = "";
+    let vendorWorkPhotoRowsCache = [];
+    let vendorWorkPhotoIndexByMarkerId = new Map();
+    let vendorWorkPhotoIndexByLocalMarkerId = new Map();
+    let vendorWorkPhotoCacheKey = "";
+    let vendorWorkPhotoLoadingPromise = null;
+    let activePhotoPreviewOverlay = null;
+    let photoPreviewEscapeHandler = null;
     let inspectionSitesCache = [];
     let floorsCache = [];
     let trashFloorsCache = [];
@@ -2545,6 +2627,7 @@
           .eq("inspection_id", currentInspectionId)
           .eq("floor_id", currentFloorId)
           .neq("status", "deleted")
+          .neq("status", "trash")
           .in("marker_id", markerIds);
         if(error){
           toast("【エラー】写真のクラウド読み込みに失敗しました。");
@@ -2558,6 +2641,7 @@
           .eq("inspection_id", currentInspectionId)
           .eq("floor_id", currentFloorId)
           .neq("status", "deleted")
+          .neq("status", "trash")
           .in("local_marker_id", localMarkerIds);
         if(error){
           toast("【エラー】写真のクラウド読み込みに失敗しました。");
@@ -4446,12 +4530,262 @@
       updateCurrentContextLabels();
     }
 
+    function normalizeVendorPhotoKind(value){
+      const kind = String(value || "").trim().toLowerCase();
+      return kind === "after" ? "after" : (kind === "before" ? "before" : "");
+    }
+
+    function getVendorWorkPhotoCacheKey(){
+      if(!currentInspectionId || !currentFloorId) return "";
+      return `${String(currentInspectionId)}:${String(currentFloorId)}`;
+    }
+
+    function indexVendorWorkPhotoRows(rows){
+      vendorWorkPhotoIndexByMarkerId = new Map();
+      vendorWorkPhotoIndexByLocalMarkerId = new Map();
+      (Array.isArray(rows) ? rows : []).forEach(row=>{
+        const markerId = String(row?.marker_id || "").trim();
+        const localMarkerId = String(row?.local_marker_id || "").trim();
+        if(markerId){
+          if(!vendorWorkPhotoIndexByMarkerId.has(markerId)) vendorWorkPhotoIndexByMarkerId.set(markerId, []);
+          vendorWorkPhotoIndexByMarkerId.get(markerId).push(row);
+        }
+        if(localMarkerId){
+          if(!vendorWorkPhotoIndexByLocalMarkerId.has(localMarkerId)) vendorWorkPhotoIndexByLocalMarkerId.set(localMarkerId, []);
+          vendorWorkPhotoIndexByLocalMarkerId.get(localMarkerId).push(row);
+        }
+      });
+    }
+
+    function resolveMarkerPhotoUrlCandidate(value){
+      if(!value) return "";
+      if(typeof value === "string"){
+        return value.trim();
+      }
+      if(typeof value !== "object"){
+        return "";
+      }
+      const direct = String(value.public_url || value.publicUrl || value.url || "").trim();
+      if(direct) return direct;
+      const storagePath = String(value.storage_path || value.storagePath || "").trim();
+      if(storagePath && isSupabaseConfigured() && isSupabaseSdkReady()){
+        try{
+          const sb = getSupabase();
+          const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(storagePath);
+          return String(pub?.data?.publicUrl || "").trim();
+        }catch(_){
+          return "";
+        }
+      }
+      return "";
+    }
+
+    function collectVendorPhotoRowsForMarker(marker){
+      const markerId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || marker?.marker_id || "").trim();
+      const localMarkerId = String(marker?.local_marker_id || marker?.id || "").trim();
+      const rows = [];
+      if(markerId && vendorWorkPhotoIndexByMarkerId.has(markerId)){
+        rows.push(...vendorWorkPhotoIndexByMarkerId.get(markerId));
+      }
+      if(localMarkerId && vendorWorkPhotoIndexByLocalMarkerId.has(localMarkerId)){
+        rows.push(...vendorWorkPhotoIndexByLocalMarkerId.get(localMarkerId));
+      }
+      const uniqueRows = [];
+      const seen = new Set();
+      rows.forEach(row=>{
+        const key = row?.id
+          ? `id:${row.id}`
+          : `${row?.marker_id || ""}:${row?.local_marker_id || ""}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || row?.public_url || ""}`;
+        if(seen.has(key)) return;
+        seen.add(key);
+        uniqueRows.push(row);
+      });
+      return uniqueRows;
+    }
+
+    async function ensureVendorWorkPhotoCache(forceReload = false){
+      const cacheKey = getVendorWorkPhotoCacheKey();
+      if(!cacheKey){
+        vendorWorkPhotoRowsCache = [];
+        vendorWorkPhotoCacheKey = "";
+        indexVendorWorkPhotoRows([]);
+        return [];
+      }
+      if(!forceReload && vendorWorkPhotoCacheKey === cacheKey){
+        return vendorWorkPhotoRowsCache;
+      }
+      if(!forceReload && vendorWorkPhotoLoadingPromise){
+        return vendorWorkPhotoLoadingPromise;
+      }
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+        vendorWorkPhotoRowsCache = [];
+        vendorWorkPhotoCacheKey = cacheKey;
+        indexVendorWorkPhotoRows([]);
+        return [];
+      }
+      const sb = getSupabase();
+      vendorWorkPhotoLoadingPromise = (async ()=>{
+        try{
+          const { data, error } = await sb.from("marker_photos")
+            .select("id,marker_id,local_marker_id,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+            .eq("inspection_id", currentInspectionId)
+            .eq("floor_id", currentFloorId)
+            .neq("status", "deleted")
+            .neq("status", "trash")
+            .order("display_order", { ascending: true });
+          if(error) throw error;
+          vendorWorkPhotoRowsCache = (data || []).map(row=>{
+            const next = { ...row };
+            if(!next.public_url && next.storage_path){
+              const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(next.storage_path);
+              next.public_url = String(pub?.data?.publicUrl || "").trim();
+            }
+            return next;
+          });
+          vendorWorkPhotoCacheKey = cacheKey;
+          indexVendorWorkPhotoRows(vendorWorkPhotoRowsCache);
+          return vendorWorkPhotoRowsCache;
+        }catch(error){
+          console.warn("業者別確認用の写真取得に失敗", error);
+          vendorWorkPhotoRowsCache = [];
+          vendorWorkPhotoCacheKey = cacheKey;
+          indexVendorWorkPhotoRows([]);
+          return [];
+        }finally{
+          vendorWorkPhotoLoadingPromise = null;
+        }
+      })();
+      return vendorWorkPhotoLoadingPromise;
+    }
+
+    function getMarkerPhotosForVendorView(marker){
+      const out = { before: null, after: null };
+      const setPhoto = (kind, value)=>{
+        if(out[kind]) return;
+        const resolved = resolveMarkerPhotoUrlCandidate(value);
+        if(resolved) out[kind] = resolved;
+      };
+      setPhoto("before", marker?.beforePhoto);
+      setPhoto("after", marker?.afterPhoto);
+      setPhoto("before", marker?.photos?.before);
+      setPhoto("after", marker?.photos?.after);
+      setPhoto("before", marker?.beforePhotoUrl);
+      setPhoto("after", marker?.afterPhotoUrl);
+      setPhoto("before", marker?.before_photo_url);
+      setPhoto("after", marker?.after_photo_url);
+      setPhoto("before", marker?.photo_before_url);
+      setPhoto("after", marker?.photo_after_url);
+      setPhoto("before", marker?.marker_data?.beforePhoto);
+      setPhoto("after", marker?.marker_data?.afterPhoto);
+      setPhoto("before", marker?.marker_data?.beforePhotoUrl);
+      setPhoto("after", marker?.marker_data?.afterPhotoUrl);
+      setPhoto("before", marker?.marker_data?.before_photo_url);
+      setPhoto("after", marker?.marker_data?.after_photo_url);
+      setPhoto("before", marker?.marker_data?.photo_before_url);
+      setPhoto("after", marker?.marker_data?.photo_after_url);
+      const photoRows = collectVendorPhotoRowsForMarker(marker);
+      photoRows.forEach(row=>{
+        const kind = normalizeVendorPhotoKind(row?.kind || row?.photo_type);
+        if(!kind) return;
+        if(kind === "before" && out.before) return;
+        if(kind === "after" && out.after) return;
+        const resolved = resolveMarkerPhotoUrlCandidate({
+          public_url: row?.public_url || "",
+          storage_path: row?.storage_path || null,
+        });
+        if(resolved){
+          out[kind] = resolved;
+        }
+      });
+      return out;
+    }
+
+    function makeVendorPhotoSlotHtml(url, label){
+      if(url){
+        return `<img class="vendor-photo-thumb" src="${escapeHtml(url)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(url)}" data-photo-label="${escapeHtml(label)}" />`;
+      }
+      return `<div class="vendor-photo-empty">写真なし</div>`;
+    }
+
+    function markVendorPhotoLoadFailed(imgEl){
+      if(!(imgEl instanceof HTMLElement)) return;
+      const fallback = document.createElement("div");
+      fallback.className = "vendor-photo-empty vendor-photo-error";
+      fallback.textContent = "写真を読み込めません";
+      imgEl.replaceWith(fallback);
+    }
+
+    function closePhotoPreview(){
+      if(activePhotoPreviewOverlay){
+        activePhotoPreviewOverlay.remove();
+        activePhotoPreviewOverlay = null;
+      }
+      if(photoPreviewEscapeHandler){
+        document.removeEventListener("keydown", photoPreviewEscapeHandler);
+        photoPreviewEscapeHandler = null;
+      }
+    }
+
+    function openPhotoPreview(url, label){
+      closePhotoPreview();
+      const resolvedUrl = String(url || "").trim();
+      if(!resolvedUrl) return;
+      const overlay = document.createElement("div");
+      overlay.className = "photo-preview-overlay";
+      overlay.innerHTML = `
+        <div class="photo-preview-modal" role="dialog" aria-modal="true">
+          <button type="button" class="photo-preview-close">閉じる</button>
+          <div class="photo-preview-title">${escapeHtml(label || "写真")}</div>
+          <img class="photo-preview-img" alt="${escapeHtml(label || "写真")}" src="${escapeHtml(resolvedUrl)}" referrerpolicy="no-referrer" />
+        </div>
+      `;
+      overlay.addEventListener("click", (event)=>{
+        if(event.target === overlay){
+          closePhotoPreview();
+        }
+      });
+      const closeBtn = overlay.querySelector(".photo-preview-close");
+      if(closeBtn){
+        closeBtn.addEventListener("click", closePhotoPreview);
+      }
+      const img = overlay.querySelector(".photo-preview-img");
+      if(img){
+        img.onerror = ()=>{
+          const modal = overlay.querySelector(".photo-preview-modal");
+          if(modal){
+            const fail = document.createElement("div");
+            fail.className = "vendor-photo-empty vendor-photo-error";
+            fail.style.width = "min(420px, 80vw)";
+            fail.style.height = "min(240px, 36vh)";
+            fail.textContent = "写真を読み込めません";
+            img.replaceWith(fail);
+          }
+        };
+      }
+      photoPreviewEscapeHandler = (event)=>{
+        if(event.key === "Escape"){
+          closePhotoPreview();
+        }
+      };
+      document.addEventListener("keydown", photoPreviewEscapeHandler);
+      document.body.appendChild(overlay);
+      activePhotoPreviewOverlay = overlay;
+    }
+
     function renderVendorWorkList(){
       const list = $("vendorWorkList");
       const vendorSelect = $("vendorWorkVendor");
       const vendorName = selectedVendorWorkName || vendorSelect.value || "";
       const statusFilter = $("vendorWorkStatusFilter")?.value || "open";
       list.innerHTML = "";
+      const cacheKey = getVendorWorkPhotoCacheKey();
+      if(cacheKey && vendorWorkPhotoCacheKey !== cacheKey){
+        ensureVendorWorkPhotoCache().then(()=>{
+          if(currentView === "vendor_work"){
+            renderVendorWorkList();
+          }
+        }).catch(()=>{});
+      }
       const markerRows = getCurrentFloorMarkerEntries().flatMap(([key, arr])=>
         (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
       );
@@ -4467,25 +4801,42 @@
         row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "");
         const statusText = getMarkerStatusLabel(markerStatus);
         const canComplete = markerStatus !== "completed";
+        const photos = getMarkerPhotosForVendorView(marker);
         row.innerHTML = `
-          <div>
+          <div class="vendor-row-main">
             <div><strong>${idx + 1}. ${escapeHtml(marker.type || "種別未設定")}</strong></div>
             <div class="small">${escapeHtml(marker.memo || "メモなし")} / ${escapeHtml(statusText)}</div>
+            <div class="vendor-photo-thumbs">
+              <div class="vendor-photo-box">
+                <div class="vendor-photo-label">Before</div>
+                ${makeVendorPhotoSlotHtml(photos.before, "Before")}
+              </div>
+              <div class="vendor-photo-box">
+                <div class="vendor-photo-label">After</div>
+                ${makeVendorPhotoSlotHtml(photos.after, "After")}
+              </div>
+            </div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <div class="vendor-row-actions">
             <button class="btn" type="button" data-act="goto-marker" data-marker-id="${escapeHtml(String(marker.id))}" data-marker-key="${escapeHtml(markerKey)}">図面で見る</button>
             <button class="btn ok" type="button" data-act="mark-completed" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "" : "disabled"}>完了にする</button>
             <button class="btn" type="button" data-act="mark-open" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "disabled" : ""}>未対応に戻す</button>
           </div>
         `;
+        row.querySelectorAll("img.vendor-photo-thumb").forEach(img=>{
+          img.onerror = ()=>{ markVendorPhotoLoadFailed(img); };
+        });
         list.appendChild(row);
       });
     }
 
-    function openVendorWorkView(vendorName){
+    async function openVendorWorkView(vendorName){
       selectedVendorWorkName = vendorName || $("vendorSelect").value || "";
       const vendorSelect = $("vendorWorkVendor");
-      vendorSelect.value = selectedVendorWorkName;
+      if(vendorSelect){
+        vendorSelect.value = selectedVendorWorkName;
+      }
+      await ensureVendorWorkPhotoCache();
       showView("vendor_work");
     }
 
@@ -9026,7 +9377,14 @@
       }
     });
     $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
-    $("btnOpenVendorWork").addEventListener("click", ()=>{ openVendorWorkView($("vendorSelect").value || ""); });
+    $("btnOpenVendorWork").addEventListener("click", async ()=>{
+      try{
+        await openVendorWorkView($("vendorSelect").value || "");
+      }catch(error){
+        console.error("業者別確認画面の表示に失敗", error);
+        showView("vendor_work");
+      }
+    });
     $("btnBackToFloorInspection").addEventListener("click", ()=>{ showView("floor_inspection"); });
     $("vendorWorkVendor").addEventListener("change", (e)=>{
       selectedVendorWorkName = e.target.value || "";
@@ -9066,6 +9424,11 @@
       }
     });
     $("vendorWorkList").addEventListener("click", async (e)=>{
+      const photoBtn = e.target.closest('[data-act="open-photo-preview"]');
+      if(photoBtn){
+        openPhotoPreview(photoBtn.dataset.photoUrl || "", photoBtn.dataset.photoLabel || "写真");
+        return;
+      }
       const completedBtn = e.target.closest('button[data-act="mark-completed"]');
       if(completedBtn){
         const markerId = completedBtn.dataset.markerId || "";
