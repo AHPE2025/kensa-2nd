@@ -4959,7 +4959,9 @@
 
     function closeQuickMarkerEditor(options = {}){
       const state = quickEditorState;
-      if(state && state.isNew && !options.keepDraft){
+      // 新規マーカーは「明示キャンセル時のみ」破棄する。
+      // クリックアウトやモード切替で消えると、追加できていないように見えるため。
+      if(state && state.isNew && options.discardNew === true){
         deleteMarkerById(state.markerId, { skipCloseEditor: true });
       }
       quickEditorState = null;
@@ -6039,7 +6041,7 @@
     });
     $("quickMarkerSave").addEventListener("click", ()=>{ saveQuickMarkerEditor(); });
     $("quickMarkerCancel").addEventListener("click", ()=>{
-      closeQuickMarkerEditor({ keepDraft: false });
+      closeQuickMarkerEditor({ discardNew: true });
     });
     $("quickMarkerDelete").addEventListener("click", ()=>{
       if(!quickEditorState) return;
@@ -6052,7 +6054,7 @@
       }
       if(e.key === "Escape"){
         e.preventDefault();
-        closeQuickMarkerEditor({ keepDraft: false });
+        closeQuickMarkerEditor({ discardNew: true });
       }
     });
     $("btnInputModePin").addEventListener("click", ()=>{ setInputMode("pin"); });
