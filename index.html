@@ -1972,6 +1972,9 @@
             afterPhotoDelete: false,
             beforePhotoDeletePath: null,
             afterPhotoDeletePath: null,
+            markerKey: key,
+            page_number: Number(row.page_number || 1) || 1,
+            drawing_id: row.drawing_id || null,
           });
         });
         normalizeMarkersByKey(mbk);
@@ -2726,10 +2729,14 @@
     function attachLoadedPhotosToMarkers(photoRows, markerRows){
       const markerMapByCloudId = new Map();
       const markerMapByLocalId = new Map();
+      const markerMapByMarkerKey = new Map();
+      const markerMapByPageLocal = new Map();
       (photoRows || []).forEach(row=>{
         const markerId = String(row.marker_id || "");
         const localMarkerId = String(row.local_marker_id || "");
         const normalizedKind = String(row.kind || row.photo_type || "").toLowerCase();
+        const markerKey = String(row?.marker_data?.markerKey || row?.marker_key || "");
+        const pageNumber = Number(row.page_number || 0);
         const info = {
           storage_path: row.storage_path || null,
           public_url: row.public_url || "",
@@ -2746,6 +2753,15 @@
         if(localMarkerId && !markerMapByLocalId.has(localMarkerId)){
           markerMapByLocalId.set(localMarkerId, { beforePhoto: null, afterPhoto: null });
         }
+        if(markerKey && !markerMapByMarkerKey.has(markerKey)){
+          markerMapByMarkerKey.set(markerKey, { beforePhoto: null, afterPhoto: null });
+        }
+        if(localMarkerId && pageNumber > 0){
+          const pageLocalKey = `${pageNumber}:${localMarkerId}`;
+          if(!markerMapByPageLocal.has(pageLocalKey)){
+            markerMapByPageLocal.set(pageLocalKey, { beforePhoto: null, afterPhoto: null });
+          }
+        }
         const writeTarget = normalizedKind === "after" ? "afterPhoto" : (normalizedKind === "before" ? "beforePhoto" : null);
         if(!writeTarget) return;
         if(markerId && markerMapByCloudId.has(markerId)){
@@ -2754,15 +2770,37 @@
         if(localMarkerId && markerMapByLocalId.has(localMarkerId)){
           markerMapByLocalId.get(localMarkerId)[writeTarget] = info;
         }
+        if(markerKey && markerMapByMarkerKey.has(markerKey)){
+          markerMapByMarkerKey.get(markerKey)[writeTarget] = info;
+        }
+        if(localMarkerId && pageNumber > 0){
+          const pageLocalKey = `${pageNumber}:${localMarkerId}`;
+          if(markerMapByPageLocal.has(pageLocalKey)){
+            markerMapByPageLocal.get(pageLocalKey)[writeTarget] = info;
+          }
+        }
       });
 
       (markerRows || []).forEach(marker=>{
         const markerId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || "");
         const localMarkerId = String(marker?.local_marker_id || marker?.id || "");
+        const markerKey = String(marker?.markerKey || marker?.marker_data?.markerKey || "");
+        const pageNumber = Number(marker?.page_number || 0);
         const localHit = markerMapByLocalId.get(localMarkerId);
         const cloudHit = markerMapByCloudId.get(markerId);
-        marker.beforePhoto = clonePhotoInfo(cloudHit?.beforePhoto || localHit?.beforePhoto);
-        marker.afterPhoto = clonePhotoInfo(cloudHit?.afterPhoto || localHit?.afterPhoto);
+        const keyHit = markerMapByMarkerKey.get(markerKey);
+        const pageLocalHit = (localMarkerId && pageNumber > 0)
+          ? markerMapByPageLocal.get(`${pageNumber}:${localMarkerId}`)
+          : null;
+        marker.beforePhoto = clonePhotoInfo(cloudHit?.beforePhoto || localHit?.beforePhoto || keyHit?.beforePhoto || pageLocalHit?.beforePhoto);
+        marker.afterPhoto = clonePhotoInfo(cloudHit?.afterPhoto || localHit?.afterPhoto || keyHit?.afterPhoto || pageLocalHit?.afterPhoto);
+        marker.beforePhotoUrl = marker.beforePhoto?.public_url || marker.beforePhotoUrl || "";
+        marker.afterPhotoUrl = marker.afterPhoto?.public_url || marker.afterPhotoUrl || "";
+        marker.photos = {
+          ...(marker.photos && typeof marker.photos === "object" ? marker.photos : {}),
+          before: marker.beforePhoto?.public_url || marker.photos?.before || "",
+          after: marker.afterPhoto?.public_url || marker.photos?.after || "",
+        };
         marker.beforePhotoFile = null;
         marker.afterPhotoFile = null;
         marker.beforePhotoDelete = false;
@@ -2847,7 +2885,7 @@
         try{
           const localMarkers = Object.entries(store.markersByKey || {})
             .filter(([key])=>keyMatchesFloor(key, currentFloorId))
-            .flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
+            .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>({ ...marker, markerKey: key })) : []);
           const photoRows = await loadMarkerPhotosFromCloud(localMarkers);
           attachLoadedPhotosToMarkers(photoRows, localMarkers);
         }catch(e){
@@ -3940,7 +3978,7 @@
       });
       if(!ok) return false;
       pushUndoSnapshot("PDF復元");
-      await restorePdfDrawingFromTrash(row.id, { targetPage: 1 });
+      const restoreResult = await restorePdfDrawingFromTrash(row.id, { targetPage: 1 });
       redrawBackground();
       redrawOverlay();
       redrawList();
@@ -3949,7 +3987,11 @@
       syncSelectorsFromSelectedMarker();
       markDirty("pdf restored");
       updateUndoRedoButtons();
-      toast("PDFを復元しました");
+      if(restoreResult?.markerRestoreError){
+        toast("PDFは復元しましたが、指摘データの復元に失敗しました。再読み込みしてください。");
+      }else{
+        toast("PDFを復元しました");
+      }
       return true;
     }
 
@@ -9722,6 +9764,255 @@
       return lowered;
     }
 
+    function normalizeRestoreStatusFromPrevious(previousStatus, fallback = "active"){
+      const prev = String(previousStatus || "").toLowerCase();
+      if(!prev || prev === "trash" || prev === "deleted" || prev === "active") return fallback;
+      return prev;
+    }
+
+    function buildDrawingRestoreScopeOrClause(drawingId, pageNumbers){
+      const normalizedDrawingId = String(drawingId || "");
+      if(!normalizedDrawingId) return "";
+      const clauses = [`drawing_id.eq.${normalizedDrawingId}`];
+      const normalizedPages = [...new Set((pageNumbers || [])
+        .map(v=>Number(v))
+        .filter(v=>Number.isFinite(v) && v > 0)
+      )];
+      if(normalizedPages.length > 0){
+        clauses.push(`and(drawing_id.is.null,page_number.in.(${normalizedPages.join(",")}))`);
+      }
+      return clauses.join(",");
+    }
+
+    async function restoreMarkersForDrawing(sb, scope){
+      let query = sb.from("markers")
+        .select("id,status,previous_status,marker_data,drawing_id,page_number")
+        .eq("floor_id", scope.floorId)
+        .neq("status", "deleted");
+      if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
+      if(scope.siteId) query = query.eq("site_id", scope.siteId);
+      const restoreClause = buildDrawingRestoreScopeOrClause(scope.drawingId, scope.pageNumbers);
+      if(restoreClause) query = query.or(restoreClause);
+      const { data: markerRows, error: markerReadErr } = await query;
+      if(markerReadErr) throw markerReadErr;
+      let restoredCount = 0;
+      for(const marker of (markerRows || [])){
+        if(!isTrashStatus(marker?.status)) continue;
+        const fromData = marker?.marker_data && typeof marker.marker_data === "object"
+          ? String(marker.marker_data.previous_status || "")
+          : "";
+        const prev = String(marker?.previous_status || fromData || "").toLowerCase();
+        const restoredStatus = prev === "completed" ? "completed" : "open";
+        const markerData = (marker?.marker_data && typeof marker.marker_data === "object" && !Array.isArray(marker.marker_data))
+          ? { ...marker.marker_data }
+          : null;
+        if(markerData && Object.prototype.hasOwnProperty.call(markerData, "previous_status")){
+          delete markerData.previous_status;
+        }
+        const candidates = [
+          { status: restoredStatus, previous_status: null, marker_data: markerData, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, marker_data: markerData, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, updated_at: scope.now },
+        ];
+        let updated = false;
+        let lastError = null;
+        for(const payload of candidates){
+          const { error } = await sb.from("markers").update(payload).eq("id", marker.id);
+          if(!error){
+            updated = true;
+            restoredCount += 1;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!updated && lastError) throw lastError;
+      }
+      return restoredCount;
+    }
+
+    async function restoreTextNotesForDrawing(sb, scope){
+      let query = sb.from("drawing_text_notes")
+        .select("id,status,previous_status,drawing_id,page_number")
+        .eq("floor_id", scope.floorId)
+        .neq("status", "deleted");
+      if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
+      if(scope.siteId) query = query.eq("site_id", scope.siteId);
+      const restoreClause = buildDrawingRestoreScopeOrClause(scope.drawingId, scope.pageNumbers);
+      if(restoreClause) query = query.or(restoreClause);
+      const { data: rows, error: readErr } = await query;
+      if(readErr) throw readErr;
+      let restoredCount = 0;
+      for(const row of (rows || [])){
+        if(!isTrashStatus(row?.status)) continue;
+        const restoredStatus = normalizeRestoreStatusFromPrevious(row?.previous_status, "active");
+        const candidates = [
+          { status: restoredStatus, previous_status: null, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, updated_at: scope.now },
+        ];
+        let updated = false;
+        let lastError = null;
+        for(const payload of candidates){
+          const { error } = await sb.from("drawing_text_notes").update(payload).eq("id", row.id);
+          if(!error){
+            updated = true;
+            restoredCount += 1;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!updated && lastError) throw lastError;
+      }
+      return restoredCount;
+    }
+
+    async function restoreMarkerPhotosForDrawing(sb, scope){
+      let query = sb.from("marker_photos")
+        .select("id,status,previous_status,drawing_id,page_number,local_marker_id,marker_id")
+        .eq("floor_id", scope.floorId)
+        .neq("status", "deleted");
+      if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
+      if(scope.siteId) query = query.eq("site_id", scope.siteId);
+      const restoreClause = buildDrawingRestoreScopeOrClause(scope.drawingId, scope.pageNumbers);
+      if(restoreClause) query = query.or(restoreClause);
+      const { data: rows, error: readErr } = await query;
+      if(readErr) throw readErr;
+      let restoredCount = 0;
+      for(const row of (rows || [])){
+        if(!isTrashStatus(row?.status)) continue;
+        const restoredStatus = normalizeRestoreStatusFromPrevious(row?.previous_status, "active");
+        const candidates = [
+          { status: restoredStatus, previous_status: null, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, deleted_at: null, updated_at: scope.now },
+          { status: restoredStatus, updated_at: scope.now },
+        ];
+        let updated = false;
+        let lastError = null;
+        for(const payload of candidates){
+          const { error } = await sb.from("marker_photos").update(payload).eq("id", row.id);
+          if(!error){
+            updated = true;
+            restoredCount += 1;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!updated && lastError) throw lastError;
+      }
+      return restoredCount;
+    }
+
+    async function loadMarkerRowsForRestoredDrawing(sb, scope){
+      let query = sb.from("markers")
+        .select("*")
+        .eq("floor_id", scope.floorId)
+        .neq("status", "deleted")
+        .order("sort_order", { ascending: true });
+      if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
+      if(scope.siteId) query = query.eq("site_id", scope.siteId);
+      const restoreClause = buildDrawingRestoreScopeOrClause(scope.drawingId, scope.pageNumbers);
+      if(restoreClause) query = query.or(restoreClause);
+      const { data, error } = await query;
+      if(error) throw error;
+      return (data || []).map(row=>{
+        if(!row?.drawing_id && Number(row?.page_number || 0) > 0){
+          return { ...row, drawing_id: scope.drawingId };
+        }
+        return row;
+      });
+    }
+
+    async function loadTextNoteRowsForRestoredDrawing(sb, scope){
+      let query = sb.from("drawing_text_notes")
+        .select("*")
+        .eq("floor_id", scope.floorId)
+        .neq("status", "deleted")
+        .order("display_order", { ascending: true });
+      if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
+      if(scope.siteId) query = query.eq("site_id", scope.siteId);
+      const restoreClause = buildDrawingRestoreScopeOrClause(scope.drawingId, scope.pageNumbers);
+      if(restoreClause) query = query.or(restoreClause);
+      const { data, error } = await query;
+      if(error) throw error;
+      return (data || []).map(row=>{
+        if(!row?.drawing_id && Number(row?.page_number || 0) > 0){
+          return { ...row, drawing_id: scope.drawingId };
+        }
+        return row;
+      });
+    }
+
+    async function loadMarkerPhotoRowsForRestoredDrawing(sb, scope, markerRows){
+      const markerIds = [...new Set(
+        (markerRows || [])
+          .map(row=>row?.id)
+          .filter(Boolean)
+          .map(String)
+      )];
+      const localMarkerIds = [...new Set(
+        (markerRows || [])
+          .map(row=>row?.local_marker_id)
+          .filter(Boolean)
+          .map(String)
+      )];
+      const rows = [];
+      if(markerIds.length > 0){
+        let byCloudQuery = sb.from("marker_photos")
+          .select("id,marker_id,local_marker_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+          .eq("floor_id", scope.floorId)
+          .neq("status", "deleted")
+          .in("marker_id", markerIds);
+        if(scope.inspectionId) byCloudQuery = byCloudQuery.eq("inspection_id", scope.inspectionId);
+        if(scope.siteId) byCloudQuery = byCloudQuery.eq("site_id", scope.siteId);
+        const { data, error } = await byCloudQuery;
+        if(error) throw error;
+        rows.push(...(data || []));
+      }
+      if(localMarkerIds.length > 0){
+        let byLocalQuery = sb.from("marker_photos")
+          .select("id,marker_id,local_marker_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+          .eq("floor_id", scope.floorId)
+          .neq("status", "deleted")
+          .in("local_marker_id", localMarkerIds);
+        if(scope.inspectionId) byLocalQuery = byLocalQuery.eq("inspection_id", scope.inspectionId);
+        if(scope.siteId) byLocalQuery = byLocalQuery.eq("site_id", scope.siteId);
+        const { data, error } = await byLocalQuery;
+        if(error) throw error;
+        rows.push(...(data || []));
+      }
+      const dedupMap = new Map();
+      rows.forEach(row=>{
+        const key = row?.id
+          ? `id:${row.id}`
+          : `${row?.marker_id || "no_marker"}:${row?.local_marker_id || "no_local"}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || ""}`;
+        if(!dedupMap.has(key)) dedupMap.set(key, row);
+      });
+      const uniqueRows = [...dedupMap.values()];
+      const hydrated = [];
+      for(const row of uniqueRows){
+        const next = { ...row };
+        if(next?.drawing_id == null && Number(next?.page_number || 0) > 0){
+          next.drawing_id = scope.drawingId;
+        }
+        if(next.storage_path){
+          try{
+            const dlRes = await sb.storage.from(MARKER_PHOTO_BUCKET).download(next.storage_path);
+            if(!dlRes.error && dlRes.data){
+              next.public_url = URL.createObjectURL(dlRes.data);
+            }
+          }catch(photoErr){
+            console.warn("[pdf restore] photo download skipped", photoErr);
+          }
+        }
+        hydrated.push(next);
+      }
+      return hydrated;
+    }
+
     async function movePdfDrawingToTrash(drawingId, options = {}){
       if(!drawingId) return false;
       if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return true;
@@ -9774,12 +10065,12 @@
     }
 
     async function restorePdfDrawingFromTrash(drawingId, options = {}){
-      if(!drawingId) return false;
-      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return false;
+      if(!drawingId) return { ok: false, markerRestoreError: false };
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return { ok: false, markerRestoreError: false };
       const sb = getSupabase();
       const now = new Date().toISOString();
       const { data: drawingRow, error: readErr } = await sb.from("drawings")
-        .select("id,status,previous_status,inspection_id")
+        .select("id,status,previous_status,inspection_id,floor_id,site_id,page_count")
         .eq("id", drawingId)
         .single();
       if(readErr) throw readErr;
@@ -9795,7 +10086,7 @@
       if(drawingErr) throw drawingErr;
 
       const { data: pageRows, error: pageReadErr } = await sb.from("drawing_pages")
-        .select("id,status,previous_status")
+        .select("id,status,previous_status,page_number")
         .eq("drawing_id", drawingId);
       if(pageReadErr){
         logPdfDeleteError("restorePdfDrawingFromTrash.pages.select", pageReadErr, { drawingId });
@@ -9813,6 +10104,45 @@
           if(pageErr) throw pageErr;
         }
       }
+      const pageNumbers = [...new Set((pageRows || [])
+        .map(page=>Number(page?.page_number || 0))
+        .filter(v=>Number.isFinite(v) && v > 0)
+      )];
+      const restoreScope = {
+        drawingId,
+        floorId: drawingRow?.floor_id || currentFloorId || selectedFloorId || null,
+        inspectionId: currentInspectionId || drawingRow?.inspection_id || null,
+        siteId: (typeof currentSiteId !== "undefined" ? currentSiteId : null) || drawingRow?.site_id || selectedSiteId || null,
+        pageNumbers,
+        now,
+      };
+      let markerRestoreError = null;
+      let markersRestored = 0;
+      let textNotesRestored = 0;
+      let photosRestored = 0;
+      if(restoreScope.floorId){
+        try{
+          markersRestored = await restoreMarkersForDrawing(sb, restoreScope);
+        }catch(err){
+          markerRestoreError = err;
+          logPdfDeleteError("restorePdfDrawingFromTrash.markers.restore", err, { drawingId });
+        }
+        try{
+          textNotesRestored = await restoreTextNotesForDrawing(sb, restoreScope);
+        }catch(err){
+          logPdfDeleteError("restorePdfDrawingFromTrash.textNotes.restore", err, { drawingId });
+        }
+        try{
+          photosRestored = await restoreMarkerPhotosForDrawing(sb, restoreScope);
+        }catch(err){
+          logPdfDeleteError("restorePdfDrawingFromTrash.photos.restore", err, { drawingId });
+        }
+      }
+      console.log("[pdf restore] drawing restored", drawingId);
+      console.log("[pdf restore] pages restored", Array.isArray(pageRows) ? pageRows.length : 0);
+      console.log("[pdf restore] markers restored", markersRestored);
+      console.log("[pdf restore] text notes restored", textNotesRestored);
+      console.log("[pdf restore] photos restored", photosRestored);
       const restoreInspectionId = currentInspectionId || drawingRow?.inspection_id || null;
       if(restoreInspectionId){
         const targetPage = Number(options.targetPage || 1) || 1;
@@ -9824,9 +10154,90 @@
         }
       }
       if(!options.skipReload){
-        await loadPdfFromSupabaseDrawing(drawingId, Number(options.targetPage || 1) || 1);
+        const targetPage = Number(options.targetPage || 1) || 1;
+        await loadPdfFromSupabaseDrawing(drawingId, targetPage);
+        if(restoreScope.floorId) currentFloorId = restoreScope.floorId;
+        if(restoreScope.inspectionId) currentInspectionId = restoreScope.inspectionId;
+        if(restoreScope.siteId && typeof currentSiteId !== "undefined") currentSiteId = restoreScope.siteId;
+        let markerRows = [];
+        let textNoteRows = [];
+        let photoRows = [];
+        try{
+          markerRows = await loadMarkerRowsForRestoredDrawing(sb, restoreScope);
+        }catch(err){
+          markerRestoreError = markerRestoreError || err;
+          logPdfDeleteError("restorePdfDrawingFromTrash.markers.reload", err, { drawingId });
+        }
+        try{
+          textNoteRows = await loadTextNoteRowsForRestoredDrawing(sb, restoreScope);
+        }catch(err){
+          logPdfDeleteError("restorePdfDrawingFromTrash.textNotes.reload", err, { drawingId });
+        }
+        if(!store.markersByKey || typeof store.markersByKey !== "object") store.markersByKey = {};
+        if(!store.textNotesByKey || typeof store.textNotesByKey !== "object") store.textNotesByKey = {};
+        collectPdfScopedKeys(store.markersByKey, drawingId).forEach(key=>{ delete store.markersByKey[key]; });
+        collectPdfScopedKeys(store.textNotesByKey, drawingId).forEach(key=>{ delete store.textNotesByKey[key]; });
+
+        const restoredMarkersByKey = markerRowsToMarkersByKey(markerRows, null);
+        Object.assign(store.markersByKey, restoredMarkersByKey);
+        normalizeAllMarkersInStore();
+
+        const restoredTextNotesByKey = {};
+        (textNoteRows || []).forEach(row=>{
+          const key = textNoteKeyFromRow(row);
+          if(!restoredTextNotesByKey[key]) restoredTextNotesByKey[key] = [];
+          restoredTextNotesByKey[key].push(normalizeTextNote({
+            id: row.id || null,
+            local_text_id: row.local_text_id,
+            x: row.x,
+            y: row.y,
+            width: row.width,
+            height: row.height,
+            text_content: row.text_content,
+            note_type: row.note_type,
+            font_size: row.font_size,
+            font_weight: row.font_weight,
+            text_color: row.text_color,
+            background_color: row.background_color,
+            border_color: row.border_color,
+            opacity: row.opacity,
+            rotation: row.rotation,
+            display_order: row.display_order,
+            status: row.status || "active",
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+          }));
+        });
+        Object.assign(store.textNotesByKey, restoredTextNotesByKey);
+        normalizeTextNotesByKey(store.textNotesByKey);
+
+        try{
+          photoRows = await loadMarkerPhotoRowsForRestoredDrawing(sb, restoreScope, markerRows);
+        }catch(err){
+          logPdfDeleteError("restorePdfDrawingFromTrash.photos.reload", err, { drawingId });
+        }
+        const localMarkers = Object.entries(store.markersByKey || {})
+          .filter(([key])=>keyMatchesFloor(key, restoreScope.floorId))
+          .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>({ ...marker, markerKey: key })) : []);
+        attachLoadedPhotosToMarkers(photoRows, localMarkers);
+        const currentKey = activeKey();
+        if(!Array.isArray(store.markersByKey[currentKey])) store.markersByKey[currentKey] = [];
+        if(!Array.isArray(store.textNotesByKey[currentKey])) store.textNotesByKey[currentKey] = [];
+        console.log("[pdf restore] activeKey", activeKey());
+        saveStore();
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+        updatePageInfo();
+        syncButtons();
+        syncSelectorsFromSelectedMarker();
+        if(typeof renderFloorSummary === "function"){
+          renderFloorSummary();
+        }else{
+          await refreshFloorList();
+        }
       }
-      return true;
+      return { ok: true, markerRestoreError: !!markerRestoreError };
     }
 
     async function hardDeletePdfDrawing(drawing, options = {}){
