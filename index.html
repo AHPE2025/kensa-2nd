@@ -53,6 +53,20 @@
     .sel{outline:2px solid var(--brand);outline-offset:-2px}
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;background:#f9fafb;border:1px solid var(--line);padding:2px 6px;border-radius:8px;color:#111827}
     .small{font-size:12px;color:var(--muted)}
+    .app-view{display:none}
+    .app-view.active{display:block}
+    .inspection-grid{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+    .inspection-header{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .inspection-row{display:grid;grid-template-columns:2fr 1.2fr 1.2fr 0.9fr 0.9fr 1.2fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .inspection-row.head{font-size:12px;font-weight:700;background:#f8fafc}
+    .inspection-row:last-child{border-bottom:none}
+    .floor-row{display:grid;grid-template-columns:1.4fr .8fr .8fr .9fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .floor-row.head{font-size:12px;font-weight:700;background:#f8fafc}
+    .floor-row:last-child{border-bottom:none}
+    .floor-inspection-head{padding:10px 14px;margin-bottom:12px}
+    .floor-inspection-head .meta{display:flex;gap:8px;flex-wrap:wrap}
+    .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+    .vendor-row:last-child{border-bottom:none}
 
     /* フルスクリーンモード */
     .fs-btn{position:absolute;top:10px;right:10px;z-index:10;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
@@ -204,6 +218,126 @@
 </head>
 <body>
   <div class="wrap">
+    <div id="inspectionListView" class="app-view active">
+      <div class="inspection-header">
+        <strong style="font-size:16px">検査案件一覧</strong>
+        <button class="btn primary" id="btnNewInspectionSite" type="button">新規検査案件作成</button>
+      </div>
+      <div class="inspection-grid">
+        <div class="card">
+          <div class="body" style="padding:0">
+            <div class="inspection-row head">
+              <div>現場名</div>
+              <div>検査日</div>
+              <div>検査担当者</div>
+              <div>総指摘</div>
+              <div>未対応</div>
+              <div>最終更新</div>
+              <div>操作</div>
+            </div>
+            <div id="inspectionSiteList"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="body">
+            <strong style="font-size:14px">新規検査案件作成</strong>
+            <div style="height:8px"></div>
+            <div class="field">
+              <label>現場名（必須）</label>
+              <input id="newInspectionSiteName" type="text" placeholder="例：A棟改修現場" />
+            </div>
+            <div class="field">
+              <label>検査日（必須）</label>
+              <input id="newInspectionDate" type="date" />
+            </div>
+            <div class="field">
+              <label>検査担当者（任意）</label>
+              <input id="newInspectionInspector" type="text" placeholder="例：山田" />
+            </div>
+            <div class="field">
+              <label>メモ（任意）</label>
+              <textarea id="newInspectionMemo" placeholder="任意メモ"></textarea>
+            </div>
+            <div id="inspectionSiteValidation" class="small" style="color:#b91c1c;min-height:18px"></div>
+            <button class="btn ok" id="btnCreateInspectionSite" type="button">作成して開く</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="inspectionDetailView" class="app-view">
+      <div class="inspection-header">
+        <div>
+          <strong id="detailSiteTitle" style="font-size:16px">検査案件詳細</strong>
+          <div class="small" id="detailSiteMeta"></div>
+        </div>
+        <button class="btn" id="btnBackToInspectionList" type="button">検査案件一覧に戻る</button>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="body">
+          <div class="grid">
+            <div class="field"><label>現場名</label><input id="detailSiteName" type="text" readonly /></div>
+            <div class="field"><label>検査日</label><input id="detailInspectionDate" type="text" readonly /></div>
+            <div class="field"><label>検査担当者</label><input id="detailInspectorName" type="text" readonly /></div>
+            <div class="field"><label>メモ</label><input id="detailMemo" type="text" readonly /></div>
+          </div>
+          <div class="divider"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <div class="field" style="min-width:220px">
+              <label>フロア名</label>
+              <input id="newFloorName" type="text" placeholder="例：1F / 2F / 屋上" />
+            </div>
+            <button class="btn primary" id="btnAddFloor" type="button">フロア追加</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="body" style="padding:0">
+          <div class="floor-row head">
+            <div>フロア名</div>
+            <div>指摘件数</div>
+            <div>未対応件数</div>
+            <div>図面</div>
+            <div>操作</div>
+          </div>
+          <div id="floorList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vendorWorkView" class="app-view">
+      <div class="inspection-header">
+        <div>
+          <strong style="font-size:16px">業者別確認</strong>
+          <div class="small" id="vendorViewMeta"></div>
+        </div>
+        <button class="btn" id="btnBackToFloorInspection" type="button">図面で見る</button>
+      </div>
+      <div class="card">
+        <div class="body">
+          <div class="toolbar" style="margin-bottom:10px">
+            <div class="field" style="min-width:220px">
+              <label>業者名</label>
+              <select id="vendorWorkVendor"></select>
+            </div>
+          </div>
+          <div id="vendorWorkList" class="list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="floorInspectionView" class="app-view">
+      <div class="card floor-inspection-head">
+        <div class="meta">
+          <span class="pill">現場名: <strong id="currentSiteTitle">-</strong></span>
+          <span class="pill">検査日: <strong id="currentInspectionDate">-</strong></span>
+          <span class="pill">フロア: <strong id="currentFloorTitle">-</strong></span>
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="btn" id="btnBackToFloorList" type="button">フロア一覧に戻る</button>
+          <button class="btn" id="btnOpenVendorWork" type="button">業者別確認を開く</button>
+        </div>
+      </div>
 
     <!-- ── ヘッダー操作バー ── -->
     <div class="topbar card" style="margin-bottom:12px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
@@ -234,12 +368,14 @@
         <span class="small" id="cloudCurrentId" style="font-weight:400"></span>
       </h3>
       <div class="cloud-meta-row">
-        <input id="inpTitle" type="text" placeholder="検査タイトル *" />
-        <input id="inpPropertyName" type="text" placeholder="物件名" />
-        <input id="inpSiteName" type="text" placeholder="現場名" />
-        <input id="inpBuildingName" type="text" placeholder="建物名" />
+        <input id="inpTitle" type="hidden" />
+        <input id="inpPropertyName" type="hidden" />
+        <input id="inpBuildingName" type="hidden" />
+        <input id="inpSiteName" type="text" placeholder="現場名" readonly />
         <input id="inpInspectedAt" type="date" />
         <input id="inpInspectorName" type="text" placeholder="検査担当者" />
+        <input id="inpSiteMemo" type="text" placeholder="メモ" />
+        <input id="inpFloorName" type="text" placeholder="フロア名" readonly />
       </div>
       <div class="cloud-actions">
         <button class="btn" id="btnSupabaseTest" type="button">Supabase接続確認</button>
@@ -407,6 +543,7 @@
       </div>
 
     </div>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -484,6 +621,9 @@
     const PIN_CLEAR_MARGIN = 5;
     const BUBBLE_W = 150;
     const BUBBLE_H = 44;
+    // 初期化順で参照されても落ちないように先行宣言
+    let imgRect = null;
+    let stageW = 1, stageH = 1;
     const BUBBLE_OFFSET_CANDIDATES = [
       [0.08, -0.04],
       [-0.14, -0.04],
@@ -509,15 +649,28 @@
     function loadStore(){
       try{
         const raw = localStorage.getItem(STORAGE_KEY);
-        if(!raw) return structuredClone(defaultStore);
+        if(!raw){
+          console.debug("loadStore done", { source: "default-no-storage" });
+          return structuredClone(defaultStore);
+        }
         const obj = JSON.parse(raw);
-        if(!obj || typeof obj !== "object") return structuredClone(defaultStore);
+        if(!obj || typeof obj !== "object"){
+          console.debug("loadStore done", { source: "default-invalid-json" });
+          return structuredClone(defaultStore);
+        }
         if(!obj.markersByKey) obj.markersByKey = {};
         if(!obj.activeBg) obj.activeBg = { kind:"none" };
-        normalizeMarkersByKey(obj.markersByKey);
+        try{
+          normalizeMarkersByKey(obj.markersByKey);
+        }catch(normErr){
+          console.error("[store] markers normalize failed", normErr);
+          obj.markersByKey = {};
+        }
+        console.debug("loadStore done", { source: "storage" });
         return obj;
       }catch(e){
         console.error(e);
+        console.debug("loadStore done", { source: "default-catch" });
         return structuredClone(defaultStore);
       }
     }
@@ -545,6 +698,15 @@
     let selectedCloudInspectionId = null;
     let currentDrawingId = null;
     let currentDrawingStoragePath = null;
+    let currentView = "inspection_list";
+    let selectedSiteId = null;
+    let selectedSite = null;
+    let selectedFloorId = null;
+    let selectedFloor = null;
+    let selectedInspectionId = null;
+    let selectedVendorWorkName = "";
+    let inspectionSitesCache = [];
+    let floorsCache = [];
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -745,6 +907,9 @@
           const subVendorIds = Array.isArray(m.sub_vendor_ids) ? [...m.sub_vendor_ids] : [];
           rows.push({
             inspection_id: inspectionId,
+            site_id: selectedSiteId || null,
+            floor_id: selectedFloorId || null,
+            floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
             drawing_id: markerDrawingId,
             page_number,
             local_marker_id: m.id,
@@ -754,6 +919,7 @@
             dy: Number(m.dy),
             type: m.type || "",
             vendor_name: m.vendor_name || m.vendor || "",
+            status: m.status || "open",
             vendor_status: m.vendor_status || "assigned",
             vendor_source: m.vendor_source || "auto",
             floor_label: null,
@@ -765,8 +931,12 @@
             marker_data: {
               markerKey,
               drawingId: markerDrawingId,
+              site_id: selectedSiteId || null,
+              floor_id: selectedFloorId || null,
+              floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
               pdfId,
               createdAt: m.createdAt || Date.now(),
+              status: m.status || "open",
               vendor_id: m.vendor_id || null,
               vendor_name: m.vendor_name || m.vendor || "",
               vendor_status: m.vendor_status || "assigned",
@@ -810,6 +980,7 @@
             dy: Number(row.dy),
             type: row.type || "",
             vendor: row.vendor_name || md.vendor_name || "",
+            status: row.status || md.status || "open",
             vendor_id: md.vendor_id || null,
             vendor_name: row.vendor_name || md.vendor_name || "",
             vendor_status: row.vendor_status || md.vendor_status || "assigned",
@@ -856,13 +1027,18 @@
     function readInspectionForm(){
       const bg = store.activeBg || { kind:"none" };
       const inspectedRaw = $("inpInspectedAt").value;
+      const siteName = (selectedSite?.site_name || $("inpSiteName").value || "").trim();
+      const floorName = (selectedFloor?.floor_name || $("inpFloorName").value || "").trim();
+      const inspectionTitle = [siteName, floorName, "検査"].filter(Boolean).join(" ");
       return {
-        title: ($("inpTitle").value || "").trim() || "無題の検査",
-        property_name: ($("inpPropertyName").value || "").trim() || null,
-        site_name: ($("inpSiteName").value || "").trim() || null,
-        building_name: ($("inpBuildingName").value || "").trim() || null,
+        title: inspectionTitle || ($("inpTitle").value || "").trim() || "無題の検査",
+        site_id: selectedSiteId || null,
+        floor_id: selectedFloorId || null,
+        floor_name: floorName || null,
+        site_name: siteName || null,
         inspected_at: inspectedRaw ? new Date(inspectedRaw + "T00:00:00").toISOString() : null,
         inspector_name: ($("inpInspectorName").value || "").trim() || null,
+        status: "draft",
         current_drawing_id: (bg.kind === "pdf")
           ? (bg.drawingId || currentDrawingId || null)
           : null,
@@ -873,15 +1049,16 @@
           markersByKey: markersByKeyForCloud(),
           normalRotation: normalRotation || 0,
         },
-        status: "draft",
       };
     }
 
     function applyInspectionForm(insp){
       $("inpTitle").value = insp.title || "";
-      $("inpPropertyName").value = insp.property_name || "";
-      $("inpSiteName").value = insp.site_name || "";
-      $("inpBuildingName").value = insp.building_name || "";
+      const siteName = insp.site_name || insp.property_name || "";
+      $("inpPropertyName").value = "";
+      $("inpSiteName").value = siteName;
+      $("inpBuildingName").value = "";
+      $("inpFloorName").value = insp.floor_name || selectedFloor?.floor_name || "";
       $("inpInspectorName").value = insp.inspector_name || "";
       if(insp.inspected_at){
         try{
@@ -892,6 +1069,10 @@
       }else{
         $("inpInspectedAt").value = "";
       }
+      if(selectedSite?.memo){
+        $("inpSiteMemo").value = selectedSite.memo;
+      }
+      updateCurrentContextLabels();
     }
 
     function applyLoadedInspectionToStore(insp, markerRows){
@@ -957,6 +1138,9 @@
       const sb = getSupabase();
       const insertPayload = {
         inspection_id: inspectionId,
+        site_id: selectedSiteId || null,
+        floor_id: selectedFloorId || null,
+        floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
         file_name: file?.name || "drawing.pdf",
         mime_type: file?.type || "application/pdf",
         storage_path: storagePath,
@@ -1283,7 +1467,29 @@
         if(mErr) throw mErr;
 
         currentInspectionId = inspectionId;
+        selectedInspectionId = inspectionId;
         selectedCloudInspectionId = inspectionId;
+        if(insp.site_id){
+          selectedSiteId = insp.site_id;
+          if(!selectedSite || String(selectedSite.id) !== String(insp.site_id)){
+            try{
+              const { data: siteRow } = await sb.from("sites").select("*").eq("id", insp.site_id).single();
+              if(siteRow) selectedSite = siteRow;
+            }catch(_){}
+          }
+        }
+        if(insp.floor_id){
+          selectedFloorId = insp.floor_id;
+          if(!selectedFloor || String(selectedFloor.id) !== String(insp.floor_id)){
+            try{
+              const { data: floorRow } = await sb.from("site_floors").select("*").eq("id", insp.floor_id).single();
+              if(floorRow) selectedFloor = floorRow;
+            }catch(_){}
+          }
+        }else if(insp.floor_name){
+          selectedFloor = { ...(selectedFloor || {}), floor_name: insp.floor_name };
+          selectedFloorId = selectedFloor?.id || null;
+        }
         currentDrawingId = insp.current_drawing_id || null;
         if(!currentDrawingId) currentDrawingStoragePath = null;
         applyInspectionForm(insp);
@@ -1313,6 +1519,7 @@
         }
 
         refreshUiAfterDataChange();
+        updateCurrentContextLabels();
         const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
         toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件`);
         setCloudStatus("読込済", "ok");
@@ -1342,28 +1549,7 @@
     }
 
     async function createNewInspection(){
-      const ok = confirm(
-        "新規検査案件を開始します。\n未保存の変更はクラウドに残りませんが、端末内データは上書きされます。\nよろしいですか？"
-      );
-      if(!ok) return;
-      currentInspectionId = null;
-      selectedCloudInspectionId = null;
-      currentDrawingId = null;
-      currentDrawingStoragePath = null;
-      store = structuredClone(defaultStore);
-      normalRotation = 0;
-      selectedId = null;
-      filterVendor = "";
-      $("filterVendor").value = "";
-      $("memoInput").value = "";
-      $("inpTitle").value = "";
-      $("inpPropertyName").value = "";
-      $("inpSiteName").value = "";
-      $("inpBuildingName").value = "";
-      $("inpInspectedAt").value = "";
-      $("inpInspectorName").value = "";
-      refreshUiAfterDataChange();
-      toast("新規検査案件を開始しました。PDFを選択して指摘を追加できます。");
+      showView("inspection_list");
     }
 
     async function saveToCloud(){
@@ -1381,6 +1567,7 @@
           if(error) throw error;
           inspectionId = data.id;
           currentInspectionId = inspectionId;
+          selectedInspectionId = inspectionId;
         }
 
         await ensureCloudDrawingSaved();
@@ -1405,6 +1592,8 @@
         toast(`クラウド保存しました。マーカー：${markerSaveRes.markerCount}件 / 写真：${photoSavedCount}件`);
         updateCloudCurrentIdLabel();
         await refreshCloudInspectionList();
+        if(selectedSiteId) await loadInspectionSites();
+        if(selectedSiteId && selectedFloorId) await loadFloors(selectedSiteId);
       }catch(e){
         showCloudError("クラウド保存", e);
       }
@@ -1434,7 +1623,7 @@
         div.dataset.id = insp.id;
         const dt = insp.updated_at || insp.created_at;
         const sub = [
-          insp.property_name,
+          insp.site_name || insp.floor_name,
           insp.status,
           dt ? new Date(dt).toLocaleString() : "",
         ].filter(Boolean).join(" / ");
@@ -1463,7 +1652,7 @@
       try{
         const sb = getSupabase();
         const { data, error } = await sb.from("inspections")
-          .select("id, title, property_name, status, inspected_at, created_at, updated_at")
+          .select("id, title, site_name, floor_name, status, inspected_at, created_at, updated_at, site_id, floor_id")
           .order("updated_at", { ascending: false })
           .limit(50);
         if(error) throw error;
@@ -1481,6 +1670,444 @@
         setCloudStatus("設定済", "ok");
       }
       updateCloudCurrentIdLabel();
+    }
+
+    function displaySiteName(site){
+      return (site?.site_name || site?.property_name || "").trim() || "（現場名未設定）";
+    }
+
+    function formatDateLabel(value){
+      if(!value) return "-";
+      const d = new Date(value);
+      if(Number.isNaN(d.getTime())) return String(value);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function isUnresolvedStatus(status){
+      const s = String(status || "").toLowerCase();
+      return !["done", "completed", "resolved", "closed", "対応済み"].includes(s);
+    }
+
+    function updateCurrentContextLabels(){
+      $("currentSiteTitle").textContent = displaySiteName(selectedSite);
+      $("currentInspectionDate").textContent = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt").value);
+      $("currentFloorTitle").textContent = selectedFloor?.floor_name || "-";
+      $("vendorViewMeta").textContent = `${displaySiteName(selectedSite)} / ${formatDateLabel(selectedSite?.inspection_date)} / ${selectedFloor?.floor_name || "-"}`;
+    }
+
+    function showView(viewName){
+      currentView = viewName;
+      const map = {
+        inspection_list: "inspectionListView",
+        inspection_detail: "inspectionDetailView",
+        floor_inspection: "floorInspectionView",
+        vendor_work: "vendorWorkView",
+      };
+      Object.values(map).forEach(id=>{
+        const el = $(id);
+        if(el) el.classList.remove("active");
+      });
+      const targetId = map[viewName];
+      if($(targetId)) $(targetId).classList.add("active");
+      if(viewName === "inspection_list"){
+        loadInspectionSites();
+      }
+      if(viewName === "vendor_work"){
+        renderVendorWorkList();
+      }
+      updateCurrentContextLabels();
+    }
+
+    async function loadInspectionSites(){
+      if(!isSupabaseConfigured()){
+        renderInspectionSiteList([]);
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const { data: sites, error } = await sb.from("sites")
+          .select("id, site_name, property_name, inspection_date, inspector_name, memo, status, created_at, updated_at")
+          .eq("status", "active")
+          .order("inspection_date", { ascending: false })
+          .order("updated_at", { ascending: false });
+        if(error) throw error;
+        const siteRows = sites || [];
+        const siteIds = siteRows.map(s=>s.id).filter(Boolean);
+        const summaryBySite = new Map();
+        siteIds.forEach(id=>summaryBySite.set(String(id), {
+          total_count: 0,
+          unresolved_count: 0,
+          updated_at: null,
+        }));
+
+        if(siteIds.length > 0){
+          const { data: inspections } = await sb.from("inspections")
+            .select("id, site_id, updated_at")
+            .in("site_id", siteIds);
+          const inspRows = inspections || [];
+          const inspIds = inspRows.map(r=>r.id).filter(Boolean);
+          inspRows.forEach(insp=>{
+            const key = String(insp.site_id || "");
+            if(!summaryBySite.has(key)) return;
+            const bucket = summaryBySite.get(key);
+            bucket.updated_at = [bucket.updated_at, insp.updated_at].filter(Boolean).sort().pop() || bucket.updated_at;
+          });
+          if(inspIds.length > 0){
+            const { data: markers } = await sb.from("markers")
+              .select("inspection_id, status")
+              .in("inspection_id", inspIds);
+            const markerRows = markers || [];
+            const inspToSite = new Map(inspRows.map(i=>[String(i.id), String(i.site_id || "")]));
+            markerRows.forEach(m=>{
+              const siteKey = inspToSite.get(String(m.inspection_id || ""));
+              if(!siteKey || !summaryBySite.has(siteKey)) return;
+              const bucket = summaryBySite.get(siteKey);
+              bucket.total_count += 1;
+              if(isUnresolvedStatus(m.status)) bucket.unresolved_count += 1;
+            });
+          }
+        }
+
+        inspectionSitesCache = siteRows.map(site=>{
+          const summary = summaryBySite.get(String(site.id)) || {};
+          return {
+            ...site,
+            total_count: summary.total_count || 0,
+            unresolved_count: summary.unresolved_count || 0,
+            latest_updated_at: summary.updated_at || site.updated_at || site.created_at || null,
+          };
+        });
+        renderInspectionSiteList(inspectionSitesCache);
+      }catch(e){
+        showCloudError("検査案件一覧の取得", e);
+      }
+    }
+
+    function renderInspectionSiteList(sites){
+      const list = $("inspectionSiteList");
+      if(!list) return;
+      list.innerHTML = "";
+      if(!sites || sites.length === 0){
+        const row = document.createElement("div");
+        row.className = "inspection-row";
+        row.style.gridTemplateColumns = "1fr";
+        row.innerHTML = `<div class="small">検査案件がありません。右側フォームから作成してください。</div>`;
+        list.appendChild(row);
+        return;
+      }
+      sites.forEach(site=>{
+        const row = document.createElement("div");
+        row.className = "inspection-row";
+        row.innerHTML = `
+          <div>${escapeHtml(displaySiteName(site))}</div>
+          <div>${escapeHtml(formatDateLabel(site.inspection_date))}</div>
+          <div>${escapeHtml(site.inspector_name || "-")}</div>
+          <div>${Number(site.total_count || 0)}</div>
+          <div>${Number(site.unresolved_count || 0)}</div>
+          <div>${escapeHtml(site.latest_updated_at ? new Date(site.latest_updated_at).toLocaleString() : "-")}</div>
+          <div><button class="btn" type="button" data-act="open-site" data-id="${escapeHtml(String(site.id))}">開く</button></div>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    async function createInspectionSiteFromUi(){
+      const siteName = ($("newInspectionSiteName").value || "").trim();
+      const inspectionDate = ($("newInspectionDate").value || "").trim();
+      const inspectorName = ($("newInspectionInspector").value || "").trim();
+      const memo = ($("newInspectionMemo").value || "").trim();
+      const validation = $("inspectionSiteValidation");
+      validation.textContent = "";
+      if(!siteName || !inspectionDate){
+        validation.textContent = "現場名と検査日を入力してください";
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const payload = {
+          site_name: siteName,
+          inspection_date: inspectionDate,
+          inspector_name: inspectorName || null,
+          memo: memo || null,
+          client_name: "石栄建物",
+          status: "active",
+        };
+        const { data, error } = await sb.from("sites")
+          .insert(payload)
+          .select("*")
+          .single();
+        if(error) throw error;
+        $("newInspectionSiteName").value = "";
+        $("newInspectionDate").value = "";
+        $("newInspectionInspector").value = "";
+        $("newInspectionMemo").value = "";
+        await loadInspectionSites();
+        await openInspectionSite(data.id);
+      }catch(e){
+        showCloudError("検査案件作成", e);
+      }
+    }
+
+    async function openInspectionSite(siteId){
+      if(!siteId) return;
+      try{
+        const cached = inspectionSitesCache.find(s=>String(s.id) === String(siteId));
+        let site = cached;
+        if(!site){
+          const sb = getSupabase();
+          const { data, error } = await sb.from("sites").select("*").eq("id", siteId).single();
+          if(error) throw error;
+          site = data;
+        }
+        selectedSiteId = site.id;
+        selectedSite = site;
+        selectedFloorId = null;
+        selectedFloor = null;
+        selectedInspectionId = null;
+        $("detailSiteTitle").textContent = displaySiteName(site);
+        $("detailSiteMeta").textContent = `${formatDateLabel(site.inspection_date)} / ${site.inspector_name || "担当者未設定"}`;
+        $("detailSiteName").value = displaySiteName(site);
+        $("detailInspectionDate").value = formatDateLabel(site.inspection_date);
+        $("detailInspectorName").value = site.inspector_name || "";
+        $("detailMemo").value = site.memo || "";
+        $("inpSiteName").value = displaySiteName(site);
+        $("inpInspectedAt").value = formatDateLabel(site.inspection_date);
+        $("inpInspectorName").value = site.inspector_name || "";
+        $("inpSiteMemo").value = site.memo || "";
+        $("inpFloorName").value = "";
+        await loadFloors(site.id);
+        showView("inspection_detail");
+      }catch(e){
+        showCloudError("検査案件を開く", e);
+      }
+    }
+
+    async function loadFloors(siteId){
+      if(!siteId || !isSupabaseConfigured()) return;
+      try{
+        const sb = getSupabase();
+        const { data: floors, error } = await sb.from("site_floors")
+          .select("id, site_id, floor_name, floor_order, status, created_at, updated_at")
+          .eq("site_id", siteId)
+          .eq("status", "active")
+          .order("floor_order", { ascending: true });
+        if(error) throw error;
+        const floorRows = floors || [];
+        const floorIds = floorRows.map(f=>f.id).filter(Boolean);
+        const summaryByFloor = new Map(floorIds.map(id=>[String(id), {
+          total_count: 0,
+          unresolved_count: 0,
+          drawing_registered: false,
+        }]));
+        if(floorIds.length > 0){
+          const { data: inspections } = await sb.from("inspections")
+            .select("id, floor_id")
+            .in("floor_id", floorIds)
+            .eq("site_id", siteId);
+          const inspRows = inspections || [];
+          const inspIds = inspRows.map(i=>i.id).filter(Boolean);
+          const inspToFloor = new Map(inspRows.map(i=>[String(i.id), String(i.floor_id || "")]));
+
+          if(inspIds.length > 0){
+            const { data: markers } = await sb.from("markers")
+              .select("inspection_id, status")
+              .in("inspection_id", inspIds);
+            (markers || []).forEach(m=>{
+              const floorKey = inspToFloor.get(String(m.inspection_id || ""));
+              if(!floorKey || !summaryByFloor.has(floorKey)) return;
+              const bucket = summaryByFloor.get(floorKey);
+              bucket.total_count += 1;
+              if(isUnresolvedStatus(m.status)) bucket.unresolved_count += 1;
+            });
+          }
+
+          const { data: drawings } = await sb.from("drawings")
+            .select("id, floor_id")
+            .in("floor_id", floorIds)
+            .eq("site_id", siteId);
+          (drawings || []).forEach(d=>{
+            const floorKey = String(d.floor_id || "");
+            if(!summaryByFloor.has(floorKey)) return;
+            summaryByFloor.get(floorKey).drawing_registered = true;
+          });
+        }
+        floorsCache = floorRows.map(f=>({
+          ...f,
+          ...(summaryByFloor.get(String(f.id)) || {}),
+        }));
+        renderFloorList(floorsCache);
+      }catch(e){
+        showCloudError("フロア一覧の取得", e);
+      }
+    }
+
+    function renderFloorList(floors){
+      const list = $("floorList");
+      list.innerHTML = "";
+      if(!floors || floors.length === 0){
+        const row = document.createElement("div");
+        row.className = "floor-row";
+        row.style.gridTemplateColumns = "1fr";
+        row.innerHTML = `<div class="small">フロアがありません。「フロア追加」から作成してください。</div>`;
+        list.appendChild(row);
+        return;
+      }
+      floors.forEach(f=>{
+        const row = document.createElement("div");
+        row.className = "floor-row";
+        row.innerHTML = `
+          <div>${escapeHtml(f.floor_name || "-")}</div>
+          <div>${Number(f.total_count || 0)}</div>
+          <div>${Number(f.unresolved_count || 0)}</div>
+          <div>${f.drawing_registered ? "登録済み" : "未登録"}</div>
+          <div><button class="btn" type="button" data-act="open-floor" data-id="${escapeHtml(String(f.id))}">フロアを開く</button></div>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    async function createFloorFromUi(){
+      if(!selectedSiteId){
+        toast("先に検査案件を選択してください。");
+        return;
+      }
+      const floorName = ($("newFloorName").value || "").trim();
+      if(!floorName){
+        toast("フロア名を入力してください。");
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        const floorOrder = floorsCache.reduce((max, f)=>Math.max(max, Number(f.floor_order || 0)), 0) + 1;
+        const payload = {
+          site_id: selectedSiteId,
+          floor_name: floorName,
+          floor_order: floorOrder,
+          status: "active",
+        };
+        const { error } = await sb.from("site_floors").insert(payload);
+        if(error) throw error;
+        $("newFloorName").value = "";
+        await loadFloors(selectedSiteId);
+      }catch(e){
+        showCloudError("フロア追加", e);
+      }
+    }
+
+    async function openFloor(floorId){
+      if(!selectedSiteId) return;
+      let floor = floorsCache.find(f=>String(f.id) === String(floorId));
+      if(!floor){
+        const sb = getSupabase();
+        const { data, error } = await sb.from("site_floors").select("*").eq("id", floorId).single();
+        if(error) throw error;
+        floor = data;
+      }
+      selectedFloorId = floor.id;
+      selectedFloor = floor;
+      $("inpFloorName").value = floor.floor_name || "";
+      const inspectionId = await ensureInspectionForFloor(selectedSiteId, floor.id);
+      selectedInspectionId = inspectionId;
+      await loadInspectionForFloor(selectedSiteId, floor.id);
+      showView("floor_inspection");
+    }
+
+    async function ensureInspectionForFloor(siteId, floorId){
+      if(!siteId || !floorId) throw new Error("site_id / floor_id が不足しています。");
+      const sb = getSupabase();
+      const { data: exists, error } = await sb.from("inspections")
+        .select("id, status, updated_at")
+        .eq("site_id", siteId)
+        .eq("floor_id", floorId)
+        .eq("status", "draft")
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      if(error) throw error;
+      if(exists && exists.length > 0){
+        currentInspectionId = exists[0].id;
+        selectedInspectionId = exists[0].id;
+        selectedCloudInspectionId = exists[0].id;
+        return exists[0].id;
+      }
+      const payload = readInspectionForm();
+      const { data, error: insertErr } = await sb.from("inspections")
+        .insert(payload)
+        .select("id")
+        .single();
+      if(insertErr) throw insertErr;
+      currentInspectionId = data.id;
+      selectedInspectionId = data.id;
+      selectedCloudInspectionId = data.id;
+      return data.id;
+    }
+
+    async function saveCurrentFloorInspection(){
+      if(!selectedSiteId || !selectedFloorId){
+        toast("先に検査案件とフロアを選択してください。");
+        return;
+      }
+      await ensureInspectionForFloor(selectedSiteId, selectedFloorId);
+      await saveToCloud();
+      await loadInspectionSites();
+      await loadFloors(selectedSiteId);
+    }
+
+    async function loadInspectionForFloor(siteId, floorId){
+      if(!siteId || !floorId) return;
+      const sb = getSupabase();
+      const { data, error } = await sb.from("inspections")
+        .select("id, updated_at")
+        .eq("site_id", siteId)
+        .eq("floor_id", floorId)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      if(error) throw error;
+      let inspectionId = data?.[0]?.id || null;
+      if(!inspectionId){
+        inspectionId = await ensureInspectionForFloor(siteId, floorId);
+      }
+      currentInspectionId = inspectionId;
+      selectedInspectionId = inspectionId;
+      await loadInspectionWithDrawingAndMarkers(inspectionId);
+      updateCurrentContextLabels();
+    }
+
+    function renderVendorWorkList(){
+      const list = $("vendorWorkList");
+      const vendorSelect = $("vendorWorkVendor");
+      const vendorName = selectedVendorWorkName || vendorSelect.value || "";
+      list.innerHTML = "";
+      const markerRows = Object.entries(store.markersByKey || {}).flatMap(([key, arr])=>
+        (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
+      );
+      const filtered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, vendorName));
+      if(filtered.length === 0){
+        list.innerHTML = `<div class="vendor-row"><span class="small">該当する指摘がありません。</span></div>`;
+        return;
+      }
+      filtered.forEach(({ marker, markerKey }, idx)=>{
+        const row = document.createElement("div");
+        row.className = "vendor-row";
+        const statusText = isUnresolvedStatus(marker.status) ? "未対応" : "対応済み";
+        row.innerHTML = `
+          <div>
+            <div><strong>${idx + 1}. ${escapeHtml(marker.type || "種別未設定")}</strong></div>
+            <div class="small">${escapeHtml(marker.memo || "メモなし")} / ${escapeHtml(statusText)}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn" type="button" data-act="goto-marker" data-marker-id="${escapeHtml(String(marker.id))}" data-marker-key="${escapeHtml(markerKey)}">図面で見る</button>
+            <button class="btn ok" type="button" data-act="mark-done" data-marker-id="${escapeHtml(String(marker.id))}">対応済みにする</button>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    function openVendorWorkView(vendorName){
+      selectedVendorWorkName = vendorName || $("vendorSelect").value || "";
+      const vendorSelect = $("vendorWorkVendor");
+      vendorSelect.value = selectedVendorWorkName;
+      showView("vendor_work");
     }
 
     // -------------------- Category / Vendor Mapping --------------------
@@ -1599,6 +2226,9 @@
         .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
         .join("");
       $("filterVendor").innerHTML = filterHtml;
+      if($("vendorWorkVendor")){
+        $("vendorWorkVendor").innerHTML = filterHtml;
+      }
       if(!activeVendors.some(v=>v.name === $("vendorSelect").value)){
         $("vendorSelect").value = activeVendors[0]?.name || "業者未定";
       }
@@ -2598,8 +3228,6 @@
     let store = loadStore();
     let selectedId = null;
     let filterVendor = "";
-    // stage measured size
-    let stageW = 1, stageH = 1;
 
     function activeKey(){
       const bg = store.activeBg;
@@ -2688,9 +3316,6 @@
     // 通常モードの画像回転（0/90/180/270）
     let normalRotation = 0;
 
-    // imgRect: 元画像サイズ・スケール・回転を保持（正規化された比率変換に使用）
-    let imgRect = { iw: 1, ih: 1, sc: 1, rot: 0 };
-
     function drawImageFit(img){
       // フルスクリーン時は rot=0（CSSで回転）、通常時は normalRotation でcanvas回転
       const rot = isFullscreen ? 0 : normalRotation;
@@ -2726,9 +3351,44 @@
       }
     }
 
+    function getCurrentImageRect(){
+      try{
+        if(
+          imgRect &&
+          Number.isFinite(imgRect.iw) && imgRect.iw > 0 &&
+          Number.isFinite(imgRect.ih) && imgRect.ih > 0 &&
+          Number.isFinite(imgRect.sc) && imgRect.sc > 0
+        ){
+          return imgRect;
+        }
+      }catch(_){}
+
+      try{
+        const bgEl = document.getElementById("bg");
+        const wrapEl = document.getElementById("stageWrap");
+        const bgRect = bgEl?.getBoundingClientRect?.();
+        const wrapRect = wrapEl?.getBoundingClientRect?.();
+        const w = Math.max(
+          1,
+          Number(stageW) || 0,
+          Number(bgRect?.width) || 0,
+          Number(wrapRect?.width) || 0
+        );
+        const h = Math.max(
+          1,
+          Number(stageH) || 0,
+          Number(bgRect?.height) || 0,
+          Number(wrapRect?.height) || 0
+        );
+        return { iw: w, ih: h, sc: 1, rot: 0 };
+      }catch(_){
+        return { iw: Math.max(1, Number(stageW) || 1), ih: Math.max(1, Number(stageH) || 1), sc: 1, rot: 0 };
+      }
+    }
+
     // canvas座標 → 元画像の正規化比率(0-1) [回転に依存しない正規座標系]
     function canvasPxToImgRatio(px, py){
-      const {iw, ih, sc, rot} = imgRect;
+      const {iw, ih, sc, rot} = getCurrentImageRect();
       // canvas中心からの相対座標
       const cx = px - stageW/2, cy = py - stageH/2;
       // 逆回転して元画像ローカル座標へ
@@ -2742,7 +3402,7 @@
 
     // 元画像の正規化比率 → canvas座標 px [回転に依存しない正規座標系]
     function imgRatioToCanvasPx(rx, ry){
-      const {iw, ih, sc, rot} = imgRect;
+      const {iw, ih, sc, rot} = getCurrentImageRect();
       // 元画像ローカル座標（中心基準）
       const lx = (rx - 0.5) * iw;
       const ly = (ry - 0.5) * ih;
@@ -2758,10 +3418,20 @@
     // 吹き出しオフセット定数は先頭で定義済み
 
     function canUseCanvasOffsetCheck(){
-      return imgRect.iw > 10 && imgRect.ih > 10 && imgRect.sc > 0 && stageW > 1 && stageH > 1;
+      const rect = getCurrentImageRect();
+      if(!rect) return false;
+      return (
+        Number(rect.iw) > 10 &&
+        Number(rect.ih) > 10 &&
+        Number(rect.sc) > 0 &&
+        Number(stageW) > 1 &&
+        Number(stageH) > 1
+      );
     }
 
     function bubbleOverlapsPin(m, dx, dy){
+      const rect = getCurrentImageRect();
+      if(!rect) return false;
       if(!canUseCanvasOffsetCheck()) return false;
       const _a = imgRatioToCanvasPx(m.x, m.y);
       const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
@@ -2834,6 +3504,17 @@
       return changed;
     }
 
+    function safeNormalizeMarkerOffset(marker){
+      try{
+        return normalizeMarkerOffset(marker);
+      }catch(err){
+        console.error("[marker] safeNormalizeMarkerOffset failed", err);
+        marker.dx = Number.isFinite(Number(marker.dx)) ? Number(marker.dx) : DEFAULT_BUBBLE_DX;
+        marker.dy = Number.isFinite(Number(marker.dy)) ? Number(marker.dy) : DEFAULT_BUBBLE_DY;
+        return true;
+      }
+    }
+
     function normalizeMarkersByKey(mbk){
       if(!mbk || typeof mbk !== "object") return false;
       let changed = false;
@@ -2842,7 +3523,7 @@
         arr.forEach(m=>{
           if(normalizeMarkerVendorState(m)) changed = true;
           if(ensureMarkerPhotoState(m)) changed = true;
-          if(normalizeMarkerOffset(m)) changed = true;
+          if(safeNormalizeMarkerOffset(m)) changed = true;
         });
       }
       return changed;
@@ -3158,6 +3839,7 @@
       quickMarkerEditor.style.display = "block";
       updateQuickEditorUiFromDraft();
       positionQuickEditorNearMarker(marker);
+      console.debug("quick editor opened", { markerId: marker.id, isNew });
       setTimeout(()=>{ try{ $("quickMarkerMemo").focus(); }catch(_){} }, 0);
     }
 
@@ -3217,7 +3899,7 @@
         beforePhotoDeletePath: null,
         afterPhotoDeletePath: null,
       };
-      normalizeMarkerOffset(m);
+      safeNormalizeMarkerOffset(m);
       markers().push(m);
       selectedId = m.id;
       redrawOverlay();
@@ -3229,6 +3911,7 @@
       }catch(err){
         console.error("openQuickMarkerEditor起動エラー", err);
       }
+      console.debug("draft marker created", { markerId: m.id });
       return m;
     }
 
@@ -3387,7 +4070,7 @@
       const arr = markers();
       let offsetFixed = false;
       arr.forEach(m=>{
-        if(normalizeMarkerOffset(m)) offsetFixed = true;
+        if(safeNormalizeMarkerOffset(m)) offsetFixed = true;
       });
       if(offsetFixed) saveStore();
 
@@ -3549,6 +4232,7 @@
     let pendingDrag = null;   // ドラッグ確定前の候補
     let suppressTapCreateUntil = 0;
     let lastPointerDownAt = 0;
+    let stagePointerEventsRegistered = false;
 
     function getClientPointFromEvent(e){
       if(e && e.touches && e.touches[0]){
@@ -3573,16 +4257,20 @@
       return false;
     }
 
-    function handleBlankCanvasTap(e, source){
+    function handleStagePointerTap(e, source = "stage"){
       if(shouldIgnoreBlankCreate(e)) return;
       if(e?.type === "touchstart"){
         suppressTapCreateUntil = Date.now() + 450;
         if(typeof e.preventDefault === "function") e.preventDefault();
       }
       const p = svgPointFromAnyEvent(e);
-      console.debug("[marker] 図面クリック検知", { source, x: p.x, y: p.y });
+      console.debug("stage tapped", { source, x: p.x, y: p.y });
       closeQuickMarkerEditor({ keepDraft: false });
       createDraftMarkerAt(p.x, p.y);
+    }
+
+    function handleBlankCanvasTap(e, source){
+      handleStagePointerTap(e, source);
     }
 
     // ★ pointerdown を1つに統合
@@ -3608,13 +4296,14 @@
           if(m){
             const p = svgPointFromEvent(e);
             const _base = imgRatioToCanvasPx(m.x, m.y);
+            const rectNow = getCurrentImageRect();
             pendingDrag = {
               id, role,
               startX: p.x, startY: p.y,
               baseX: _base.x, baseY: _base.y,
               // baseDxDyはcanvas px単位（元画像ローカル×sc→回転）
-              baseDx: m.dx * imgRect.iw * imgRect.sc,
-              baseDy: m.dy * imgRect.ih * imgRect.sc,
+              baseDx: m.dx * rectNow.iw * rectNow.sc,
+              baseDy: m.dy * rectNow.ih * rectNow.sc,
               pointerId: e.pointerId
             };
             overlay.setPointerCapture(e.pointerId);
@@ -3628,7 +4317,7 @@
         e.preventDefault();
       } else {
         // 空白エリアをクリック → 仮ピン作成してクイック編集
-        handleBlankCanvasTap(e, "overlay.pointerdown");
+        handleStagePointerTap(e, "overlay.pointerdown");
         e.preventDefault();
       }
     });
@@ -3671,8 +4360,9 @@
           ddy = rawDx * sin + rawDy * cos;
         }
         // ddxはcanvas px。元画像ローカル単位に変換して比率で保存
-        const isc = imgRect.iw * imgRect.sc;
-        const ihc = imgRect.ih * imgRect.sc;
+        const rect = getCurrentImageRect();
+        const isc = rect.iw * rect.sc;
+        const ihc = rect.ih * rect.sc;
         m.dx = clamp(drag.baseDx + ddx, -isc, isc) / isc;
         m.dy = clamp(drag.baseDy + ddy, -ihc, ihc) / ihc;
         m.bubbleMoved = true;
@@ -3721,14 +4411,21 @@
         }
         return;
       }
-      handleBlankCanvasTap(e, `fallback.${e.type}`);
+      handleStagePointerTap(e, `fallback.${e.type}`);
     };
-    overlay.addEventListener("click", fallbackTapHandler, { passive: false });
-    overlay.addEventListener("touchstart", fallbackTapHandler, { passive: false });
-    bgCanvas.addEventListener("click", fallbackTapHandler, { passive: false });
-    stageWrap.addEventListener("click", fallbackTapHandler, { passive: false });
-    stageWrap.addEventListener("touchstart", fallbackTapHandler, { passive: false });
-    console.debug("[boot] クリックイベント登録完了");
+
+    function registerStagePointerEvents(){
+      if(stagePointerEventsRegistered) return;
+      overlay.addEventListener("click", fallbackTapHandler, { passive: false });
+      overlay.addEventListener("touchstart", fallbackTapHandler, { passive: false });
+      bgCanvas.addEventListener("click", fallbackTapHandler, { passive: false });
+      bgCanvas.addEventListener("touchstart", fallbackTapHandler, { passive: false });
+      stageWrap.addEventListener("click", fallbackTapHandler, { passive: false });
+      stageWrap.addEventListener("touchstart", fallbackTapHandler, { passive: false });
+      stagePointerEventsRegistered = true;
+      console.debug("stage pointer events registered");
+    }
+    registerStagePointerEvents();
 
 
     $("quickTypeChips").addEventListener("click", (e)=>{
@@ -3918,7 +4615,7 @@
       const bw = BUBBLE_W * scale, bh = BUBBLE_H * scale;
 
       arr.forEach((m, idx) => {
-        normalizeMarkerOffset(m);
+        safeNormalizeMarkerOffset(m);
         const _a = imgRatioToCanvasPx(m.x, m.y);
         const ax = _a.x * scale, ay = _a.y * scale;
         const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
@@ -4210,10 +4907,60 @@
 
     // -------------------- Buttons --------------------
     $("btnSupabaseTest").addEventListener("click", ()=>{ testSupabaseConnection(); });
-    $("btnNewInspection").addEventListener("click", ()=>{ createNewInspection(); });
-    $("btnCloudSave").addEventListener("click", ()=>{ saveToCloud(); });
+    $("btnNewInspection").addEventListener("click", ()=>{ showView("inspection_list"); });
+    $("btnCloudSave").addEventListener("click", ()=>{ saveCurrentFloorInspection(); });
     $("btnCloudLoad").addEventListener("click", ()=>{
       loadFromCloud(selectedCloudInspectionId || currentInspectionId);
+    });
+    $("btnNewInspectionSite").addEventListener("click", ()=>{ showView("inspection_list"); });
+    $("btnCreateInspectionSite").addEventListener("click", ()=>{ createInspectionSiteFromUi(); });
+    $("btnBackToInspectionList").addEventListener("click", ()=>{ showView("inspection_list"); });
+    $("btnAddFloor").addEventListener("click", ()=>{ createFloorFromUi(); });
+    $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
+    $("btnOpenVendorWork").addEventListener("click", ()=>{ openVendorWorkView($("vendorSelect").value || ""); });
+    $("btnBackToFloorInspection").addEventListener("click", ()=>{ showView("floor_inspection"); });
+    $("vendorWorkVendor").addEventListener("change", (e)=>{
+      selectedVendorWorkName = e.target.value || "";
+      renderVendorWorkList();
+    });
+    $("inspectionSiteList").addEventListener("click", (e)=>{
+      const btn = e.target.closest('button[data-act="open-site"]');
+      if(!btn) return;
+      openInspectionSite(btn.dataset.id || "");
+    });
+    $("floorList").addEventListener("click", (e)=>{
+      const btn = e.target.closest('button[data-act="open-floor"]');
+      if(!btn) return;
+      openFloor(btn.dataset.id || "");
+    });
+    $("vendorWorkList").addEventListener("click", async (e)=>{
+      const doneBtn = e.target.closest('button[data-act="mark-done"]');
+      if(doneBtn){
+        const markerId = doneBtn.dataset.markerId || "";
+        const all = Object.values(store.markersByKey || {}).flatMap(arr=>Array.isArray(arr) ? arr : []);
+        const marker = all.find(m=>String(m.id) === String(markerId));
+        if(marker){
+          marker.status = "done";
+          saveStore();
+          redrawList();
+          renderVendorWorkList();
+        }
+        return;
+      }
+      const gotoBtn = e.target.closest('button[data-act="goto-marker"]');
+      if(!gotoBtn) return;
+      const markerId = gotoBtn.dataset.markerId || "";
+      const markerKey = gotoBtn.dataset.markerKey || "";
+      const mk = parseMarkerKey(markerKey);
+      if(mk.page_number > 0){
+        await setPage(mk.page_number);
+      }
+      selectedId = markerId;
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      showView("floor_inspection");
     });
     $("btnToggleMappingPanel").addEventListener("click", ()=>{
       $("mappingPanel").classList.toggle("open");
@@ -4517,24 +5264,37 @@
       if(isFullscreen){ panelPos = null; setPanelDefault(); }
     });
 
-        // -------------------- Boot --------------------
+    // -------------------- Boot --------------------
     function boot(){
-      console.debug("[boot] boot開始");
-      resizeStage();
-      loadCategoryVendorMappings().catch(()=>{});
-      // Ensure active key exists
-      markers();
-      redrawBackground();
-      redrawOverlay();
-      redrawList();
-      syncButtons();
-      syncSelectorsFromSelectedMarker();
-      updatePageInfo();
-      initCloudUi();
-      if(isSupabaseConfigured()){
-        refreshCloudInspectionList().catch(()=>{});
+      console.debug("boot start");
+      try{
+        resizeStage();
+        loadCategoryVendorMappings().catch(()=>{});
+        // Ensure active key exists
+        markers();
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+        syncSelectorsFromSelectedMarker();
+        updatePageInfo();
+        initCloudUi();
+        if(isSupabaseConfigured()){
+          refreshCloudInspectionList().catch(()=>{});
+          loadInspectionSites().catch(()=>{});
+        }
+        showView("inspection_list");
+        toast("起動しました。最初に検査案件を選択してください。");
+      }catch(err){
+        console.error("[boot] initialize failed", err);
+        toast("起動時に一部エラーが発生しました。処理を継続します。");
+      }finally{
+        try{
+          registerStagePointerEvents();
+        }catch(registerErr){
+          console.error("[boot] stage pointer registration failed", registerErr);
+        }
       }
-      toast("起動しました。PDFを選択するか、背景なしでマーカー配置のテストができます。");
     }
     boot();
   }); // DOMContentLoaded
