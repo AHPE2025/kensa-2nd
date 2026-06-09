@@ -250,11 +250,49 @@
     /* フルスクリーンモード */
     .fs-btn{position:absolute;top:10px;right:10px;z-index:10;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
     .fs-btn:hover{background:rgba(17,24,39,.95)}
-    .stageWrap.fullscreen{position:fixed;top:0;left:0;width:100vw;height:100vh;width:100dvw;height:100dvh;z-index:1000;border-radius:0;border:none;aspect-ratio:unset;transform-origin:center center;transition:transform 0.3s ease;}
+    body.fullscreen-active{overflow:hidden}
+    .pseudo-fullscreen{
+      position:fixed !important;
+      top:0 !important;
+      left:0 !important;
+      width:100vw !important;
+      height:100vh !important;
+      width:100dvw !important;
+      height:100dvh !important;
+      z-index:1000 !important;
+      border-radius:0 !important;
+      border:none !important;
+      aspect-ratio:unset !important;
+      background:#fff;
+      transform-origin:center center;
+      transition:transform 0.3s ease;
+    }
+    .stageWrap.fullscreen,
+    .stageWrap.is-fullscreen{
+      position:fixed;
+      top:0;
+      left:0;
+      width:100vw;
+      height:100vh;
+      width:100dvw;
+      height:100dvh;
+      z-index:1000;
+      border-radius:0;
+      border:none;
+      aspect-ratio:unset;
+      transform-origin:center center;
+      transition:transform 0.3s ease;
+    }
     /* 回転クラス */
-    .stageWrap.fullscreen.rot90 {transform:rotate(90deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
-    .stageWrap.fullscreen.rot180{transform:rotate(180deg);}
-    .stageWrap.fullscreen.rot270{transform:rotate(270deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
+    .stageWrap.fullscreen.rot90,
+    .stageWrap.is-fullscreen.rot90,
+    .stageWrap.pseudo-fullscreen.rot90{transform:rotate(90deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
+    .stageWrap.fullscreen.rot180,
+    .stageWrap.is-fullscreen.rot180,
+    .stageWrap.pseudo-fullscreen.rot180{transform:rotate(180deg);}
+    .stageWrap.fullscreen.rot270,
+    .stageWrap.is-fullscreen.rot270,
+    .stageWrap.pseudo-fullscreen.rot270{transform:rotate(270deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
     #fsPanel{display:none;position:fixed;z-index:2000;background:rgba(17,24,39,.88);backdrop-filter:blur(12px);border-radius:20px;padding:12px 20px;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center;box-shadow:0 8px 32px rgba(0,0,0,.5);max-width:96vw;cursor:grab;user-select:none;touch-action:none;}
     #fsPanel.show{display:flex}
     #fsPanel.dragging{cursor:grabbing;}
@@ -8370,6 +8408,8 @@
 
     // -------------------- Fullscreen --------------------
     let isFullscreen = false;
+    let isPseudoFullscreen = false;
+    let lastFullscreenTarget = null;
     let fsRotation = 0; // 0 | 90 | 180 | 270
 
     const ROT_CLASSES = { 0:'', 90:'rot90', 180:'rot180', 270:'rot270' };
@@ -8408,54 +8448,66 @@
       $("fsMarkerCount").textContent = `指摘 ${markers().length}件`;
     }
 
-    // ネイティブFullscreen APIのヘルパー（モバイル対応）
-    function requestNativeFs(){
-      const el = document.documentElement;
-      try{
-        if(el.requestFullscreen)            return el.requestFullscreen();
-        if(el.webkitRequestFullscreen)      return el.webkitRequestFullscreen(); // iOS Safari
-        if(el.mozRequestFullScreen)         return el.mozRequestFullScreen();
-      }catch(_){}
+    function getFullscreenTarget() {
+      const stageWrapEl = document.getElementById("stageWrap");
+      if(stageWrapEl) return stageWrapEl;
+
+      const drawingAreaEl = document.getElementById("drawingArea");
+      if(drawingAreaEl) return drawingAreaEl;
+
+      const stageWrapClassEl = document.querySelector(".stageWrap");
+      if(stageWrapClassEl) return stageWrapClassEl;
+
+      const drawingAreaLikeEl = document.querySelector(".drawing-area, #bg, #overlay");
+      if(drawingAreaLikeEl && drawingAreaLikeEl.parentElement) return drawingAreaLikeEl.parentElement;
+
+      return document.documentElement;
     }
-    function exitNativeFs(){
-      try{
-        if(document.exitFullscreen)         return document.exitFullscreen();
-        if(document.webkitExitFullscreen)   return document.webkitExitFullscreen();
-        if(document.mozCancelFullScreen)    return document.mozCancelFullScreen();
-      }catch(_){}
-    }
+
     function isNativeFs(){
       return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
     }
 
-    function enterFullscreen(){
+    function applyFullscreenClass(isActive) {
+      const target = getFullscreenTarget();
+      const btn = document.getElementById("btnFullscreen");
+      const targetEnabled = !!isActive;
+
+      if(target){
+        target.classList.toggle("is-fullscreen", targetEnabled);
+        target.classList.toggle("fullscreen", targetEnabled);
+      }
+
+      if(btn){
+        btn.textContent = targetEnabled ? "フルスクリーン解除" : "フルスクリーン";
+      }
+    }
+
+    function applyFullscreenUiOpenState(){
       isFullscreen = true;
       // 通常モードの回転をフルスクリーンに引き継ぎ、通常モードはリセット
       fsRotation = normalRotation;
       normalRotation = 0;
       panelPos = null;
       stageWrap.classList.remove("rot90","rot180","rot270");
-      stageWrap.classList.add("fullscreen");
-      // 引き継いだ回転クラスを即時適用
       const initCls = ROT_CLASSES[fsRotation];
       if(initCls) stageWrap.classList.add(initCls);
       $("fsPanel").classList.add("show");
-      $("btnFullscreen").textContent = "✕ 閉じる";
       syncFsSelects();
       updateFsInfo();
-      requestNativeFs();
+      applyFullscreenClass(true);
       setTimeout(()=>{
         resizeStage();
         setPanelDefault();
       }, 200);
     }
 
-    function exitFullscreen(){
+    function applyFullscreenUiCloseState(){
       isFullscreen = false;
       // フルスクリーンの回転を通常モードに引き継ぎ
       normalRotation = fsRotation;
       fsRotation = 0;
-      stageWrap.classList.remove("fullscreen","rot90","rot180","rot270");
+      stageWrap.classList.remove("fullscreen","is-fullscreen","pseudo-fullscreen","rot90","rot180","rot270");
       const _panel = $("fsPanel");
       _panel.classList.remove("show");
       _panel.style.left = "";
@@ -8463,9 +8515,115 @@
       _panel.style.bottom = "";
       _panel.style.transform = "";
       panelPos = null;
-      $("btnFullscreen").textContent = "⛶ フルスクリーン";
-      if(isNativeFs()) exitNativeFs();
+      applyFullscreenClass(false);
       setTimeout(resizeStage, 50);
+    }
+
+    function enterPseudoFullscreen() {
+      const target = getFullscreenTarget();
+      if(!target) return;
+
+      isPseudoFullscreen = true;
+      lastFullscreenTarget = target;
+      target.classList.add("pseudo-fullscreen");
+      document.body.classList.add("fullscreen-active");
+      applyFullscreenClass(true);
+
+      setTimeout(() => {
+        if (typeof resizeStage === "function") resizeStage();
+        if (typeof redrawBackground === "function") redrawBackground();
+        if (typeof redrawOverlay === "function") redrawOverlay();
+        if (typeof redrawList === "function") redrawList();
+      }, 100);
+
+      console.debug("[fullscreen] pseudo entered");
+    }
+
+    function exitPseudoFullscreen() {
+      const target = lastFullscreenTarget || getFullscreenTarget();
+      if(target) target.classList.remove("pseudo-fullscreen");
+
+      lastFullscreenTarget = null;
+      isPseudoFullscreen = false;
+      document.body.classList.remove("fullscreen-active");
+
+      setTimeout(() => {
+        if (typeof resizeStage === "function") resizeStage();
+        if (typeof redrawBackground === "function") redrawBackground();
+        if (typeof redrawOverlay === "function") redrawOverlay();
+        if (typeof redrawList === "function") redrawList();
+      }, 100);
+
+      console.debug("[fullscreen] pseudo exited");
+    }
+
+    function isCurrentlyFullscreen() {
+      return !!document.fullscreenElement || !!document.webkitFullscreenElement || isPseudoFullscreen;
+    }
+
+    async function enterFullscreenMode() {
+      const target = getFullscreenTarget();
+
+      if (!target) {
+        console.error("[fullscreen] target not found");
+        return;
+      }
+
+      console.debug("[fullscreen] enter requested", target);
+      applyFullscreenUiOpenState();
+
+      try {
+        if (target.requestFullscreen) {
+          await target.requestFullscreen();
+          applyFullscreenClass(true);
+          console.debug("[fullscreen] native entered");
+          return;
+        }
+
+        if (target.webkitRequestFullscreen) {
+          await target.webkitRequestFullscreen();
+          applyFullscreenClass(true);
+          console.debug("[fullscreen] webkit native entered");
+          return;
+        }
+      } catch (error) {
+        console.warn("[fullscreen] native failed, fallback to pseudo", error);
+      }
+
+      enterPseudoFullscreen();
+    }
+
+    async function exitFullscreenMode() {
+      console.debug("[fullscreen] exit requested");
+
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        }
+      } catch (error) {
+        console.warn("[fullscreen] native exit failed", error);
+      }
+
+      exitPseudoFullscreen();
+      applyFullscreenUiCloseState();
+    }
+
+    async function toggleFullscreenMode() {
+      if (isCurrentlyFullscreen()) {
+        await exitFullscreenMode();
+      } else {
+        await enterFullscreenMode();
+      }
+    }
+
+    async function enterFullscreen(){
+      await enterFullscreenMode();
+    }
+
+    async function exitFullscreen(){
+      await exitFullscreenMode();
     }
 
     // ブラウザのEsc/スワイプでネイティブFSが終了したときにアプリ側も同期
@@ -8473,14 +8631,14 @@
     document.addEventListener("webkitfullscreenchange", _onNativeFsChange);
     document.addEventListener("mozfullscreenchange",    _onNativeFsChange);
     function _onNativeFsChange(){
-      if(!isNativeFs() && isFullscreen){
+      if(!isNativeFs() && isFullscreen && !isPseudoFullscreen){
         // ネイティブFSだけ終了した → アプリのUIも閉じる
-        exitFullscreen();
+        void exitFullscreenMode();
       }
     }
 
     $("btnFullscreen").addEventListener("click", ()=>{
-      isFullscreen ? exitFullscreen() : enterFullscreen();
+      void toggleFullscreenMode();
     });
     $("btnExitFs").addEventListener("click", exitFullscreen);
     $("fsBtnDelete").addEventListener("click", ()=>{
