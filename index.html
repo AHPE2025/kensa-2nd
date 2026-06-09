@@ -50,6 +50,55 @@
     .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:#fff}
     .status{display:flex;gap:10px;flex-wrap:wrap}
     .toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:var(--shadow);max-width:520px;display:none;white-space:pre-wrap}
+    .floor-change-modal-backdrop{
+      position:fixed;
+      inset:0;
+      background:rgba(15,23,42,.45);
+      z-index:2600;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+    .floor-change-modal-backdrop.open{display:flex}
+    .floor-change-modal{
+      width:min(460px, 100%);
+      background:#fff;
+      border:1px solid #dbe1ea;
+      border-radius:14px;
+      box-shadow:0 12px 32px rgba(15,23,42,.26);
+      padding:14px;
+    }
+    .floor-change-modal-title{
+      font-size:17px;
+      font-weight:800;
+      margin-bottom:10px;
+    }
+    .floor-change-current{
+      border:1px solid #e2e8f0;
+      background:#f8fafc;
+      border-radius:10px;
+      min-height:40px;
+      padding:9px 10px;
+      font-size:14px;
+      font-weight:700;
+      color:#1e293b;
+      display:flex;
+      align-items:center;
+    }
+    .floor-change-validation{
+      min-height:18px;
+      color:#b91c1c;
+      font-size:12px;
+      margin-top:2px;
+    }
+    .floor-change-actions{
+      display:flex;
+      justify-content:flex-end;
+      gap:8px;
+      margin-top:8px;
+      flex-wrap:wrap;
+    }
     .list{overflow:auto;border:1px solid var(--line);border-radius:14px}
     .item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
     .item:last-child{border-bottom:none}
@@ -827,6 +876,26 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  <div id="floorChangeModalBackdrop" class="floor-change-modal-backdrop" aria-hidden="true">
+    <div id="floorChangeModal" class="floor-change-modal" role="dialog" aria-modal="true" aria-labelledby="floorChangeModalTitle">
+      <div id="floorChangeModalTitle" class="floor-change-modal-title">フロア変更</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>現在のフロア</label>
+        <div id="floorChangeCurrentName" class="floor-change-current">-</div>
+      </div>
+      <div class="field">
+        <label>変更先フロア</label>
+        <select id="floorChangeSelect">
+          <option value="">選択してください</option>
+        </select>
+      </div>
+      <div id="floorChangeValidation" class="floor-change-validation"></div>
+      <div class="floor-change-actions">
+        <button class="btn" id="btnFloorChangeCancel" type="button">キャンセル</button>
+        <button class="btn primary" id="btnFloorChangeSubmit" type="button">変更する</button>
+      </div>
+    </div>
+  </div>
 
   <!-- フルスクリーン操作パネル - body直下でposition:fixed -->
   <div id="fsPanel">
@@ -998,6 +1067,7 @@
     let selectedVendorWorkName = "";
     let inspectionSitesCache = [];
     let floorsCache = [];
+    let floorChangeTargetFloor = null;
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
     const INSPECTION_SELECT_COLUMNS = "id, title, site_id, floor_id, floor_name, site_name, inspected_at, inspector_name, status, inspection_mode, settings, created_at, updated_at";
@@ -2800,26 +2870,36 @@
     }
 
     function getFloorOptions(){
-      const options = [];
-      for(let i = -3; i <= -1; i += 1){
-        options.push({ floor_name: `地下${Math.abs(i)}F`, floor_order: i });
-      }
-      for(let i = 1; i <= 30; i += 1){
-        options.push({ floor_name: `${i}F`, floor_order: i });
-      }
-      options.push(
-        { floor_name: "屋上", floor_order: 100 },
-        { floor_name: "外構", floor_order: 200 },
-        { floor_name: "共用部", floor_order: 300 },
-        { floor_name: "その他", floor_order: 999 },
-      );
-      return options;
+      return [
+        "B3F", "B2F", "B1F",
+        "1F", "2F", "3F", "4F", "5F", "6F", "7F", "8F", "9F", "10F",
+        "11F", "12F", "13F", "14F", "15F", "16F", "17F", "18F", "19F", "20F",
+        "21F", "22F", "23F", "24F", "25F", "26F", "27F", "28F", "29F", "30F",
+        "RF", "屋上",
+      ];
+    }
+
+    function getFloorAddOptions(){
+      return [
+        ...getFloorOptions(),
+        "外構",
+        "共用部",
+        "その他",
+      ];
     }
 
     function getFloorOrder(floorName){
       const name = String(floorName || "").trim();
-      const exact = getFloorOptions().find(opt=>opt.floor_name === name);
-      if(exact) return exact.floor_order;
+      const bMatch = name.match(/^B([1-9]\d*)F$/i);
+      if(bMatch) return -Number(bMatch[1]);
+      const basementJp = name.match(/^地下([1-9]\d*)F$/);
+      if(basementJp) return -Number(basementJp[1]);
+      const nMatch = name.match(/^([1-9]\d*)F$/i);
+      if(nMatch) return Number(nMatch[1]);
+      if(name === "RF") return 100;
+      if(name === "屋上") return 101;
+      if(name === "外構") return 200;
+      if(name === "共用部") return 300;
       return 999;
     }
 
@@ -2853,11 +2933,11 @@
       if(!floorSelect || !otherWrap || !otherInput) return;
 
       const currentValue = floorSelect.value || "";
-      const options = getFloorOptions();
+      const options = getFloorAddOptions();
       floorSelect.innerHTML = `<option value="">フロアを選択</option>${
-        options.map(opt=>`<option value="${escapeHtml(opt.floor_name)}">${escapeHtml(opt.floor_name)}</option>`).join("")
+        options.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")
       }`;
-      floorSelect.value = options.some(opt=>opt.floor_name === currentValue) ? currentValue : "";
+      floorSelect.value = options.includes(currentValue) ? currentValue : "";
 
       const isOther = floorSelect.value === "その他";
       otherWrap.style.display = isOther ? "" : "none";
@@ -2956,7 +3036,7 @@
           <div>${f.drawing_registered ? "登録済み" : "未登録"}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn" type="button" data-act="open-floor" data-id="${escapeHtml(String(f.id))}">フロアを開く</button>
-            <button class="btn" type="button" data-act="rename-floor" data-id="${escapeHtml(String(f.id))}">名前変更</button>
+            <button class="btn" type="button" data-act="change-floor" data-id="${escapeHtml(String(f.id))}">フロア変更</button>
             <button class="btn danger" type="button" data-act="delete-floor" data-id="${escapeHtml(String(f.id))}">削除</button>
           </div>
         `;
@@ -3127,17 +3207,88 @@
       }
     }
 
-    async function renameFloor(floor){
+    function setFloorChangeValidation(message){
+      const el = $("floorChangeValidation");
+      if(el) el.textContent = message || "";
+    }
+
+    function closeFloorChangeModal(){
+      const backdrop = $("floorChangeModalBackdrop");
+      if(backdrop){
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+      const select = $("floorChangeSelect");
+      if(select) select.value = "";
+      floorChangeTargetFloor = null;
+      setFloorChangeValidation("");
+    }
+
+    function renderFloorChangeOptions(floor){
+      const select = $("floorChangeSelect");
+      if(!select) return;
+      const currentName = getFloorDisplayName(floor);
+      const currentNorm = normalizeFloorName(currentName);
+      const usedFloorNames = new Set(
+        floorsCache
+          .filter(f=>String(f?.id || "") !== String(floor?.id || ""))
+          .map(f=>normalizeFloorName(getFloorDisplayName(f)))
+          .filter(Boolean)
+      );
+      const optionsHtml = getFloorOptions().map(name=>{
+        const norm = normalizeFloorName(name);
+        if(norm === currentNorm){
+          return `<option value="${escapeHtml(name)}" disabled>${escapeHtml(name)}（現在のフロア）</option>`;
+        }
+        if(usedFloorNames.has(norm)){
+          return `<option value="${escapeHtml(name)}" disabled>${escapeHtml(name)}（登録済み）</option>`;
+        }
+        return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+      }).join("");
+      select.innerHTML = `<option value="">選択してください</option>${optionsHtml}`;
+      select.value = "";
+    }
+
+    async function openFloorChangeModal(floor){
       if(!floor?.id){
-        toast("フロア名の変更に失敗しました");
+        toast("フロア変更に失敗しました");
+        return;
+      }
+      floorChangeTargetFloor = floor;
+      if(selectedSiteId){
+        await loadFloors(selectedSiteId);
+      }
+      floorChangeTargetFloor = floorsCache.find(f=>String(f.id) === String(floor.id)) || floor;
+      const currentName = getFloorDisplayName(floorChangeTargetFloor) || "-";
+      $("floorChangeCurrentName").textContent = currentName;
+      renderFloorChangeOptions(floorChangeTargetFloor);
+      setFloorChangeValidation("");
+      const backdrop = $("floorChangeModalBackdrop");
+      if(backdrop){
+        backdrop.classList.add("open");
+        backdrop.setAttribute("aria-hidden", "false");
+      }
+      const select = $("floorChangeSelect");
+      if(select) select.focus();
+    }
+
+    async function changeFloorTo(floor, nextFloorName){
+      if(!floor?.id){
+        toast("フロア変更に失敗しました");
         return;
       }
       const currentName = getFloorDisplayName(floor);
-      const input = window.prompt("新しいフロア名", currentName);
-      if(input == null) return;
-      const nextName = String(input).replace(/\s+/g, " ").trim();
+      const nextName = String(nextFloorName || "").replace(/\s+/g, " ").trim();
       if(!nextName){
-        toast("フロア名を入力してください");
+        const message = "変更先フロアを選択してください";
+        setFloorChangeValidation(message);
+        toast(message);
+        return;
+      }
+      if(normalizeFloorName(nextName) === normalizeFloorName(currentName)){
+        const message = "現在と同じフロアです";
+        setFloorChangeValidation(message);
+        toast(message);
         return;
       }
       const duplicated = floorsCache.some(f=>
@@ -3145,7 +3296,9 @@
         && normalizeFloorName(getFloorDisplayName(f)) === normalizeFloorName(nextName)
       );
       if(duplicated){
-        toast("同じ名前のフロアがすでにあります");
+        const message = "このフロアはすでに登録されています";
+        setFloorChangeValidation(message);
+        toast(message);
         return;
       }
       try{
@@ -3153,12 +3306,12 @@
         const now = new Date().toISOString();
         const siteId = selectedSiteId || floor.site_id || null;
         await updateFloorRecordName(sb, floor.id, siteId, nextName, now);
-        const floorNameTables = ["drawings", "markers", "drawing_text_notes", "marker_photos"];
+        const floorNameTables = ["drawings", "markers", "drawing_text_notes", "marker_photos", "export_logs"];
         for(const tableName of floorNameTables){
           try{
             await updateTableFloorName(sb, tableName, floor.id, siteId, nextName, now);
           }catch(relErr){
-            console.warn("[floor rename] related floor_name update skipped", { tableName, relErr });
+            console.warn("[floor change] related floor_name update skipped", { tableName, relErr });
           }
         }
         if(selectedFloorId && String(selectedFloorId) === String(floor.id)){
@@ -3167,12 +3320,17 @@
           $("inpFloorName").value = nextName;
           updateCurrentContextLabels();
         }
+        closeFloorChangeModal();
         await refreshFloorList();
-        toast("フロア名を変更しました");
+        toast("フロアを変更しました");
       }catch(error){
-        console.error("[floor rename] error", error);
-        toast("フロア名の変更に失敗しました");
+        console.error("[floor change] error", error);
+        toast("フロア変更に失敗しました");
       }
+    }
+
+    async function changeFloorName(floor){
+      await openFloorChangeModal(floor);
     }
 
     async function deleteFloor(floor){
@@ -8023,8 +8181,8 @@
         toast("対象フロアが見つかりません");
         return;
       }
-      if(btn.dataset.act === "rename-floor"){
-        await renameFloor(floor);
+      if(btn.dataset.act === "change-floor"){
+        await changeFloorName(floor);
         return;
       }
       if(btn.dataset.act === "delete-floor"){
@@ -8093,6 +8251,31 @@
       const btn = e.target.closest('button[data-role="vendor-delete"]');
       if(!btn) return;
       deleteVendorFromUi(btn.dataset.vendorId || "", btn.dataset.vendorName || "");
+    });
+    $("btnFloorChangeCancel").addEventListener("click", ()=>{
+      closeFloorChangeModal();
+    });
+    $("btnFloorChangeSubmit").addEventListener("click", async ()=>{
+      if(!floorChangeTargetFloor){
+        closeFloorChangeModal();
+        return;
+      }
+      const nextName = $("floorChangeSelect")?.value || "";
+      await changeFloorTo(floorChangeTargetFloor, nextName);
+    });
+    $("floorChangeSelect").addEventListener("change", ()=>{
+      setFloorChangeValidation("");
+    });
+    $("floorChangeModalBackdrop").addEventListener("click", (e)=>{
+      if(e.target === $("floorChangeModalBackdrop")){
+        closeFloorChangeModal();
+      }
+    });
+    document.addEventListener("keydown", (e)=>{
+      if(e.key !== "Escape") return;
+      if($("floorChangeModalBackdrop")?.classList.contains("open")){
+        closeFloorChangeModal();
+      }
     });
 
     $("btnSavePng").addEventListener("click", savePng);
