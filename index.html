@@ -121,10 +121,131 @@
     .floor-row{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr .9fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
     .floor-row.head{font-size:12px;font-weight:700;background:#f8fafc}
     .floor-row:last-child{border-bottom:none}
-    .floor-inspection-head{padding:10px 14px;margin-bottom:12px}
+    .floor-inspection-head{
+      padding:10px 14px;
+      margin-bottom:8px;
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:flex-start;
+      flex-wrap:wrap;
+    }
     .floor-inspection-head .meta{display:flex;gap:8px;flex-wrap:wrap}
+    .floor-inspection-head .save-indicator{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      font-size:12px;
+      color:#475569;
+      font-weight:700;
+      white-space:nowrap;
+    }
     .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
     .vendor-row:last-child{border-bottom:none}
+    .floor-main-toolbar{
+      margin-bottom:8px;
+      padding:10px 12px;
+      display:flex;
+      flex-wrap:wrap;
+      align-items:center;
+      gap:10px;
+    }
+    .floor-main-toolbar .toolbar-group{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .floor-main-toolbar .toolbar-group.center{margin-left:auto;margin-right:auto}
+    .floor-main-toolbar .toolbar-group.right{margin-left:auto}
+    .floor-main-toolbar .toolbar-touch .btn,
+    .floor-main-toolbar .toolbar-touch select,
+    .floor-main-toolbar .toolbar-touch input[type="file"]{
+      min-height:42px;
+      font-size:14px;
+    }
+    .floor-main-toolbar .toolbar-page{
+      display:inline-flex;
+      align-items:center;
+      padding:0 12px;
+      min-height:42px;
+    }
+    .floor-main-toolbar .toolbar-hidden{
+      position:absolute;
+      width:1px;
+      height:1px;
+      overflow:hidden;
+      clip:rect(0,0,0,0);
+      white-space:nowrap;
+      border:0;
+      padding:0;
+      margin:-1px;
+    }
+    .floor-main-toolbar #btnToggleIssuePanel.open{
+      background:#1d4ed8;
+      color:#fff;
+      border-color:#1d4ed8;
+    }
+    #floorInspectionView .cloud-panel{display:none}
+    #floorInspectionView.show-management .cloud-panel{display:block}
+    .floor-cloud-admin-hidden{display:none}
+    #floorInspectionView .main-col > .card{margin-bottom:0}
+    #floorInspectionView #stageWrap{aspect-ratio:4 / 3}
+    .issue-panel{
+      position:fixed;
+      top:0;
+      right:0;
+      width:min(460px, 94vw);
+      height:100vh;
+      height:100dvh;
+      z-index:1200;
+      background:#ffffff;
+      border-left:1px solid #dbe1ea;
+      box-shadow:-8px 0 24px rgba(15,23,42,.16);
+      transform:translateX(105%);
+      transition:transform .2s ease;
+      display:flex;
+      flex-direction:column;
+    }
+    .issue-panel.open{transform:translateX(0)}
+    .issue-panel-head{
+      padding:12px;
+      border-bottom:1px solid #e2e8f0;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .issue-panel-filters{
+      padding:10px 12px;
+      border-bottom:1px solid #e2e8f0;
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+    }
+    .issue-panel-filters label{
+      font-size:12px;
+      color:#64748b;
+      font-weight:700;
+    }
+    .issue-panel-filters select{
+      width:100%;
+      min-height:40px;
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      font-size:14px;
+      padding:8px 10px;
+      background:#fff;
+    }
+    .issue-panel-body{
+      padding:10px 12px 14px;
+      overflow:auto;
+      flex:1;
+      min-height:0;
+    }
+    .issue-panel-body .list{max-height:none}
+    .mapping-toggle-wrap{margin-top:10px;display:flex;justify-content:flex-end}
 
     /* フルスクリーンモード */
     .fs-btn{position:absolute;top:10px;right:10px;z-index:10;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
@@ -207,13 +328,8 @@
       font-weight:600;
     }
     #markerForceLayer{
-      position:absolute;
-      left:0;
-      top:0;
-      z-index:50;
-      pointer-events:none;
-      touch-action:none;
-      overflow:visible;
+      display:none !important;
+      pointer-events:none !important;
     }
     #textNotesLayer{
       position:absolute;
@@ -228,16 +344,8 @@
       filter:drop-shadow(0 0 2px rgba(17,24,39,.45));
     }
     .marker-force-dot{
-      position:absolute;
-      z-index:60;
-      width:18px;
-      height:18px;
-      border-radius:9999px;
-      background:#dc2626;
-      border:3px solid #ffffff;
-      transform:translate(-50%, -50%);
-      box-shadow:0 2px 8px rgba(0,0,0,.35);
-      pointer-events:auto;
+      display:none !important;
+      pointer-events:none !important;
     }
     #stageWrap{
       position:relative;
@@ -258,23 +366,12 @@
       overflow:visible;
     }
     #markerForceLayer{
-      position:absolute;
-      z-index:999 !important;
-      pointer-events:none;
-      overflow:visible;
+      display:none !important;
+      pointer-events:none !important;
     }
     .marker-force-dot{
-      position:absolute;
-      z-index:1000 !important;
-      width:18px;
-      height:18px;
-      background:#dc2626;
-      border:3px solid #fff;
-      border-radius:9999px;
-      box-shadow:0 2px 8px rgba(0,0,0,.35);
-      transform:translate(-50%, -50%);
-      pointer-events:auto;
-      cursor:pointer;
+      display:none !important;
+      pointer-events:none !important;
     }
     .marker-bubble,
     .bubble,
@@ -448,6 +545,13 @@
       #quickMarkerEditor .qe-actions .btn{min-width:90px}
       #quickMarkerEditor .qe-photo-grid{grid-template-columns:1fr}
       .mapping-vendor-slot{grid-template-columns:84px 1fr}
+      .floor-main-toolbar .toolbar-group.center{margin-left:0;margin-right:0}
+      .floor-main-toolbar .toolbar-group.right{margin-left:0}
+      .floor-main-toolbar{gap:8px}
+      #textNoteEditor{width:min(420px, calc(100% - 12px));padding:12px}
+      #quickMarkerEditor{width:min(420px, calc(100% - 12px));padding:12px}
+      #textNoteEditor textarea{min-height:110px}
+      .issue-panel{width:min(520px, 100vw)}
     }
     @media (max-width: 860px){
       .mapping-grid{grid-template-columns:1fr auto;gap:6px}
@@ -560,7 +664,10 @@
           <strong style="font-size:16px">業者別確認</strong>
           <div class="small" id="vendorViewMeta"></div>
         </div>
-        <button class="btn" id="btnBackToFloorInspection" type="button">図面で見る</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="btnOpenMappingManager" type="button">指摘種別・業者設定</button>
+          <button class="btn" id="btnBackToFloorInspection" type="button">図面で見る</button>
+        </div>
       </div>
       <div class="card">
         <div class="body">
@@ -590,56 +697,70 @@
           <span class="pill">検査日: <strong id="currentInspectionDate">-</strong></span>
           <span class="pill">フロア: <strong id="currentFloorTitle">-</strong></span>
         </div>
-        <div class="toolbar" style="margin-top:10px">
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+          <div class="save-indicator"><span class="small">保存状態:</span><span class="tag" id="cloudStatus">未設定</span></div>
+          <span class="small" id="cloudCurrentId" style="font-weight:400"></span>
+        </div>
+        <div class="toolbar">
           <button class="btn" id="btnBackToFloorList" type="button">フロア一覧に戻る</button>
           <button class="btn" id="btnOpenVendorWork" type="button">業者別確認を開く</button>
         </div>
       </div>
 
-    <!-- ── ヘッダー操作バー ── -->
-    <div class="topbar card" style="margin-bottom:12px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
-      <strong style="font-size:15px;margin-right:4px">🏗 建物検査</strong>
-      <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
-        <label style="white-space:nowrap;font-size:12px;color:var(--muted)">PDF</label>
-        <input id="pdfInput" type="file" accept="application/pdf" style="font-size:12px" />
-        <button class="btn danger" id="btnDeletePdf" type="button" style="padding:7px 12px;font-size:13px" disabled>PDF削除</button>
+    <!-- ── フロア操作バー（1段） ── -->
+    <div class="card floor-main-toolbar toolbar-touch">
+      <div class="toolbar-group left">
+        <input id="pdfInput" type="file" accept="application/pdf" />
+        <button class="btn danger" id="btnDeletePdf" type="button" disabled>PDF削除</button>
+        <button class="btn" id="btnPrevPage" type="button">◀ 前ページ</button>
+        <span class="tag toolbar-page" id="pageInfo">PDF未選択</span>
+        <button class="btn" id="btnNextPage" type="button">次ページ ▶</button>
+        <button class="btn" id="btnRotL" title="左90°回転" type="button">↺</button>
+        <button class="btn" id="btnRotR" title="右90°回転" type="button">↻</button>
+        <input id="pageInput" class="toolbar-hidden" type="number" min="1" value="1" />
       </div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <button class="btn" id="btnPrevPage" style="padding:7px 10px">◀</button>
-        <span class="tag" id="pageInfo" style="white-space:nowrap">PDF未選択</span>
-        <button class="btn" id="btnNextPage" style="padding:7px 10px">▶</button>
-        <input id="pageInput" type="number" min="1" value="1" style="width:64px;border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px" />
+      <div class="toolbar-group center">
+        <button class="mode-btn active" id="btnInputModePin" type="button">ピン追加</button>
+        <button class="mode-btn" id="btnInputModeText" type="button">テキスト追加</button>
+        <span id="inputModeIndicator" class="input-mode-indicator">現在：ピン追加</span>
       </div>
-      <div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;align-items:center">
-        <select id="pdfExportMode" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+      <div class="toolbar-group right">
+        <select id="filterStatus">
+          <option value="open" selected>表示: 未対応</option>
+          <option value="all">表示: 全て</option>
+          <option value="completed">表示: 完了</option>
+        </select>
+        <select id="filterVendor">
+          <option value="">業者: 全て</option>
+        </select>
+        <select id="pdfExportMode" class="toolbar-hidden">
           <option value="full" selected>図面＋指摘詳細＋写真</option>
           <option value="drawing_only">図面のみ</option>
           <option value="details_only">指摘一覧のみ</option>
         </select>
-        <select id="pdfExportStatus" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+        <select id="pdfExportStatus" class="toolbar-hidden">
           <option value="open" selected>未対応のみ</option>
           <option value="all">全て</option>
           <option value="completed">完了のみ</option>
         </select>
-        <select id="pdfExportVendor" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+        <select id="pdfExportVendor" class="toolbar-hidden">
           <option value="">業者: 全て</option>
         </select>
-        <button class="btn primary" id="btnExportPdf" style="padding:7px 12px;font-size:13px">📄 PDF出力</button>
-        <button class="btn" id="btnSavePng" style="padding:7px 12px;font-size:13px">💾 PNG保存</button>
-        <button class="btn" id="btnEditMemo" disabled style="padding:7px 12px;font-size:13px">📝 メモ</button>
-        <button class="btn danger" id="btnDeleteSelected" disabled style="padding:7px 12px;font-size:13px">🗑 削除</button>
-        <button class="btn" id="btnClearStorage" style="padding:7px 12px;font-size:13px">⚠ データ消去</button>
+        <button class="btn" id="btnToggleIssuePanel" type="button">指摘一覧を開く</button>
+        <button class="btn primary" id="btnExportPdf" type="button">PDF出力</button>
+        <button class="btn" id="btnSavePng" type="button">PNG保存</button>
+        <button class="btn" id="btnClearStorage" type="button">データ消去</button>
+        <button class="btn toolbar-hidden" id="btnEditMemo" disabled type="button">メモ</button>
+        <button class="btn danger toolbar-hidden" id="btnDeleteSelected" disabled type="button">削除</button>
       </div>
     </div>
 
     <!-- ── Supabase クラウド ── -->
     <div class="card cloud-panel">
       <h3>
-        ☁ クラウド（Supabase）
-        <span class="tag" id="cloudStatus">未設定</span>
-        <span class="small" id="cloudCurrentId" style="font-weight:400"></span>
+        管理設定（通常は非表示）
       </h3>
-      <div class="cloud-meta-row">
+      <div class="cloud-meta-row floor-cloud-admin-hidden">
         <input id="inpTitle" type="hidden" />
         <input id="inpSiteName" type="text" placeholder="現場名" readonly />
         <input id="inpInspectedAt" type="date" />
@@ -647,17 +768,17 @@
         <input id="inpSiteMemo" type="text" placeholder="メモ" />
         <input id="inpFloorName" type="text" placeholder="フロア名" readonly />
       </div>
-      <div class="cloud-actions">
+      <div class="cloud-actions floor-cloud-admin-hidden">
         <button class="btn" id="btnSupabaseTest" type="button">Supabase接続確認</button>
         <button class="btn ok" id="btnNewInspection" type="button">新規検査案件作成</button>
         <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn" id="btnCloudLoad" type="button">クラウド読み込み</button>
-        <button class="btn" id="btnToggleMappingPanel" type="button">指摘種別・業者紐づけ設定</button>
       </div>
-      <div class="small" style="margin-top:6px">保存済み検査案件一覧（行を選択して「クラウド読み込み」、または各行の読み込み）</div>
-      <div class="cloud-list" id="cloudInspectionList">
+      <div class="small floor-cloud-admin-hidden" style="margin-top:6px">保存済み検査案件一覧（行を選択して「クラウド読み込み」、または各行の読み込み）</div>
+      <div class="cloud-list floor-cloud-admin-hidden" id="cloudInspectionList">
         <div class="cloud-list-item" style="cursor:default;color:var(--muted)">接続設定後に一覧を取得できます</div>
       </div>
+      <div class="mapping-toggle-wrap"><button class="btn" id="btnToggleMappingPanel" type="button">指摘種別・業者紐づけ設定</button></div>
       <div class="mapping-panel" id="mappingPanel">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
           <strong style="font-size:13px">指摘種別ごとの担当業者設定（メイン/サブメイン）</strong>
@@ -689,17 +810,9 @@
       <!-- 図面カード -->
       <div class="card" style="margin-bottom:12px">
 
-        <!-- 図面上部：指摘種別・業者セレクタ -->
-        <div class="drawing-controls card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px 14px;border-bottom:1px solid var(--line);margin:0;box-shadow:none;border-radius:var(--radius) var(--radius) 0 0;border:none;border-bottom:1px solid var(--line)">
-          <div class="field" style="min-width:180px">
-            <label>入力モード</label>
-            <div class="input-mode">
-              <button class="mode-btn active" id="btnInputModePin" type="button">ピン追加</button>
-              <button class="mode-btn" id="btnInputModeText" type="button">テキスト追加</button>
-              <span id="inputModeIndicator" class="input-mode-indicator">現在：ピン追加</span>
-            </div>
-          </div>
-          <div class="field" style="min-width:140px;flex:1">
+        <!-- 図面上部：ポップアップ入力のための内部選択 -->
+        <div class="drawing-controls card" style="display:none;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px 14px;border-bottom:1px solid var(--line);margin:0;box-shadow:none;border-radius:var(--radius) var(--radius) 0 0;border:none;border-bottom:1px solid var(--line)">
+          <div class="field" style="min-width:140px;flex:1;display:none">
             <label>指摘種別</label>
             <select id="typeSelect">
               <option value="傷">傷</option>
@@ -709,7 +822,7 @@
               <option value="その他">その他</option>
             </select>
           </div>
-          <div class="field" style="min-width:140px;flex:1">
+          <div class="field" style="min-width:140px;flex:1;display:none">
             <label>業者</label>
             <select id="vendorSelect">
               <option value="大工">大工</option>
@@ -721,25 +834,18 @@
             </select>
             <span id="vendorStateLabel" class="vendor-state">自動：-</span>
           </div>
-          <div class="field" style="min-width:200px;flex:2">
+          <div class="field" style="min-width:200px;flex:2;display:none">
             <label>メモ（任意）</label>
             <input type="text" id="memoInput" placeholder="例：巾木のキズ、タッチアップ要" style="border:1px solid var(--line);border-radius:12px;padding:10px;font-size:14px" />
           </div>
-          <div class="field" style="flex-direction:column;gap:4px;align-self:center">
-            <label style="font-size:11px;color:var(--muted)">図面回転</label>
-            <div style="display:flex;gap:6px">
-              <button class="btn" id="btnRotL" title="左90°回転" style="padding:7px 11px;font-size:16px">↺</button>
-              <button class="btn" id="btnRotR" title="右90°回転" style="padding:7px 11px;font-size:16px">↻</button>
-            </div>
-          </div>
-          <span class="legacy-input-note" style="white-space:nowrap;align-self:center">新規入力は図面上ポップアップで行います</span>
+          <span id="vendorStateLabel" class="vendor-state" style="display:none">自動：-</span>
+          <span class="legacy-input-note" style="white-space:nowrap;align-self:center">ピン追加/テキスト追加後、図面タップでポップアップ入力</span>
         </div>
 
         <!-- 図面ステージ（横画面デフォルト） -->
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <canvas id="bg"></canvas>
           <svg id="overlay"></svg>
-          <div id="markerForceLayer"></div>
           <div id="textNotesLayer" class="text-notes-layer"></div>
           <div id="quickMarkerEditor">
             <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
@@ -841,39 +947,37 @@
           <button class="fs-btn" id="btnFullscreen">⛶ フルスクリーン</button>
         </div>
 
-        <!-- 図面下部：指摘一覧 -->
-        <div style="padding:12px 14px 0">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-            <strong style="font-size:14px">指摘一覧</strong>
-            <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
-              <label style="font-size:12px;color:var(--muted);white-space:nowrap">業者フィルタ</label>
-              <select id="filterVendor" style="border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px">
-                <option value="">全て</option>
-                <option value="大工">大工</option>
-                <option value="電気">電気</option>
-                <option value="設備">設備</option>
-                <option value="内装">内装</option>
-                <option value="クリーニング">クリーニング</option>
-                <option value="その他">その他</option>
-              </select>
-            </div>
-            <div class="field" style="flex-direction:row;align-items:center;gap:6px;margin:0">
-              <label style="font-size:12px;color:var(--muted);white-space:nowrap">ステータス</label>
-              <select id="filterStatus" style="border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px">
-                <option value="open" selected>未対応</option>
-                <option value="completed">完了</option>
-                <option value="all">全て</option>
-              </select>
-            </div>
-          </div>
-          <div class="list" id="list" style="max-height:280px"></div>
-          <div style="height:14px"></div>
-        </div>
       </div>
 
     </div>
     </div>
   </div>
+
+  <aside id="issuePanel" class="issue-panel" aria-hidden="true">
+    <div class="issue-panel-head">
+      <strong style="font-size:15px">指摘一覧</strong>
+      <button class="btn" id="btnCloseIssuePanel" type="button">閉じる</button>
+    </div>
+    <div class="issue-panel-filters">
+      <div>
+        <label>表示フィルター</label>
+        <select id="issuePanelFilterStatus">
+          <option value="open" selected>未対応</option>
+          <option value="all">全て</option>
+          <option value="completed">完了</option>
+        </select>
+      </div>
+      <div>
+        <label>業者フィルター</label>
+        <select id="issuePanelFilterVendor">
+          <option value="">全て</option>
+        </select>
+      </div>
+    </div>
+    <div class="issue-panel-body">
+      <div class="list" id="list"></div>
+    </div>
+  </aside>
 
   <div class="toast" id="toast"></div>
   <div id="floorChangeModalBackdrop" class="floor-change-modal-backdrop" aria-hidden="true">
@@ -1736,8 +1840,7 @@
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       closeTextNoteEditor();
       clearCurrentFloorDrawingState();
-      const markerLayer = document.getElementById("markerForceLayer");
-      if(markerLayer) markerLayer.innerHTML = "";
+      removeMarkerForceLayer();
       const overlayEl = document.getElementById("overlay");
       if(overlayEl) overlayEl.innerHTML = "";
       const notesLayer = document.getElementById("textNotesLayer");
@@ -1890,6 +1993,7 @@
         rethrowOnError: true,
       });
       redrawBackground();
+      removeMarkerForceLayer();
       redrawOverlay();
       redrawList();
       return drawing;
@@ -2687,6 +2791,10 @@
       });
       const targetId = map[viewName];
       if($(targetId)) $(targetId).classList.add("active");
+      $("floorInspectionView")?.classList.remove("show-management");
+      if(viewName !== "floor_inspection"){
+        closeIssuePanel();
+      }
       if(viewName === "inspection_list"){
         loadInspectionSites();
       }
@@ -3439,6 +3547,7 @@
         currentFloorName = floor.floor_name || "";
         $("inpFloorName").value = floor.floor_name || "";
         updateCurrentContextLabels();
+        removeMarkerForceLayer();
         resetFloorRuntimeState();
         const inspectionId = await ensureInspectionForFloor(siteId, floor.id);
         selectedInspectionId = inspectionId;
@@ -3515,6 +3624,7 @@
 
     async function loadInspectionForFloor(siteId, floorId){
       if(!siteId || !floorId) return;
+      removeMarkerForceLayer();
       currentFloorId = floorId;
       currentFloorName = selectedFloor?.floor_name || currentFloorName || "";
       const sb = getSupabase();
@@ -3694,6 +3804,10 @@
         .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
         .join("");
       $("filterVendor").innerHTML = filterHtml;
+      const panelVendorFilter = $("issuePanelFilterVendor");
+      if(panelVendorFilter){
+        panelVendorFilter.innerHTML = filterHtml;
+      }
       if($("vendorWorkVendor")){
         $("vendorWorkVendor").innerHTML = filterHtml;
       }
@@ -4704,7 +4818,35 @@
     let selectedTextNoteId = null;
     let filterVendor = "";
     let filterStatus = "open";
+    let issuePanelOpen = false;
     let inputMode = "pin";
+
+    function syncIssuePanelButton(){
+      const btn = $("btnToggleIssuePanel");
+      if(!btn) return;
+      btn.classList.toggle("open", issuePanelOpen);
+      btn.textContent = issuePanelOpen ? "指摘一覧を閉じる" : "指摘一覧を開く";
+    }
+
+    function openIssuePanel(){
+      const panel = $("issuePanel");
+      if(!panel) return;
+      issuePanelOpen = true;
+      if($("issuePanelFilterVendor")) $("issuePanelFilterVendor").value = filterVendor;
+      if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = filterStatus;
+      panel.classList.add("open");
+      panel.setAttribute("aria-hidden", "false");
+      syncIssuePanelButton();
+    }
+
+    function closeIssuePanel(){
+      const panel = $("issuePanel");
+      if(!panel) return;
+      issuePanelOpen = false;
+      panel.classList.remove("open");
+      panel.setAttribute("aria-hidden", "true");
+      syncIssuePanelButton();
+    }
 
     function activeKey(){
       const bg = store.activeBg || { kind: "none" };
@@ -4735,7 +4877,6 @@
     const bgCanvas = $("bg");
     const ctx = bgCanvas.getContext("2d");
     const overlay = $("overlay");
-    let markerForceLayer = $("markerForceLayer");
     const textNotesLayer = $("textNotesLayer");
     const stageWrap = $("stageWrap");
     const quickMarkerEditor = $("quickMarkerEditor");
@@ -4745,174 +4886,13 @@
     let textNoteEditorState = null;
     const pendingPhotoStorageDeletes = new Set();
 
-    function ensureMarkerForceLayer(){
-      if(!stageWrap) return null;
-      if(!markerForceLayer || !markerForceLayer.isConnected){
-        markerForceLayer = document.getElementById("markerForceLayer");
-      }
-      if(!markerForceLayer){
-        markerForceLayer = document.createElement("div");
-        markerForceLayer.id = "markerForceLayer";
-        stageWrap.appendChild(markerForceLayer);
-      }else if(markerForceLayer.parentElement !== stageWrap){
-        stageWrap.appendChild(markerForceLayer);
-      }
-      if(stageWrap.lastElementChild !== markerForceLayer){
-        stageWrap.appendChild(markerForceLayer);
-      }
-      return markerForceLayer;
-    }
-
-    function getPdfDisplayRectInStage(){
-      const rect = getCurrentImageRect();
-      const iw = Math.max(1, Number(rect?.iw) || Number(stageW) || 1);
-      const ih = Math.max(1, Number(rect?.ih) || Number(stageH) || 1);
-      const sc = Math.max(0.0001, Number(rect?.sc) || 1);
-      const rot = Number(rect?.rot) || 0;
-      const swapped = rot === 90 || rot === 270;
-      const width = Math.max(1, (swapped ? ih : iw) * sc);
-      const height = Math.max(1, (swapped ? iw : ih) * sc);
-      const left = (Number(stageW) - width) / 2;
-      const top = (Number(stageH) - height) / 2;
-      return { left, top, width, height };
-    }
-
-    function syncMarkerForceLayerBounds(layer, displayRect){
-      if(!layer || !displayRect) return;
-      layer.style.left = `${displayRect.left}px`;
-      layer.style.top = `${displayRect.top}px`;
-      layer.style.width = `${displayRect.width}px`;
-      layer.style.height = `${displayRect.height}px`;
-    }
-
-    function renderForceMarkerLayer(markersForRender, displayRect){
-      const layer = ensureMarkerForceLayer();
-      if(!layer) return;
-      syncMarkerForceLayerBounds(layer, displayRect);
-      layer.innerHTML = "";
-      (markersForRender || []).forEach((marker)=>{
-        const mx = clamp(Number.isFinite(Number(marker?.x)) ? Number(marker.x) : 0.5, 0, 1);
-        const my = clamp(Number.isFinite(Number(marker?.y)) ? Number(marker.y) : 0.5, 0, 1);
-        const point = imgRatioToCanvasPx(mx, my);
-        const px = point.x - displayRect.left;
-        const py = point.y - displayRect.top;
-        const dot = document.createElement("div");
-        dot.className = "marker-force-dot marker-dot";
-        dot.dataset.markerId = String(marker?.id || "");
-        dot.style.left = `${px}px`;
-        dot.style.top = `${py}px`;
-        layer.appendChild(dot);
-      });
-      stageWrap.appendChild(layer);
-      console.debug("force marker layer", {
-        markerCount: markersForRender?.length || 0,
-        layerRect: layer.getBoundingClientRect(),
-        zIndex: getComputedStyle(layer).zIndex,
-        children: layer.children.length
-      });
+    function removeMarkerForceLayer(){
+      const layer = document.getElementById("markerForceLayer");
+      if(layer) layer.remove();
     }
 
     function forceRenderMarkers() {
-      const stageWrap = document.getElementById("stageWrap");
-      if (!stageWrap) {
-        console.error("[forceRenderMarkers] stageWrap not found");
-        return;
-      }
-
-      const key = activeKey();
-      const markers = (store.markersByKey && store.markersByKey[key]) ? store.markersByKey[key] : [];
-
-      let layer = document.getElementById("markerForceLayer");
-      if (!layer) {
-        layer = document.createElement("div");
-        layer.id = "markerForceLayer";
-        stageWrap.appendChild(layer);
-      }
-
-      stageWrap.appendChild(layer);
-
-      const stageRect = stageWrap.getBoundingClientRect();
-
-      let rect = null;
-
-      if (typeof getImageRect === "function") {
-        rect = getImageRect();
-      }
-
-      if (!rect || !rect.width || !rect.height) {
-        const bg = document.getElementById("bg");
-        if (bg) rect = bg.getBoundingClientRect();
-      }
-
-      if (!rect || !rect.width || !rect.height) {
-        rect = stageRect;
-      }
-
-      const left = rect.left - stageRect.left;
-      const top = rect.top - stageRect.top;
-
-      layer.style.position = "absolute";
-      layer.style.left = left + "px";
-      layer.style.top = top + "px";
-      layer.style.width = rect.width + "px";
-      layer.style.height = rect.height + "px";
-      layer.style.zIndex = "999";
-      layer.style.pointerEvents = "none";
-      layer.style.overflow = "visible";
-
-      layer.innerHTML = "";
-
-      markers
-        .filter(m => m && m.status !== "deleted")
-        .forEach((m, index) => {
-          const x = Number(m.x);
-          const y = Number(m.y);
-
-          if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            console.warn("[forceRenderMarkers] invalid marker position", m);
-            return;
-          }
-
-          const dot = document.createElement("div");
-          dot.className = "marker-force-dot";
-          dot.dataset.markerId = m.id || m.local_marker_id || "";
-
-          dot.style.position = "absolute";
-          dot.style.left = (Math.max(0, Math.min(1, x)) * rect.width) + "px";
-          dot.style.top = (Math.max(0, Math.min(1, y)) * rect.height) + "px";
-          dot.style.width = "18px";
-          dot.style.height = "18px";
-          dot.style.background = "#dc2626";
-          dot.style.border = "3px solid #ffffff";
-          dot.style.borderRadius = "9999px";
-          dot.style.boxShadow = "0 2px 8px rgba(0,0,0,.35)";
-          dot.style.transform = "translate(-50%, -50%)";
-          dot.style.zIndex = "1000";
-          dot.style.pointerEvents = "auto";
-          dot.style.cursor = "pointer";
-
-          dot.title = `${index + 1}. ${m.vendor_name || ""} / ${m.type || ""}`;
-
-          dot.addEventListener("click", function(e) {
-            e.stopPropagation();
-            selectedId = m.id;
-            if (typeof openQuickMarkerEditor === "function") {
-              openQuickMarkerEditor(m, { isNew: false });
-            }
-            if (typeof redrawOverlay === "function") redrawOverlay();
-            forceRenderMarkers();
-          });
-
-          layer.appendChild(dot);
-        });
-
-      console.debug("[forceRenderMarkers]", {
-        key,
-        markerCount: markers.length,
-        visibleDots: layer.children.length,
-        rect,
-        layerRect: layer.getBoundingClientRect()
-      });
+      removeMarkerForceLayer();
     }
 
     function resizeStage(){
@@ -5188,7 +5168,7 @@
         y: clamp(Number.isFinite(Number(src.y)) ? Number(src.y) : 0.5, 0, 1),
         width: clamp(Number.isFinite(Number(src.width)) ? Number(src.width) : 0.18, 0.08, 0.6),
         height: clamp(Number.isFinite(Number(src.height)) ? Number(src.height) : 0.065, 0.04, 0.3),
-        text_content: (src.text_content ?? src.textContent ?? "メモを入力"),
+        text_content: (src.text_content ?? src.textContent ?? ""),
         note_type: src.note_type || src.noteType || "memo",
         font_size: clamp(parseInt(String(src.font_size ?? src.fontSize ?? 14), 10) || 14, 10, 32),
         font_weight: String(src.font_weight || src.fontWeight || "normal") === "bold" ? "bold" : "normal",
@@ -5688,7 +5668,7 @@
         local_text_id: note.local_text_id,
         isNew,
       };
-      $("textNoteEditorContent").value = (note.text_content ?? "メモを入力");
+      $("textNoteEditorContent").value = (note.text_content ?? "");
       $("textNoteEditorType").value = note.note_type || "memo";
       $("textNoteEditorFontSize").value = String(note.font_size || 14);
       $("textNoteEditorBold").checked = (note.font_weight || "normal") === "bold";
@@ -5719,7 +5699,7 @@
         y: ratio.y,
         width: 0.18,
         height: 0.065,
-        text_content: "メモを入力",
+        text_content: "",
         note_type: "memo",
         font_size: 14,
         font_weight: "normal",
@@ -5841,7 +5821,7 @@
         y: clamp(Number.isFinite(Number(ratioRaw?.y)) ? Number(ratioRaw.y) : 0.5, 0, 1),
       };
       console.debug("[marker] createDraftMarkerAt実行", { key, x, y, ratioRaw, ratio });
-      const selectedCategory = String($("typeSelect")?.value || "共通");
+      const selectedCategory = "共通";
       const nowIso = new Date().toISOString();
       const pageNumber = store?.activeBg?.kind === "pdf"
         ? (parseInt(String(store?.activeBg?.page ?? "1"), 10) || 1)
@@ -5919,20 +5899,14 @@
       selectedId = m.id;
       selectedTextNoteId = null;
       saveStore();
-      if (typeof redrawOverlay === "function") {
-        redrawOverlay();
-      }
-      forceRenderMarkers();
-      requestAnimationFrame(() => {
-        if (typeof redrawOverlay === "function") redrawOverlay();
-        forceRenderMarkers();
-      });
+      removeMarkerForceLayer();
+      if (typeof redrawOverlay === "function") redrawOverlay();
+      if (typeof redrawList === "function") redrawList();
       try{
         markDirty("marker created");
       }catch(e){
         console.warn("[marker created] markDirty failed but marker stays local", e);
       }
-      redrawList();
       syncButtons();
       syncSelectorsFromSelectedMarker();
       try{
@@ -6108,6 +6082,8 @@
 
     function deleteSelected(){
       if(!selectedId) return;
+      const ok = confirm("この指摘を削除しますか？");
+      if(!ok) return;
       deleteMarkerById(selectedId);
     }
 
@@ -6120,7 +6096,7 @@
     }
 
     function redrawOverlay(){
-      ensureMarkerForceLayer();
+      removeMarkerForceLayer();
       const key = activeKey();
       if(!store.markersByKey) store.markersByKey = {};
       if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
@@ -6152,7 +6128,6 @@
       overlay.appendChild(markerLayer);
 
       const imgRectNow = getCurrentImageRect();
-      const displayRect = getPdfDisplayRectInStage();
       arr.forEach((m, idx)=>{
         const isSel = m.id === selectedId;
         const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
@@ -6256,31 +6231,11 @@
       }
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
-      renderForceMarkerLayer(arr, displayRect);
       redrawTextNotes();
-      if(markerForceLayer) stageWrap.appendChild(markerForceLayer);
       console.debug("overlay children", {
         overlayChildren: overlay?.children?.length || 0,
         markerElements: document.querySelectorAll(".marker-dot, .pin-dot, [data-marker-id]").length
       });
-      const bgEl = document.getElementById("bg");
-      const overlayEl = document.getElementById("overlay");
-      const forceEl = document.getElementById("markerForceLayer");
-      const stageEl = document.getElementById("stageWrap");
-      console.debug("layer order check", {
-        bgZ: bgEl ? getComputedStyle(bgEl).zIndex : null,
-        overlayZ: overlayEl ? getComputedStyle(overlayEl).zIndex : null,
-        markerForceZ: forceEl ? getComputedStyle(forceEl).zIndex : null,
-        markerForceChildren: forceEl?.children?.length,
-        stageChildren: Array.from(stageEl?.children || []).map(el => ({
-          id: el.id,
-          className: el.className,
-          zIndex: getComputedStyle(el).zIndex
-        }))
-      });
-      if (typeof forceRenderMarkers === "function") {
-        forceRenderMarkers();
-      }
       console.debug("redrawOverlay done");
     }
 
@@ -6388,7 +6343,7 @@
     function shouldIgnoreBlankCreate(e){
       const now = Date.now();
       if(now < suppressTapCreateUntil) return true;
-      if(e?.type === "click" && now - lastPointerDownAt < 400) return true;
+      if((e?.type === "click" || e?.type === "touchstart") && now - lastPointerDownAt < 400) return true;
       if(quickEditorState && quickMarkerEditor && quickMarkerEditor.contains(e.target)) return true;
       if(textNoteEditorState && textNoteEditor && textNoteEditor.contains(e.target)) return true;
       return false;
@@ -6584,11 +6539,8 @@
 
     function registerStagePointerEvents(){
       if(stagePointerEventsRegistered) return;
-      overlay.addEventListener("click", fallbackTapHandler, { passive: false });
       overlay.addEventListener("touchstart", fallbackTapHandler, { passive: false });
-      bgCanvas.addEventListener("click", fallbackTapHandler, { passive: false });
       bgCanvas.addEventListener("touchstart", fallbackTapHandler, { passive: false });
-      stageWrap.addEventListener("click", fallbackTapHandler, { passive: false });
       stageWrap.addEventListener("touchstart", fallbackTapHandler, { passive: false });
       stagePointerEventsRegistered = true;
       console.debug("stage pointer events registered");
@@ -6680,6 +6632,8 @@
     });
     $("quickMarkerDelete").addEventListener("click", ()=>{
       if(!quickEditorState) return;
+      const ok = confirm("この指摘を削除しますか？");
+      if(!ok) return;
       deleteMarkerById(quickEditorState.markerId);
     });
     $("quickMarkerMemo").addEventListener("keydown", (e)=>{
@@ -6776,10 +6730,28 @@
     // Filter
     $("filterVendor").addEventListener("change", ()=>{
       filterVendor = $("filterVendor").value;
+      const panelFilter = $("issuePanelFilterVendor");
+      if(panelFilter) panelFilter.value = filterVendor;
+      if($("pdfExportVendor")) $("pdfExportVendor").value = filterVendor;
       redrawList();
     });
     $("filterStatus").addEventListener("change", ()=>{
       filterStatus = $("filterStatus").value || "open";
+      const panelStatus = $("issuePanelFilterStatus");
+      if(panelStatus) panelStatus.value = filterStatus;
+      if($("pdfExportStatus")) $("pdfExportStatus").value = filterStatus;
+      redrawList();
+    });
+    $("issuePanelFilterVendor").addEventListener("change", ()=>{
+      filterVendor = $("issuePanelFilterVendor").value || "";
+      $("filterVendor").value = filterVendor;
+      if($("pdfExportVendor")) $("pdfExportVendor").value = filterVendor;
+      redrawList();
+    });
+    $("issuePanelFilterStatus").addEventListener("change", ()=>{
+      filterStatus = $("issuePanelFilterStatus").value || "open";
+      $("filterStatus").value = filterStatus;
+      if($("pdfExportStatus")) $("pdfExportStatus").value = filterStatus;
       redrawList();
     });
 
@@ -7690,6 +7662,7 @@
     }
 
     async function setPdfBackground(file, opts = {}){
+      removeMarkerForceLayer();
       const pdfId = String(opts.pdfId || randomPdfId());
       const drawingId = opts.drawingId || null;
       const page = clamp(parseInt(String(opts.page || $("pageInput").value || "1"),10), 1, 9999);
@@ -7713,6 +7686,7 @@
           toast("PDF読み込み完了。図面をクリックしてマーカーを追加できます。");
         }
         markers();
+        removeMarkerForceLayer();
         redrawOverlay();
         redrawList();
       }catch(e){
@@ -7846,6 +7820,7 @@
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       closeTextNoteEditor();
       clearCurrentFloorDrawingState();
+      removeMarkerForceLayer();
       redrawBackground();
       syncButtons();
       if(isFullscreen) updateFsInfo();
@@ -8093,6 +8068,9 @@
         redrawList();
         syncButtons();
         syncSelectorsFromSelectedMarker();
+        syncIssuePanelButton();
+        if($("issuePanelFilterVendor")) $("issuePanelFilterVendor").value = filterVendor;
+        if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = filterStatus;
         updatePageInfo();
         saveStore();
         markDirty("pdf deleted");
@@ -8196,6 +8174,12 @@
     $("vendorWorkStatusFilter").addEventListener("change", ()=>{
       renderVendorWorkList();
     });
+    $("btnOpenMappingManager").addEventListener("click", ()=>{
+      showView("floor_inspection");
+      $("floorInspectionView")?.classList.add("show-management");
+      $("mappingPanel").classList.add("open");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
     $("inspectionSiteList").addEventListener("click", (e)=>{
       const btn = e.target.closest('button[data-act="open-site"]');
       if(!btn) return;
@@ -8270,7 +8254,21 @@
       showView("floor_inspection");
     });
     $("btnToggleMappingPanel").addEventListener("click", ()=>{
-      $("mappingPanel").classList.toggle("open");
+      const panel = $("mappingPanel");
+      panel.classList.toggle("open");
+      if(!panel.classList.contains("open")){
+        $("floorInspectionView")?.classList.remove("show-management");
+      }
+    });
+    $("btnToggleIssuePanel").addEventListener("click", ()=>{
+      if(issuePanelOpen){
+        closeIssuePanel();
+      }else{
+        openIssuePanel();
+      }
+    });
+    $("btnCloseIssuePanel").addEventListener("click", ()=>{
+      closeIssuePanel();
     });
     $("btnSaveMappings").addEventListener("click", ()=>{ saveCategoryVendorMappings(); });
     $("btnReloadMappings").addEventListener("click", ()=>{ loadCategoryVendorMappings(); });
@@ -8349,9 +8347,12 @@
       setInputMode("pin");
       $("filterVendor").value = "";
       $("filterStatus").value = "open";
+      if($("issuePanelFilterVendor")) $("issuePanelFilterVendor").value = "";
+      if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = "open";
       if($("vendorWorkStatusFilter")) $("vendorWorkStatusFilter").value = "open";
       $("memoInput").value = "";
       $("pageInput").value = "1";
+      closeIssuePanel();
       lastPdfFile = null;
       currentDrawingId = null;
       currentDrawingStoragePath = null;
@@ -8630,6 +8631,7 @@
       console.debug("boot start");
       try{
         resizeStage();
+        removeMarkerForceLayer();
         loadCategoryVendorMappings().catch(()=>{});
         // Ensure active key exists
         markers();
