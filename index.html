@@ -99,6 +99,65 @@
       margin-top:8px;
       flex-wrap:wrap;
     }
+    .trash-modal-backdrop{
+      position:fixed;
+      inset:0;
+      background:rgba(15,23,42,.45);
+      z-index:2650;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+    .trash-modal-backdrop.open{display:flex}
+    .trash-modal{
+      width:min(1100px, 96vw);
+      max-height:86vh;
+      overflow:auto;
+      background:#fff;
+      border:1px solid #dbe1ea;
+      border-radius:14px;
+      box-shadow:0 12px 32px rgba(15,23,42,.26);
+      padding:14px;
+    }
+    .trash-modal-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-bottom:10px;
+    }
+    .trash-row{display:grid;grid-template-columns:1.2fr 1.1fr 1.1fr .8fr .8fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .trash-row.head{font-size:12px;font-weight:700;background:#f8fafc}
+    .trash-row:last-child{border-bottom:none}
+    .trash-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .trash-expired{font-size:11px;color:#b45309;border:1px solid #fcd34d;background:#fffbeb;padding:3px 8px;border-radius:999px}
+    .confirm-modal-backdrop{
+      position:fixed;
+      inset:0;
+      background:rgba(15,23,42,.45);
+      z-index:2700;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+    .confirm-modal-backdrop.open{display:flex}
+    .confirm-modal{
+      width:min(460px, 100%);
+      background:#fff;
+      border:1px solid #dbe1ea;
+      border-radius:14px;
+      box-shadow:0 12px 32px rgba(15,23,42,.26);
+      padding:14px;
+    }
+    .confirm-modal-message{
+      white-space:pre-wrap;
+      line-height:1.6;
+      margin-bottom:10px;
+    }
+    .confirm-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
     .list{overflow:auto;border:1px solid var(--line);border-radius:14px}
     .item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
     .item:last-child{border-bottom:none}
@@ -678,6 +737,7 @@
             </div>
             <button class="btn primary" id="btnAddFloor" type="button">フロア追加</button>
             <button class="btn" id="btnGoCategoryVendorSettings" type="button">指摘種別・業者紐づけ設定</button>
+            <button class="btn" id="btnOpenTrash" type="button">ゴミ箱（0）</button>
           </div>
           <div id="floorAddValidation" class="small" style="color:#b91c1c;min-height:18px;margin-top:4px"></div>
         </div>
@@ -1044,6 +1104,41 @@
       </div>
     </div>
   </div>
+  <div id="trashModalBackdrop" class="trash-modal-backdrop" aria-hidden="true">
+    <div id="trashModal" class="trash-modal" role="dialog" aria-modal="true" aria-labelledby="trashModalTitle">
+      <div class="trash-modal-head">
+        <div>
+          <div id="trashModalTitle" class="floor-change-modal-title" style="margin-bottom:4px">ゴミ箱</div>
+          <div class="small">削除したフロアは10日以内であれば復元できます。10日を過ぎると完全削除の対象になります。</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn danger" id="btnHardDeleteExpiredTrash" type="button">10日経過データを完全削除</button>
+          <button class="btn" id="btnTrashClose" type="button">閉じる</button>
+        </div>
+      </div>
+      <div class="list">
+        <div class="trash-row head">
+          <div>フロア名</div>
+          <div>削除日時</div>
+          <div>完全削除予定日</div>
+          <div>指摘件数</div>
+          <div>図面登録状態</div>
+          <div>操作</div>
+        </div>
+        <div id="trashFloorList"></div>
+      </div>
+    </div>
+  </div>
+  <div id="confirmModalBackdrop" class="confirm-modal-backdrop" aria-hidden="true">
+    <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <div id="confirmModalTitle" class="floor-change-modal-title">確認</div>
+      <div id="confirmModalMessage" class="confirm-modal-message"></div>
+      <div class="confirm-modal-actions">
+        <button class="btn" id="confirmModalCancel" type="button">キャンセル</button>
+        <button class="btn danger" id="confirmModalOk" type="button">実行</button>
+      </div>
+    </div>
+  </div>
 
   <!-- フルスクリーン操作パネル - body直下でposition:fixed -->
   <div id="fsPanel">
@@ -1217,9 +1312,12 @@
     let selectedVendorWorkName = "";
     let inspectionSitesCache = [];
     let floorsCache = [];
+    let trashFloorsCache = [];
     let floorChangeTargetFloor = null;
+    let pendingConfirmResolver = null;
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
+    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
     const INSPECTION_SELECT_COLUMNS = "id, title, site_id, floor_id, floor_name, site_name, inspected_at, inspector_name, status, inspection_mode, settings, created_at, updated_at";
     const INSPECTION_DETAIL_SELECT_COLUMNS = `${INSPECTION_SELECT_COLUMNS}, current_drawing_id, current_page`;
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -2583,6 +2681,9 @@
         }
         currentFloorId = selectedFloorId || insp.floor_id || currentFloorId || null;
         currentFloorName = selectedFloor?.floor_name || insp.floor_name || "";
+        if(selectedFloor && !isActiveFloorStatus(selectedFloor.status)){
+          throw new Error("trash floor is not openable");
+        }
 
         resetFloorRuntimeState();
         applyInspectionForm(insp);
@@ -2726,6 +2827,12 @@
       }
       autoSaveInFlight = true;
       try{
+        if(selectedFloor && !isActiveFloorStatus(selectedFloor.status)){
+          if(manual){
+            toast("ゴミ箱内のフロアは保存対象外です。復元後に保存してください。");
+          }
+          return false;
+        }
         saveStore();
         if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
           updateSaveStatus("local_only");
@@ -3335,6 +3442,103 @@
       if(el) el.textContent = message || "";
     }
 
+    function isTrashStatus(value){
+      return String(value || "").toLowerCase() === "trash";
+    }
+
+    function isDeletedStatus(value){
+      return String(value || "").toLowerCase() === "deleted";
+    }
+
+    function isActiveFloorStatus(value){
+      if(value == null || value === "") return true;
+      return String(value).toLowerCase() === "active";
+    }
+
+    function computeTrashMeta(floor){
+      const deletedAt = new Date(floor?.deleted_at || "").getTime();
+      const canHardDelete = Number.isFinite(deletedAt)
+        ? (Date.now() - deletedAt >= TEN_DAYS_MS)
+        : false;
+      const hardDeleteAt = Number.isFinite(deletedAt)
+        ? new Date(deletedAt + TEN_DAYS_MS).toISOString()
+        : null;
+      return { canHardDelete, hardDeleteAt };
+    }
+
+    function formatDateTimeLabel(value){
+      if(!value) return "-";
+      const d = new Date(value);
+      if(Number.isNaN(d.getTime())) return "-";
+      return d.toLocaleString();
+    }
+
+    function updateTrashButtonCount(){
+      const btn = $("btnOpenTrash");
+      if(!btn) return;
+      btn.textContent = `ゴミ箱（${trashFloorsCache.length}）`;
+    }
+
+    function closeTrashModal(){
+      const backdrop = $("trashModalBackdrop");
+      if(backdrop){
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+    }
+
+    function openTrashModal(){
+      const backdrop = $("trashModalBackdrop");
+      if(backdrop){
+        backdrop.classList.add("open");
+        backdrop.setAttribute("aria-hidden", "false");
+      }
+    }
+
+    function closeConfirmModal(answer = false){
+      const backdrop = $("confirmModalBackdrop");
+      if(backdrop){
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+      if(typeof pendingConfirmResolver === "function"){
+        const resolver = pendingConfirmResolver;
+        pendingConfirmResolver = null;
+        resolver(!!answer);
+      }
+    }
+
+    function askConfirm(message, options = {}){
+      const title = options.title || "確認";
+      const okLabel = options.okLabel || "実行";
+      const cancelLabel = options.cancelLabel || "キャンセル";
+      const danger = options.danger !== false;
+      const titleEl = $("confirmModalTitle");
+      const msgEl = $("confirmModalMessage");
+      const okBtn = $("confirmModalOk");
+      const cancelBtn = $("confirmModalCancel");
+      const backdrop = $("confirmModalBackdrop");
+      if(!titleEl || !msgEl || !okBtn || !cancelBtn || !backdrop){
+        return Promise.resolve(window.confirm(message));
+      }
+      if(typeof pendingConfirmResolver === "function"){
+        const previous = pendingConfirmResolver;
+        pendingConfirmResolver = null;
+        previous(false);
+      }
+      titleEl.textContent = title;
+      msgEl.textContent = message || "";
+      okBtn.textContent = okLabel;
+      cancelBtn.textContent = cancelLabel;
+      okBtn.classList.toggle("danger", !!danger);
+      okBtn.classList.toggle("primary", !danger);
+      backdrop.classList.add("open");
+      backdrop.setAttribute("aria-hidden", "false");
+      return new Promise(resolve=>{
+        pendingConfirmResolver = resolve;
+      });
+    }
+
     function renderFloorAddUi(){
       const floorSelect = $("newFloorSelect");
       const otherWrap = $("newFloorOtherWrap");
@@ -3355,70 +3559,145 @@
       }
     }
 
+    async function buildFloorSummaryByIds(sb, floorIds, siteId){
+      const summaryByFloor = new Map(floorIds.map(id=>[String(id), {
+        total_count: 0,
+        unresolved_count: 0,
+        completed_count: 0,
+        drawing_registered: false,
+      }]));
+      if(floorIds.length === 0) return summaryByFloor;
+
+      const { data: inspections } = await sb.from("inspections")
+        .select("id, floor_id")
+        .in("floor_id", floorIds)
+        .eq("site_id", siteId);
+      const inspRows = inspections || [];
+      const inspIds = inspRows.map(i=>i.id).filter(Boolean);
+      const inspToFloor = new Map(inspRows.map(i=>[String(i.id), String(i.floor_id || "")]));
+
+      if(inspIds.length > 0){
+        const { data: markers } = await sb.from("markers")
+          .select("inspection_id, status")
+          .in("inspection_id", inspIds)
+          .neq("status", "deleted");
+        (markers || []).forEach(m=>{
+          const floorKey = inspToFloor.get(String(m.inspection_id || ""));
+          if(!floorKey || !summaryByFloor.has(floorKey)) return;
+          const bucket = summaryByFloor.get(floorKey);
+          bucket.total_count += 1;
+          if(isUnresolvedStatus(m.status)){
+            bucket.unresolved_count += 1;
+          }else{
+            bucket.completed_count += 1;
+          }
+        });
+      }
+
+      const { data: drawings } = await sb.from("drawings")
+        .select("id, floor_id")
+        .in("floor_id", floorIds)
+        .eq("site_id", siteId)
+        .neq("status", "deleted");
+      (drawings || []).forEach(d=>{
+        const floorKey = String(d.floor_id || "");
+        if(!summaryByFloor.has(floorKey)) return;
+        summaryByFloor.get(floorKey).drawing_registered = true;
+      });
+
+      return summaryByFloor;
+    }
+
     async function loadFloors(siteId){
       if(!siteId || !isSupabaseConfigured()) return;
       try{
         const sb = getSupabase();
         const { data: floors, error } = await sb.from("site_floors")
-          .select("id, site_id, floor_name, floor_order, status, created_at, updated_at")
+          .select("id, site_id, floor_name, floor_order, status, deleted_at, created_at, updated_at")
           .eq("site_id", siteId)
           .or("status.eq.active,status.is.null")
           .order("floor_order", { ascending: true })
           .order("floor_name", { ascending: true });
         if(error) throw error;
-        const floorRows = (floors || []).filter(f=>String(f?.status || "").toLowerCase() !== "deleted");
+        const floorRows = (floors || []).filter(f=>isActiveFloorStatus(f?.status));
         const floorIds = floorRows.map(f=>f.id).filter(Boolean);
-        const summaryByFloor = new Map(floorIds.map(id=>[String(id), {
-          total_count: 0,
-          unresolved_count: 0,
-          completed_count: 0,
-          drawing_registered: false,
-        }]));
-        if(floorIds.length > 0){
-          const { data: inspections } = await sb.from("inspections")
-            .select("id, floor_id")
-            .in("floor_id", floorIds)
-            .eq("site_id", siteId);
-          const inspRows = inspections || [];
-          const inspIds = inspRows.map(i=>i.id).filter(Boolean);
-          const inspToFloor = new Map(inspRows.map(i=>[String(i.id), String(i.floor_id || "")]));
-
-          if(inspIds.length > 0){
-            const { data: markers } = await sb.from("markers")
-              .select("inspection_id, status")
-              .in("inspection_id", inspIds)
-              .neq("status", "deleted");
-            (markers || []).forEach(m=>{
-              const floorKey = inspToFloor.get(String(m.inspection_id || ""));
-              if(!floorKey || !summaryByFloor.has(floorKey)) return;
-              const bucket = summaryByFloor.get(floorKey);
-              bucket.total_count += 1;
-              if(isUnresolvedStatus(m.status)){
-                bucket.unresolved_count += 1;
-              }else{
-                bucket.completed_count += 1;
-              }
-            });
-          }
-
-          const { data: drawings } = await sb.from("drawings")
-            .select("id, floor_id")
-            .in("floor_id", floorIds)
-            .eq("site_id", siteId)
-            .neq("status", "deleted");
-          (drawings || []).forEach(d=>{
-            const floorKey = String(d.floor_id || "");
-            if(!summaryByFloor.has(floorKey)) return;
-            summaryByFloor.get(floorKey).drawing_registered = true;
-          });
-        }
+        const summaryByFloor = await buildFloorSummaryByIds(sb, floorIds, siteId);
         floorsCache = sortFloorsByLevel(floorRows.map(f=>({
           ...f,
           ...(summaryByFloor.get(String(f.id)) || {}),
         })));
         renderFloorList(floorsCache);
+        await loadTrashFloors(siteId, { render: false });
       }catch(e){
         showCloudError("フロア一覧の取得", e);
+      }
+    }
+
+    function renderTrashFloorList(floors){
+      const list = $("trashFloorList");
+      if(!list) return;
+      list.innerHTML = "";
+      if(!floors || floors.length === 0){
+        const row = document.createElement("div");
+        row.className = "trash-row";
+        row.style.gridTemplateColumns = "1fr";
+        row.innerHTML = `<div class="small">ゴミ箱にフロアはありません。</div>`;
+        list.appendChild(row);
+        return;
+      }
+      floors.forEach(floor=>{
+        const { canHardDelete, hardDeleteAt } = computeTrashMeta(floor);
+        const row = document.createElement("div");
+        row.className = "trash-row";
+        row.innerHTML = `
+          <div>${escapeHtml(getFloorDisplayName(floor) || "-")}</div>
+          <div>${escapeHtml(formatDateTimeLabel(floor.deleted_at))}</div>
+          <div>${escapeHtml(formatDateTimeLabel(hardDeleteAt))}</div>
+          <div>${Number(floor.total_count || 0)}</div>
+          <div>${floor.drawing_registered ? "登録済み" : "未登録"}</div>
+          <div class="trash-actions">
+            ${canHardDelete ? `<span class="trash-expired">完全削除可能</span>` : ""}
+            <button class="btn" type="button" data-act="restore-floor" data-id="${escapeHtml(String(floor.id))}">復元</button>
+            <button class="btn danger" type="button" data-act="hard-delete-floor" data-id="${escapeHtml(String(floor.id))}">完全削除</button>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    async function loadTrashFloors(siteId = selectedSiteId, options = {}){
+      if(!siteId || !isSupabaseConfigured()){
+        trashFloorsCache = [];
+        updateTrashButtonCount();
+        if(options.render !== false) renderTrashFloorList([]);
+        return [];
+      }
+      const shouldRender = options.render !== false;
+      try{
+        const sb = getSupabase();
+        const { data: floors, error } = await sb.from("site_floors")
+          .select("id, site_id, floor_name, floor_order, status, deleted_at, created_at, updated_at")
+          .eq("site_id", siteId)
+          .eq("status", "trash")
+          .order("deleted_at", { ascending: false });
+        if(error) throw error;
+        const floorRows = floors || [];
+        const floorIds = floorRows.map(f=>f.id).filter(Boolean);
+        const summaryByFloor = await buildFloorSummaryByIds(sb, floorIds, siteId);
+        trashFloorsCache = sortFloorsByLevel(floorRows.map(f=>({
+          ...f,
+          ...(summaryByFloor.get(String(f.id)) || {}),
+        })));
+        updateTrashButtonCount();
+        if(shouldRender) renderTrashFloorList(trashFloorsCache);
+        return trashFloorsCache;
+      }catch(e){
+        updateTrashButtonCount();
+        if(shouldRender){
+          renderTrashFloorList([]);
+          showCloudError("ゴミ箱一覧の取得", e);
+        }
+        return [];
       }
     }
 
@@ -3494,13 +3773,18 @@
       }
     }
 
-    async function softDeleteFloorScopedRows(sb, tableName, floorId, siteId, now, options = {}){
+    async function updateFloorScopedRowsStatus(sb, tableName, floorId, siteId, statusValue, now, options = {}){
       const floorColumn = options.floorColumn || "floor_id";
       const useSiteFilter = options.useSiteFilter !== false;
-      const payloads = [
-        { status: "deleted", deleted_at: now, updated_at: now },
-        { status: "deleted", updated_at: now },
-      ];
+      const payloads = statusValue === "active"
+        ? [
+          { status: "active", deleted_at: null, updated_at: now },
+          { status: "active", updated_at: now },
+        ]
+        : [
+          { status: statusValue, deleted_at: now, updated_at: now },
+          { status: statusValue, updated_at: now },
+        ];
       let lastError = null;
       const tryWithSite = !!(siteId && useSiteFilter);
       for(const payload of payloads){
@@ -3511,9 +3795,7 @@
           const { error } = await query;
           if(!error) return;
           lastError = error;
-          if(withSite && isMissingColumnOrTableError(error)){
-            continue;
-          }
+          if(withSite && isMissingColumnOrTableError(error)) continue;
           break;
         }
         if(lastError && !isMissingColumnOrTableError(lastError)) break;
@@ -3521,50 +3803,153 @@
       if(lastError) throw lastError;
     }
 
-    async function softDeleteMarkerPhotosByFloor(sb, floorId, siteId, now){
-      let markerQuery = sb.from("markers").select("id").eq("floor_id", floorId);
-      if(siteId) markerQuery = markerQuery.eq("site_id", siteId);
-      const { data: markerRows, error: markerFetchError } = await markerQuery;
-      if(markerFetchError) throw markerFetchError;
-      const markerIds = (markerRows || []).map(row=>row.id).filter(Boolean);
-      if(markerIds.length === 0) return;
-      const payloads = [
-        { status: "deleted", deleted_at: now, updated_at: now },
-        { status: "deleted", updated_at: now },
-      ];
-      let lastError = null;
-      for(const payload of payloads){
-        const { error } = await sb.from("marker_photos")
-          .update(payload)
-          .in("marker_id", markerIds);
-        if(!error) return;
-        lastError = error;
-        if(!isMissingColumnOrTableError(error)) break;
+    async function selectRowsByFloorWithSiteFallback(sb, tableName, selectColumns, floorId, siteId, options = {}){
+      const floorColumn = options.floorColumn || "floor_id";
+      const useSiteFilter = options.useSiteFilter !== false;
+      const applyInspectFilter = Array.isArray(options.inspectionIds) && options.inspectionIds.length > 0;
+      let query = sb.from(tableName).select(selectColumns).eq(floorColumn, floorId);
+      if(useSiteFilter && siteId) query = query.eq("site_id", siteId);
+      if(applyInspectFilter) query = query.in("inspection_id", options.inspectionIds);
+      let { data, error } = await query;
+      if(error && useSiteFilter && siteId && isMissingColumnOrTableError(error)){
+        let retry = sb.from(tableName).select(selectColumns).eq(floorColumn, floorId);
+        if(applyInspectFilter) retry = retry.in("inspection_id", options.inspectionIds);
+        const retryRes = await retry;
+        data = retryRes.data;
+        error = retryRes.error;
       }
-      if(lastError) throw lastError;
+      if(error) throw error;
+      return data || [];
     }
 
-    async function softDeleteDrawingPagesByFloor(sb, floorId, siteId, now){
-      let drawingIdQuery = sb.from("drawings").select("id").eq("floor_id", floorId);
-      if(siteId) drawingIdQuery = drawingIdQuery.eq("site_id", siteId);
-      const { data: drawingRows, error: drawingFetchError } = await drawingIdQuery;
-      if(drawingFetchError) throw drawingFetchError;
-      const drawingIds = (drawingRows || []).map(row=>row.id).filter(Boolean);
-      if(drawingIds.length === 0) return;
-      const payloads = [
-        { status: "deleted", deleted_at: now, updated_at: now },
-        { status: "deleted", updated_at: now },
-      ];
-      let lastError = null;
-      for(const payload of payloads){
-        const { error } = await sb.from("drawing_pages")
-          .update(payload)
-          .in("drawing_id", drawingIds);
-        if(!error) return;
-        lastError = error;
-        if(!isMissingColumnOrTableError(error)) break;
+    async function updateRowsByIdsWithPayloadCandidates(sb, tableName, idColumn, ids, payloadCandidates){
+      if(!Array.isArray(ids) || ids.length === 0) return;
+      const chunkSize = 200;
+      for(let i = 0; i < ids.length; i += chunkSize){
+        const chunk = ids.slice(i, i + chunkSize);
+        let done = false;
+        let lastError = null;
+        for(const payload of payloadCandidates){
+          const { error } = await sb.from(tableName).update(payload).in(idColumn, chunk);
+          if(!error){
+            done = true;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!done && lastError) throw lastError;
       }
-      if(lastError) throw lastError;
+    }
+
+    async function deleteRowsByIds(sb, tableName, idColumn, ids){
+      if(!Array.isArray(ids) || ids.length === 0) return;
+      const chunkSize = 200;
+      for(let i = 0; i < ids.length; i += chunkSize){
+        const chunk = ids.slice(i, i + chunkSize);
+        const { error } = await sb.from(tableName).delete().in(idColumn, chunk);
+        if(error) throw error;
+      }
+    }
+
+    async function updateMarkerPhotosByFloorStatus(sb, floorId, siteId, statusValue, now){
+      const markerRows = await selectRowsByFloorWithSiteFallback(sb, "markers", "id", floorId, siteId);
+      const markerIds = markerRows.map(row=>row.id).filter(Boolean);
+      if(markerIds.length === 0) return;
+      const payloadCandidates = statusValue === "active"
+        ? [
+          { status: "active", deleted_at: null, updated_at: now },
+          { status: "active", updated_at: now },
+        ]
+        : [
+          { status: statusValue, deleted_at: now, updated_at: now },
+          { status: statusValue, updated_at: now },
+        ];
+      await updateRowsByIdsWithPayloadCandidates(sb, "marker_photos", "marker_id", markerIds, payloadCandidates);
+    }
+
+    async function updateDrawingPagesByFloorStatus(sb, floorId, siteId, statusValue, now){
+      const drawingRows = await selectRowsByFloorWithSiteFallback(sb, "drawings", "id", floorId, siteId);
+      const drawingIds = drawingRows.map(row=>row.id).filter(Boolean);
+      if(drawingIds.length === 0) return;
+      const payloadCandidates = statusValue === "active"
+        ? [
+          { status: "active", deleted_at: null, updated_at: now },
+          { status: "active", updated_at: now },
+        ]
+        : [
+          { status: statusValue, deleted_at: now, updated_at: now },
+          { status: statusValue, updated_at: now },
+        ];
+      await updateRowsByIdsWithPayloadCandidates(sb, "drawing_pages", "drawing_id", drawingIds, payloadCandidates);
+    }
+
+    async function moveMarkersToTrashByFloor(sb, floorId, siteId, now){
+      const markerRows = await selectRowsByFloorWithSiteFallback(sb, "markers", "id, status, marker_data", floorId, siteId);
+      for(const marker of markerRows){
+        const currentStatus = String(marker?.status || "open").toLowerCase();
+        const markerData = (marker?.marker_data && typeof marker.marker_data === "object" && !Array.isArray(marker.marker_data))
+          ? { ...marker.marker_data, previous_status: currentStatus }
+          : { previous_status: currentStatus };
+        const candidates = [
+          { status: "trash", previous_status: currentStatus, marker_data: markerData, deleted_at: now, updated_at: now },
+          { status: "trash", marker_data: markerData, deleted_at: now, updated_at: now },
+          { status: "trash", deleted_at: now, updated_at: now },
+          { status: "trash", updated_at: now },
+        ];
+        let lastError = null;
+        let done = false;
+        for(const payload of candidates){
+          let query = sb.from("markers").update(payload).eq("id", marker.id);
+          if(siteId) query = query.eq("site_id", siteId);
+          const { error } = await query;
+          if(!error){
+            done = true;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!done && lastError) throw lastError;
+      }
+    }
+
+    async function restoreMarkersFromTrashByFloor(sb, floorId, siteId, now){
+      const markerRows = await selectRowsByFloorWithSiteFallback(sb, "markers", "id, status, previous_status, marker_data", floorId, siteId);
+      for(const marker of markerRows){
+        if(!isTrashStatus(marker?.status)) continue;
+        const fromData = marker?.marker_data && typeof marker.marker_data === "object"
+          ? String(marker.marker_data.previous_status || "")
+          : "";
+        const prev = String(marker?.previous_status || fromData || "open").toLowerCase();
+        const restoredStatus = prev === "completed" ? "completed" : "open";
+        const markerData = (marker?.marker_data && typeof marker.marker_data === "object" && !Array.isArray(marker.marker_data))
+          ? { ...marker.marker_data }
+          : null;
+        if(markerData && Object.prototype.hasOwnProperty.call(markerData, "previous_status")){
+          delete markerData.previous_status;
+        }
+        const candidates = [
+          { status: restoredStatus, previous_status: null, marker_data: markerData, deleted_at: null, updated_at: now },
+          { status: restoredStatus, marker_data: markerData, deleted_at: null, updated_at: now },
+          { status: restoredStatus, deleted_at: null, updated_at: now },
+          { status: restoredStatus, updated_at: now },
+        ];
+        let lastError = null;
+        let done = false;
+        for(const payload of candidates){
+          let query = sb.from("markers").update(payload).eq("id", marker.id);
+          if(siteId) query = query.eq("site_id", siteId);
+          const { error } = await query;
+          if(!error){
+            done = true;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!done && lastError) throw lastError;
+      }
     }
 
     async function createFloorFromUi(){
@@ -3749,26 +4134,34 @@
       await openFloorChangeModal(floor);
     }
 
-    async function deleteFloor(floor){
+    async function moveFloorToTrash(floor){
       if(!floor?.id){
         toast("フロア削除に失敗しました");
         return;
       }
-      const ok = confirm("このフロアを削除します。\nこのフロアに登録されたPDF図面・ピン・テキストメモ・写真も一覧から表示されなくなります。\nよろしいですか？");
+      const ok = await askConfirm(
+        "このフロアをゴミ箱に移動します。\n10日以内であれば復元できます。\nよろしいですか？",
+        {
+          title: "フロア削除",
+          cancelLabel: "キャンセル",
+          okLabel: "ゴミ箱に移動",
+          danger: true,
+        }
+      );
       if(!ok) return;
       try{
         const sb = getSupabase();
         const now = new Date().toISOString();
         const floorId = floor.id;
         const siteId = selectedSiteId || floor.site_id || null;
-        await softDeleteFloorScopedRows(sb, "site_floors", floorId, siteId, now, { floorColumn: "id" });
-        await softDeleteFloorScopedRows(sb, "drawings", floorId, siteId, now);
-        await softDeleteDrawingPagesByFloor(sb, floorId, siteId, now);
-        await softDeleteFloorScopedRows(sb, "markers", floorId, siteId, now);
-        await softDeleteFloorScopedRows(sb, "drawing_text_notes", floorId, siteId, now);
-        await softDeleteMarkerPhotosByFloor(sb, floorId, siteId, now);
+        await updateFloorScopedRowsStatus(sb, "site_floors", floorId, siteId, "trash", now, { floorColumn: "id" });
+        await updateFloorScopedRowsStatus(sb, "drawings", floorId, siteId, "trash", now);
+        await updateDrawingPagesByFloorStatus(sb, floorId, siteId, "trash", now);
+        await moveMarkersToTrashByFloor(sb, floorId, siteId, now);
+        await updateFloorScopedRowsStatus(sb, "drawing_text_notes", floorId, siteId, "trash", now);
+        await updateMarkerPhotosByFloorStatus(sb, floorId, siteId, "trash", now);
         try{
-          await softDeleteFloorScopedRows(sb, "export_logs", floorId, siteId, now);
+          await updateFloorScopedRowsStatus(sb, "export_logs", floorId, siteId, "trash", now);
         }catch(exportLogErr){
           if(!isMissingColumnOrTableError(exportLogErr)) throw exportLogErr;
           console.warn("[floor delete] export_logs skipped", exportLogErr);
@@ -3784,10 +4177,139 @@
           showView("inspection_detail");
         }
         await refreshFloorList();
-        toast("フロアを削除しました");
+        await loadTrashFloors(selectedSiteId);
+        toast("フロアをゴミ箱に移動しました");
       }catch(error){
         console.error("[floor delete] error", error);
         toast("フロア削除に失敗しました");
+      }
+    }
+
+    async function restoreFloorFromTrash(floor){
+      if(!floor?.id){
+        toast("フロア復元に失敗しました");
+        return;
+      }
+      const ok = await askConfirm("このフロアを復元しますか？", {
+        title: "フロア復元",
+        cancelLabel: "キャンセル",
+        okLabel: "復元",
+        danger: false,
+      });
+      if(!ok) return;
+      try{
+        const sb = getSupabase();
+        const now = new Date().toISOString();
+        const floorId = floor.id;
+        const siteId = selectedSiteId || floor.site_id || null;
+        await updateFloorScopedRowsStatus(sb, "site_floors", floorId, siteId, "active", now, { floorColumn: "id" });
+        await updateFloorScopedRowsStatus(sb, "drawings", floorId, siteId, "active", now);
+        await updateDrawingPagesByFloorStatus(sb, floorId, siteId, "active", now);
+        await restoreMarkersFromTrashByFloor(sb, floorId, siteId, now);
+        await updateFloorScopedRowsStatus(sb, "drawing_text_notes", floorId, siteId, "active", now);
+        await updateMarkerPhotosByFloorStatus(sb, floorId, siteId, "active", now);
+        try{
+          await updateFloorScopedRowsStatus(sb, "export_logs", floorId, siteId, "active", now);
+        }catch(exportLogErr){
+          if(!isMissingColumnOrTableError(exportLogErr)) throw exportLogErr;
+          console.warn("[floor restore] export_logs skipped", exportLogErr);
+        }
+        await refreshFloorList();
+        await loadTrashFloors(selectedSiteId);
+        toast("フロアを復元しました");
+      }catch(error){
+        console.error("[floor restore] error", error);
+        toast("フロア復元に失敗しました");
+      }
+    }
+
+    async function hardDeleteFloor(floor, options = {}){
+      if(!floor?.id){
+        if(!options.silent) toast("フロア完全削除に失敗しました");
+        return false;
+      }
+      if(!options.skipConfirm){
+        const ok = await askConfirm(
+          "完全削除すると、このフロアのPDF・ピン・写真・メモは復元できません。\n本当に完全削除しますか？",
+          {
+            title: "完全削除",
+            cancelLabel: "キャンセル",
+            okLabel: "完全削除する",
+            danger: true,
+          }
+        );
+        if(!ok) return false;
+      }
+      const sb = getSupabase();
+      const floorId = floor.id;
+      const siteId = selectedSiteId || floor.site_id || null;
+      const inspRows = await selectRowsByFloorWithSiteFallback(sb, "inspections", "id", floorId, siteId);
+      const inspectionIds = inspRows.map(r=>r.id).filter(Boolean);
+      const drawingRows = await selectRowsByFloorWithSiteFallback(sb, "drawings", "id", floorId, siteId, { inspectionIds });
+      const drawingIds = drawingRows.map(r=>r.id).filter(Boolean);
+      const markerRows = await selectRowsByFloorWithSiteFallback(sb, "markers", "id", floorId, siteId, { inspectionIds });
+      const markerIds = markerRows.map(r=>r.id).filter(Boolean);
+      const noteRows = await selectRowsByFloorWithSiteFallback(sb, "drawing_text_notes", "id", floorId, siteId, { inspectionIds });
+      const noteIds = noteRows.map(r=>r.id).filter(Boolean);
+
+      await deleteRowsByIds(sb, "marker_photos", "marker_id", markerIds);
+      await deleteRowsByIds(sb, "drawing_text_notes", "id", noteIds);
+      await deleteRowsByIds(sb, "markers", "id", markerIds);
+      await deleteRowsByIds(sb, "drawing_pages", "drawing_id", drawingIds);
+      await deleteRowsByIds(sb, "drawings", "id", drawingIds);
+
+      let floorDeleteQuery = sb.from("site_floors").delete().eq("id", floorId);
+      if(siteId) floorDeleteQuery = floorDeleteQuery.eq("site_id", siteId);
+      const { error: floorDeleteError } = await floorDeleteQuery;
+      if(floorDeleteError){
+        if(siteId && isMissingColumnOrTableError(floorDeleteError)){
+          const { error: retryDeleteError } = await sb.from("site_floors").delete().eq("id", floorId);
+          if(retryDeleteError) throw retryDeleteError;
+        }else{
+          throw floorDeleteError;
+        }
+      }
+
+      if(selectedFloorId && String(selectedFloorId) === String(floorId)){
+        selectedFloorId = null;
+        selectedFloor = null;
+        selectedInspectionId = null;
+        currentFloorId = null;
+        currentFloorName = "";
+        $("inpFloorName").value = "";
+        resetFloorRuntimeState();
+        showView("inspection_detail");
+      }
+      if(!options.silent) toast("フロアを完全削除しました");
+      return true;
+    }
+
+    async function hardDeleteExpiredTrashFloors(){
+      const candidates = (trashFloorsCache || []).filter(f=>computeTrashMeta(f).canHardDelete);
+      if(candidates.length === 0){
+        toast("10日経過したゴミ箱データはありません");
+        return;
+      }
+      const ok = await askConfirm(
+        `10日経過済みのフロア ${candidates.length} 件を完全削除します。\n本当に実行しますか？`,
+        {
+          title: "10日経過データの完全削除",
+          cancelLabel: "キャンセル",
+          okLabel: "完全削除する",
+          danger: true,
+        }
+      );
+      if(!ok) return;
+      try{
+        for(const floor of candidates){
+          await hardDeleteFloor(floor, { skipConfirm: true, silent: true });
+        }
+        await refreshFloorList();
+        await loadTrashFloors(selectedSiteId);
+        toast("10日経過データを完全削除しました");
+      }catch(error){
+        console.error("[expired trash hard delete] error", error);
+        toast("10日経過データの完全削除に失敗しました");
       }
     }
 
@@ -3815,6 +4337,11 @@
           floor = data;
         }
         if(!floor) throw new Error("対象フロアが見つかりません。");
+        if(!isActiveFloorStatus(floor.status)){
+          toast("ゴミ箱内のフロアは復元後に開けます");
+          await refreshFloorList();
+          return;
+        }
         selectedFloor = floor;
         selectedFloorId = floor.id;
         currentFloorId = floor.id;
@@ -8451,6 +8978,53 @@
       setFloorAddValidation("");
     });
     $("btnAddFloor").addEventListener("click", ()=>{ createFloorFromUi(); });
+    $("btnOpenTrash").addEventListener("click", async ()=>{
+      await loadTrashFloors(selectedSiteId);
+      openTrashModal();
+    });
+    $("btnTrashClose").addEventListener("click", ()=>{ closeTrashModal(); });
+    $("btnHardDeleteExpiredTrash").addEventListener("click", async ()=>{
+      await hardDeleteExpiredTrashFloors();
+      await loadTrashFloors(selectedSiteId);
+    });
+    $("trashFloorList").addEventListener("click", async (e)=>{
+      const btn = e.target.closest("button[data-act]");
+      if(!btn) return;
+      const floorId = btn.dataset.id || "";
+      if(!floorId) return;
+      const floor = trashFloorsCache.find(f=>String(f.id) === String(floorId));
+      if(!floor){
+        toast("対象フロアが見つかりません");
+        return;
+      }
+      if(btn.dataset.act === "restore-floor"){
+        await restoreFloorFromTrash(floor);
+        await loadTrashFloors(selectedSiteId);
+        return;
+      }
+      if(btn.dataset.act === "hard-delete-floor"){
+        try{
+          await hardDeleteFloor(floor);
+          await refreshFloorList();
+          await loadTrashFloors(selectedSiteId);
+        }catch(error){
+          console.error("[floor hard delete] error", error);
+          toast("フロア完全削除に失敗しました");
+        }
+      }
+    });
+    $("confirmModalCancel").addEventListener("click", ()=>{ closeConfirmModal(false); });
+    $("confirmModalOk").addEventListener("click", ()=>{ closeConfirmModal(true); });
+    $("confirmModalBackdrop").addEventListener("click", (e)=>{
+      if(e.target === $("confirmModalBackdrop")){
+        closeConfirmModal(false);
+      }
+    });
+    $("trashModalBackdrop").addEventListener("click", (e)=>{
+      if(e.target === $("trashModalBackdrop")){
+        closeTrashModal();
+      }
+    });
     $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
     $("btnOpenVendorWork").addEventListener("click", ()=>{ openVendorWorkView($("vendorSelect").value || ""); });
     $("btnBackToFloorInspection").addEventListener("click", ()=>{ showView("floor_inspection"); });
@@ -8488,7 +9062,7 @@
         return;
       }
       if(btn.dataset.act === "delete-floor"){
-        await deleteFloor(floor);
+        await moveFloorToTrash(floor);
       }
     });
     $("vendorWorkList").addEventListener("click", async (e)=>{
@@ -8584,6 +9158,12 @@
       if(e.key !== "Escape") return;
       if($("floorChangeModalBackdrop")?.classList.contains("open")){
         closeFloorChangeModal();
+      }
+      if($("trashModalBackdrop")?.classList.contains("open")){
+        closeTrashModal();
+      }
+      if($("confirmModalBackdrop")?.classList.contains("open")){
+        closeConfirmModal(false);
       }
     });
 
@@ -9042,6 +9622,7 @@
         updatePageInfo();
         initCloudUi();
         renderFloorAddUi();
+        updateTrashButtonCount();
         if(isSupabaseConfigured()){
           refreshCloudInspectionList().catch(()=>{});
           loadInspectionSites().catch(()=>{});
