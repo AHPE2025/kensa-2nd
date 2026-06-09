@@ -2194,19 +2194,50 @@
       return idMap;
     }
 
+    function resolveMarkerPhotoContext(marker, kind){
+      const inspectionId = currentInspectionId || null;
+      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || null;
+      const siteId = (typeof currentSiteId !== "undefined" ? currentSiteId : null) || selectedSiteId || selectedSite?.id || null;
+      const markerId = marker?.cloud_marker_id || marker?.supabase_marker_id || null;
+      const localMarkerId = marker?.local_marker_id || marker?.id || null;
+      let drawingId = store?.activeBg?.drawingId || currentDrawingId || null;
+      let pageNumber = Math.max(1, Number(store?.activeBg?.page || 1) || 1);
+      for(const [key, arr] of getCurrentFloorMarkerEntries()){
+        if(!Array.isArray(arr)) continue;
+        const hit = arr.find(item=>String(item?.id || "") === String(marker?.id || ""));
+        if(!hit) continue;
+        const parsed = parseMarkerKey(key);
+        if(parsed?.drawing_id) drawingId = parsed.drawing_id;
+        if(Number(parsed?.page_number) > 0) pageNumber = Number(parsed.page_number);
+        break;
+      }
+      return {
+        inspection_id: inspectionId,
+        site_id: siteId,
+        floor_id: floorId,
+        drawing_id: drawingId || null,
+        marker_id: markerId || null,
+        local_marker_id: localMarkerId || null,
+        page_number: pageNumber,
+        kind: kind === "after" ? "after" : "before",
+      };
+    }
+
     async function uploadMarkerPhotoToSupabase(marker, file, kind){
-      const inspectionId = currentInspectionId;
+      const context = resolveMarkerPhotoContext(marker, kind);
+      const inspectionId = context.inspection_id;
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       if(!marker) throw new Error("対象マーカーが未指定です。");
       if(!(file instanceof File)) throw new Error("アップロード対象の写真ファイルがありません。");
       if(kind !== "before" && kind !== "after") throw new Error("kind は before/after のみ対応です。");
       const sb = getSupabase();
-      const markerId = marker.cloud_marker_id || marker.supabase_marker_id || null;
-      if(!markerId) throw new Error("Supabase上の marker_id が未確定です。");
+      const markerId = context.marker_id;
+      const localMarkerId = context.local_marker_id || marker?.id || "unknown";
       const safeName = toSafeImageFileName(file.name || `${kind}.jpg`);
-      const sitePart = selectedSiteId || "unknown";
-      const floorPart = selectedFloorId || "unknown";
-      const storagePath = `site_${sitePart}/floor_${floorPart}/inspection_${inspectionId}/marker_${markerId}/${kind}_${nowStamp()}_${safeName}`;
+      const sitePart = context.site_id || "unknown";
+      const floorPart = context.floor_id || "unknown";
+      const markerPart = markerId ? `marker_${markerId}` : `local_${String(localMarkerId).replace(/[^\w-]/g, "_")}`;
+      const storagePath = `site_${sitePart}/floor_${floorPart}/inspection_${inspectionId}/${markerPart}/${kind}_${nowStamp()}_${safeName}`;
       const uploadRes = await sb.storage.from(MARKER_PHOTO_BUCKET).upload(storagePath, file, {
         contentType: file.type || "image/jpeg",
         upsert: false,
@@ -2221,35 +2252,73 @@
         public_url: pub?.data?.publicUrl || "",
         file_name: file.name || safeName,
         mime_type: file.type || "image/jpeg",
+        file_size: Number(file.size || 0) || 0,
+        caption: null,
       };
     }
 
     async function saveMarkerPhotoRecord(marker, photoInfo, kind){
-      const markerCloudId = marker?.cloud_marker_id || marker?.supabase_marker_id || null;
-      if(!markerCloudId) throw new Error("marker_id が未確定です。");
+      const context = resolveMarkerPhotoContext(marker, kind);
+      if(!context.local_marker_id) throw new Error("local_marker_id が未確定です。");
+      if(!context.inspection_id) throw new Error("inspection_id が未確定です。");
+      if(!context.floor_id) throw new Error("floor_id が未確定です。");
       if(!photoInfo?.storage_path) throw new Error("写真情報の storage_path が未設定です。");
       const sb = getSupabase();
+      const nowIso = new Date().toISOString();
       const payload = {
-        marker_id: markerCloudId,
-        inspection_id: currentInspectionId || null,
-        site_id: selectedSiteId || null,
-        floor_id: selectedFloorId || null,
+        inspection_id: context.inspection_id,
+        site_id: context.site_id,
+        floor_id: context.floor_id,
+        drawing_id: context.drawing_id,
+        marker_id: context.marker_id,
+        local_marker_id: context.local_marker_id,
+        page_number: context.page_number,
         floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
-        kind,
+        kind: context.kind,
+        photo_type: context.kind,
         storage_path: photoInfo.storage_path,
         public_url: photoInfo.public_url || "",
         file_name: photoInfo.file_name || "",
         mime_type: photoInfo.mime_type || "image/jpeg",
-        caption: null,
-        taken_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        display_order: kind === "before" ? 0 : 1,
+        file_size: Number(photoInfo.file_size || 0) || 0,
+        caption: photoInfo.caption || null,
+        status: "active",
+        taken_at: nowIso,
+        updated_at: nowIso,
+        created_at: nowIso,
+        display_order: context.kind === "before" ? 0 : 1,
       };
-      const { error } = await sb.from("marker_photos").upsert(payload, {
-        onConflict: "marker_id,kind",
-      });
+      let existingQuery = sb.from("marker_photos")
+        .select("id")
+        .eq("inspection_id", context.inspection_id)
+        .eq("floor_id", context.floor_id)
+        .eq("local_marker_id", context.local_marker_id)
+        .or(`kind.eq.${context.kind},photo_type.eq.${context.kind}`)
+        .neq("status", "deleted")
+        .limit(1);
+      if(context.drawing_id){
+        existingQuery = existingQuery.eq("drawing_id", context.drawing_id);
+      }
+      const { data: existingRows, error: lookupError } = await existingQuery;
+      if(lookupError) throw lookupError;
+      const existing = existingRows?.[0] || null;
+      let error = null;
+      if(existing?.id){
+        const res = await sb.from("marker_photos")
+          .update(payload)
+          .eq("id", existing.id);
+        error = res.error || null;
+      }else{
+        const res = await sb.from("marker_photos").insert(payload);
+        error = res.error || null;
+      }
       if(error){
-        toast(`【エラー】${photoKindLabel(kind)}写真情報の保存に失敗しました。`);
+        if(String(error?.code || "") === "PGRST204"){
+          toast("写真保存に失敗しました");
+          console.error("[marker photo save] error", error);
+        }else{
+          toast(`【エラー】${photoKindLabel(kind)}写真情報の保存に失敗しました。`);
+        }
         throw error;
       }
       return payload;
@@ -2277,7 +2346,11 @@
     async function saveMarkerPhotosToCloud(marker){
       if(!marker) return 0;
       const markerCloudId = marker.cloud_marker_id || marker.supabase_marker_id || null;
-      if(!markerCloudId) return 0;
+      const markerLocalId = marker.local_marker_id || marker.id || null;
+      const inspectionId = currentInspectionId || null;
+      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || null;
+      const drawingId = store?.activeBg?.drawingId || currentDrawingId || null;
+      if(!inspectionId || !floorId || !markerLocalId) return 0;
       marker.cloud_marker_id = markerCloudId;
       marker.supabase_marker_id = markerCloudId;
       const sb = getSupabase();
@@ -2289,32 +2362,46 @@
         const delPathKey = kind === "after" ? "afterPhotoDeletePath" : "beforePhotoDeletePath";
         const selectedFile = marker[fileKey];
         const deleteRequested = !!marker[delKey];
-        if(deleteRequested){
-          const { error: delRecErr } = await sb.from("marker_photos")
-            .delete()
-            .eq("marker_id", markerCloudId)
-            .eq("kind", kind);
-          if(delRecErr){
-            toast(`【エラー】${photoKindLabel(kind)}写真の削除に失敗しました。`);
-            throw delRecErr;
+        try{
+          if(deleteRequested){
+            let deleteQuery = sb.from("marker_photos")
+              .update({ status: "deleted", deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+              .eq("inspection_id", inspectionId)
+              .eq("floor_id", floorId)
+              .eq("local_marker_id", markerLocalId)
+              .or(`kind.eq.${kind},photo_type.eq.${kind}`)
+              .neq("status", "deleted");
+            if(drawingId){
+              deleteQuery = deleteQuery.eq("drawing_id", drawingId);
+            }
+            const { error: delRecErr } = await deleteQuery;
+            if(delRecErr){
+              toast(`【エラー】${photoKindLabel(kind)}写真の削除に失敗しました。`);
+              throw delRecErr;
+            }
+            const stalePath = marker[delPathKey] || marker[photoKey]?.storage_path || null;
+            if(stalePath) queuePhotoStorageDelete(stalePath);
+            marker[photoKey] = null;
+            marker[fileKey] = null;
+            marker[delKey] = false;
+            marker[delPathKey] = null;
+            continue;
           }
-          const stalePath = marker[delPathKey] || marker[photoKey]?.storage_path || null;
-          if(stalePath) queuePhotoStorageDelete(stalePath);
-          marker[photoKey] = null;
-          marker[fileKey] = null;
-          marker[delKey] = false;
-          marker[delPathKey] = null;
-          continue;
-        }
-        if(selectedFile instanceof File){
-          await uploadMarkerPhotoToStorage(marker, kind, selectedFile);
-          savedCount += 1;
-          continue;
-        }
-        if(marker[photoKey]?.storage_path){
-          await saveMarkerPhotoRecord(marker, marker[photoKey], kind);
-          marker[delPathKey] = null;
-          savedCount += 1;
+          if(selectedFile instanceof File){
+            await uploadMarkerPhotoToStorage(marker, kind, selectedFile);
+            savedCount += 1;
+            continue;
+          }
+          if(marker[photoKey]?.storage_path){
+            await saveMarkerPhotoRecord(marker, marker[photoKey], kind);
+            marker[delPathKey] = null;
+            savedCount += 1;
+          }
+        }catch(error){
+          if(String(error?.code || "") === "PGRST204"){
+            toast("写真保存に失敗しました");
+          }
+          console.error("[marker photo save] error", error);
         }
       }
       return savedCount;
@@ -2337,19 +2424,59 @@
       }
     }
 
-    async function loadMarkerPhotosFromCloud(markerIds){
-      if(!Array.isArray(markerIds) || markerIds.length === 0) return [];
+    async function loadMarkerPhotosFromCloud(markerRows){
+      if(!Array.isArray(markerRows) || markerRows.length === 0) return [];
+      if(!currentInspectionId || !currentFloorId) return [];
       const sb = getSupabase();
-      const { data, error } = await sb.from("marker_photos")
-        .select("marker_id,kind,storage_path,public_url,file_name,mime_type,display_order")
-        .in("marker_id", markerIds);
-      if(error){
-        toast("【エラー】写真のクラウド読み込みに失敗しました。");
-        throw error;
+      const markerIds = [...new Set(
+        markerRows
+          .map(m=>m?.cloud_marker_id || m?.supabase_marker_id || null)
+          .filter(Boolean)
+          .map(String)
+      )];
+      const localMarkerIds = [...new Set(
+        markerRows
+          .map(m=>m?.local_marker_id || m?.id || null)
+          .filter(Boolean)
+          .map(String)
+      )];
+      const rows = [];
+      if(markerIds.length > 0){
+        const { data, error } = await sb.from("marker_photos")
+          .select("id,marker_id,local_marker_id,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+          .eq("inspection_id", currentInspectionId)
+          .eq("floor_id", currentFloorId)
+          .neq("status", "deleted")
+          .in("marker_id", markerIds);
+        if(error){
+          toast("【エラー】写真のクラウド読み込みに失敗しました。");
+          throw error;
+        }
+        rows.push(...(data || []));
       }
-      const rows = data || [];
+      if(localMarkerIds.length > 0){
+        const { data, error } = await sb.from("marker_photos")
+          .select("id,marker_id,local_marker_id,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+          .eq("inspection_id", currentInspectionId)
+          .eq("floor_id", currentFloorId)
+          .neq("status", "deleted")
+          .in("local_marker_id", localMarkerIds);
+        if(error){
+          toast("【エラー】写真のクラウド読み込みに失敗しました。");
+          throw error;
+        }
+        rows.push(...(data || []));
+      }
+      const dedupMap = new Map();
+      rows.forEach(row=>{
+        const key = row?.id
+          ? `id:${row.id}`
+          : `${row?.marker_id || "no_marker"}:${row?.local_marker_id || "no_local"}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || ""}`;
+        if(!dedupMap.has(key)) dedupMap.set(key, row);
+      });
+      const uniqueRows = [...dedupMap.values()];
       const hydrated = [];
-      for(const row of rows){
+      for(const row of uniqueRows){
         const next = { ...row };
         if(row.storage_path){
           try{
@@ -2369,31 +2496,45 @@
     }
 
     function attachLoadedPhotosToMarkers(photoRows, markerRows){
-      const markerMap = new Map();
+      const markerMapByCloudId = new Map();
+      const markerMapByLocalId = new Map();
       (photoRows || []).forEach(row=>{
         const markerId = String(row.marker_id || "");
-        if(!markerId) return;
-        if(!markerMap.has(markerId)){
-          markerMap.set(markerId, { beforePhoto: null, afterPhoto: null });
-        }
+        const localMarkerId = String(row.local_marker_id || "");
+        const normalizedKind = String(row.kind || row.photo_type || "").toLowerCase();
         const info = {
           storage_path: row.storage_path || null,
           public_url: row.public_url || "",
           file_name: row.file_name || "",
           mime_type: row.mime_type || "",
+          file_size: Number(row.file_size || 0) || 0,
+          caption: row.caption || null,
+          kind: normalizedKind || null,
+          photo_type: normalizedKind || null,
         };
-        if(row.kind === "before"){
-          markerMap.get(markerId).beforePhoto = info;
-        }else if(row.kind === "after"){
-          markerMap.get(markerId).afterPhoto = info;
+        if(markerId && !markerMapByCloudId.has(markerId)){
+          markerMapByCloudId.set(markerId, { beforePhoto: null, afterPhoto: null });
+        }
+        if(localMarkerId && !markerMapByLocalId.has(localMarkerId)){
+          markerMapByLocalId.set(localMarkerId, { beforePhoto: null, afterPhoto: null });
+        }
+        const writeTarget = normalizedKind === "after" ? "afterPhoto" : (normalizedKind === "before" ? "beforePhoto" : null);
+        if(!writeTarget) return;
+        if(markerId && markerMapByCloudId.has(markerId)){
+          markerMapByCloudId.get(markerId)[writeTarget] = info;
+        }
+        if(localMarkerId && markerMapByLocalId.has(localMarkerId)){
+          markerMapByLocalId.get(localMarkerId)[writeTarget] = info;
         }
       });
 
       (markerRows || []).forEach(marker=>{
         const markerId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || "");
-        const hit = markerMap.get(markerId);
-        marker.beforePhoto = clonePhotoInfo(hit?.beforePhoto);
-        marker.afterPhoto = clonePhotoInfo(hit?.afterPhoto);
+        const localMarkerId = String(marker?.local_marker_id || marker?.id || "");
+        const localHit = markerMapByLocalId.get(localMarkerId);
+        const cloudHit = markerMapByCloudId.get(markerId);
+        marker.beforePhoto = clonePhotoInfo(cloudHit?.beforePhoto || localHit?.beforePhoto);
+        marker.afterPhoto = clonePhotoInfo(cloudHit?.afterPhoto || localHit?.afterPhoto);
         marker.beforePhotoFile = null;
         marker.afterPhotoFile = null;
         marker.beforePhotoDelete = false;
@@ -2476,10 +2617,7 @@
           const localMarkers = Object.entries(store.markersByKey || {})
             .filter(([key])=>keyMatchesFloor(key, currentFloorId))
             .flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
-          const markerIds = localMarkers
-            .map(m=>m.cloud_marker_id || m.supabase_marker_id || null)
-            .filter(Boolean);
-          const photoRows = await loadMarkerPhotosFromCloud(markerIds);
+          const photoRows = await loadMarkerPhotosFromCloud(localMarkers);
           attachLoadedPhotosToMarkers(photoRows, localMarkers);
         }catch(e){
           showCloudError("写真情報の復元", e);
@@ -4897,6 +5035,10 @@
         public_url: photo.public_url || "",
         file_name: photo.file_name || "",
         mime_type: photo.mime_type || "",
+        file_size: Number(photo.file_size || 0) || 0,
+        caption: photo.caption || null,
+        kind: photo.kind || photo.photo_type || null,
+        photo_type: photo.photo_type || photo.kind || null,
       };
     }
 
