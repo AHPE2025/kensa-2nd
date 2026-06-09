@@ -35,8 +35,17 @@
     .hint{font-size:12px;color:var(--muted);line-height:1.5}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .divider{height:1px;background:var(--line);margin:12px 0}
-    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:hidden;aspect-ratio:16/9;z-index:0;}
+    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:visible;aspect-ratio:16/9;z-index:0;}
+    #bg,
+    #bg canvas,
+    #bg img,
+    .pdf-canvas,
+    .pdf-page-canvas{
+      position:relative;
+      z-index:1;
+    }
     canvas#bg{position:absolute;top:0;left:0;display:block;z-index:1;}
+    #overlay,
     svg#overlay{position:absolute;top:0;left:0;touch-action:none;z-index:20;pointer-events:auto}
     .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:#fff}
     .status{display:flex;gap:10px;flex-wrap:wrap}
@@ -150,15 +159,17 @@
     }
     #markerForceLayer{
       position:absolute;
-      inset:0;
-      z-index:30;
+      left:0;
+      top:0;
+      z-index:50;
       pointer-events:none;
       touch-action:none;
+      overflow:visible;
     }
     #textNotesLayer{
       position:absolute;
       inset:0;
-      z-index:50;
+      z-index:80;
       pointer-events:none;
       touch-action:none;
     }
@@ -169,14 +180,21 @@
     }
     .marker-force-dot{
       position:absolute;
-      width:16px;
-      height:16px;
-      border-radius:50%;
+      z-index:60;
+      width:18px;
+      height:18px;
+      border-radius:9999px;
       background:#dc2626;
-      border:2px solid #ffffff;
+      border:3px solid #ffffff;
       transform:translate(-50%, -50%);
-      box-shadow:0 0 0 1px rgba(17,24,39,.25);
-      pointer-events:none;
+      box-shadow:0 2px 8px rgba(0,0,0,.35);
+      pointer-events:auto;
+    }
+    .marker-bubble,
+    .bubble,
+    .pin-bubble{
+      position:absolute;
+      z-index:70;
     }
     .text-notes-layer{pointer-events:none}
     .text-note-box{
@@ -194,6 +212,7 @@
       user-select:none;
       white-space:pre-wrap;
       overflow:hidden;
+      z-index:90;
     }
     .text-note-box:active{cursor:grabbing}
     .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
@@ -202,7 +221,7 @@
     .text-note-box.is-selected{outline:2px solid #2563eb}
     #textNoteEditor{
       position:absolute;
-      z-index:1300;
+      z-index:9999;
       display:none;
       width:min(320px, calc(100% - 12px));
       background:#fff;
@@ -228,7 +247,7 @@
     #textNoteEditor .tn-actions .btn{padding:9px 13px;min-height:40px}
     #quickMarkerEditor{
       position:absolute;
-      z-index:1200;
+      z-index:9999;
       display:none;
       width:min(360px, calc(100% - 12px));
       background:#fff;
@@ -4034,7 +4053,7 @@
     const bgCanvas = $("bg");
     const ctx = bgCanvas.getContext("2d");
     const overlay = $("overlay");
-    const markerForceLayer = $("markerForceLayer");
+    let markerForceLayer = $("markerForceLayer");
     const textNotesLayer = $("textNotesLayer");
     const stageWrap = $("stageWrap");
     const quickMarkerEditor = $("quickMarkerEditor");
@@ -4043,6 +4062,73 @@
     let quickEditorState = null;
     let textNoteEditorState = null;
     const pendingPhotoStorageDeletes = new Set();
+
+    function ensureMarkerForceLayer(){
+      if(!stageWrap) return null;
+      if(!markerForceLayer || !markerForceLayer.isConnected){
+        markerForceLayer = document.getElementById("markerForceLayer");
+      }
+      if(!markerForceLayer){
+        markerForceLayer = document.createElement("div");
+        markerForceLayer.id = "markerForceLayer";
+        stageWrap.appendChild(markerForceLayer);
+      }else if(markerForceLayer.parentElement !== stageWrap){
+        stageWrap.appendChild(markerForceLayer);
+      }
+      if(stageWrap.lastElementChild !== markerForceLayer){
+        stageWrap.appendChild(markerForceLayer);
+      }
+      return markerForceLayer;
+    }
+
+    function getPdfDisplayRectInStage(){
+      const rect = getCurrentImageRect();
+      const iw = Math.max(1, Number(rect?.iw) || Number(stageW) || 1);
+      const ih = Math.max(1, Number(rect?.ih) || Number(stageH) || 1);
+      const sc = Math.max(0.0001, Number(rect?.sc) || 1);
+      const rot = Number(rect?.rot) || 0;
+      const swapped = rot === 90 || rot === 270;
+      const width = Math.max(1, (swapped ? ih : iw) * sc);
+      const height = Math.max(1, (swapped ? iw : ih) * sc);
+      const left = (Number(stageW) - width) / 2;
+      const top = (Number(stageH) - height) / 2;
+      return { left, top, width, height };
+    }
+
+    function syncMarkerForceLayerBounds(layer, displayRect){
+      if(!layer || !displayRect) return;
+      layer.style.left = `${displayRect.left}px`;
+      layer.style.top = `${displayRect.top}px`;
+      layer.style.width = `${displayRect.width}px`;
+      layer.style.height = `${displayRect.height}px`;
+    }
+
+    function renderForceMarkerLayer(markersForRender, displayRect){
+      const layer = ensureMarkerForceLayer();
+      if(!layer) return;
+      syncMarkerForceLayerBounds(layer, displayRect);
+      layer.innerHTML = "";
+      (markersForRender || []).forEach((marker)=>{
+        const mx = clamp(Number.isFinite(Number(marker?.x)) ? Number(marker.x) : 0.5, 0, 1);
+        const my = clamp(Number.isFinite(Number(marker?.y)) ? Number(marker.y) : 0.5, 0, 1);
+        const point = imgRatioToCanvasPx(mx, my);
+        const px = point.x - displayRect.left;
+        const py = point.y - displayRect.top;
+        const dot = document.createElement("div");
+        dot.className = "marker-force-dot marker-dot";
+        dot.dataset.markerId = String(marker?.id || "");
+        dot.style.left = `${px}px`;
+        dot.style.top = `${py}px`;
+        layer.appendChild(dot);
+      });
+      stageWrap.appendChild(layer);
+      console.debug("force marker layer", {
+        markerCount: markersForRender?.length || 0,
+        layerRect: layer.getBoundingClientRect(),
+        zIndex: getComputedStyle(layer).zIndex,
+        children: layer.children.length
+      });
+    }
 
     function resizeStage(){
       // devicePixelRatioを考慮してcanvasを物理ピクセルサイズで確保する
@@ -4413,16 +4499,21 @@
               redrawOverlay();
             });
           };
-          img.onerror = ()=> clearBackground();
+          img.onerror = ()=>{
+            clearBackground();
+            redrawOverlay();
+          };
           img.src = dataURL;
         }else{
           clearBackground();
           ctx.fillStyle="#111827";
           ctx.font="14px system-ui, sans-serif";
           ctx.fillText("PDFページ画像を生成中…（少し待ってください）", 18, 50);
+          redrawOverlay();
         }
       }else{
         clearBackground();
+        redrawOverlay();
       }
     }
 
@@ -5202,6 +5293,7 @@
     }
 
     function redrawOverlay(){
+      ensureMarkerForceLayer();
       const key = activeKey();
       if(!store.markersByKey) store.markersByKey = {};
       if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
@@ -5216,7 +5308,6 @@
       });
       console.debug("redrawOverlay markers source", { key, totalCount: markersForKey.length, markerCount: arr.length });
       while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
-      if(markerForceLayer) markerForceLayer.innerHTML = "";
 
       let offsetFixed = false;
       arr.forEach(m=>{
@@ -5234,6 +5325,7 @@
       overlay.appendChild(markerLayer);
 
       const imgRectNow = getCurrentImageRect();
+      const displayRect = getPdfDisplayRectInStage();
       arr.forEach((m, idx)=>{
         const isSel = m.id === selectedId;
         const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
@@ -5326,15 +5418,6 @@
         bubbleLayer.appendChild(bubbleGroup);
         markerLayer.appendChild(anchorGroup);
 
-        // 可視化切り分け用: SVGとは別に赤丸を強制表示する
-        if(markerForceLayer){
-          const dot = document.createElement("div");
-          dot.className = "marker-force-dot marker-dot";
-          dot.dataset.markerId = String(m.id || "");
-          dot.style.left = `${ax}px`;
-          dot.style.top = `${ay}px`;
-          markerForceLayer.appendChild(dot);
-        }
       });
       if(quickEditorState){
         const target = getMarkerById(quickEditorState.markerId);
@@ -5346,10 +5429,27 @@
       }
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
+      renderForceMarkerLayer(arr, displayRect);
       redrawTextNotes();
+      if(markerForceLayer) stageWrap.appendChild(markerForceLayer);
       console.debug("overlay children", {
         overlayChildren: overlay?.children?.length || 0,
         markerElements: document.querySelectorAll(".marker-dot, .pin-dot, [data-marker-id]").length
+      });
+      const bgEl = document.getElementById("bg");
+      const overlayEl = document.getElementById("overlay");
+      const forceEl = document.getElementById("markerForceLayer");
+      const stageEl = document.getElementById("stageWrap");
+      console.debug("layer order check", {
+        bgZ: bgEl ? getComputedStyle(bgEl).zIndex : null,
+        overlayZ: overlayEl ? getComputedStyle(overlayEl).zIndex : null,
+        markerForceZ: forceEl ? getComputedStyle(forceEl).zIndex : null,
+        markerForceChildren: forceEl?.children?.length,
+        stageChildren: Array.from(stageEl?.children || []).map(el => ({
+          id: el.id,
+          className: el.className,
+          zIndex: getComputedStyle(el).zIndex
+        }))
       });
       console.debug("redrawOverlay done");
     }
@@ -7159,10 +7259,12 @@
     $("btnRotL").addEventListener("click", ()=>{
       normalRotation = (normalRotation - 90 + 360) % 360;
       redrawBackground();
+      redrawOverlay();
     });
     $("btnRotR").addEventListener("click", ()=>{
       normalRotation = (normalRotation + 90) % 360;
       redrawBackground();
+      redrawOverlay();
     });
 
     $("fsBtnRotL").addEventListener("click", ()=>{
