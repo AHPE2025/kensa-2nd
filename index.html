@@ -4761,6 +4761,17 @@
       return kind === "after" ? "After" : "Before";
     }
 
+    const brokenPhotoPreviewUrls = new Set();
+
+    function getSafePhotoPreviewUrl(photo){
+      const raw = String(photo?.public_url || "").trim();
+      if(!raw) return "";
+      if(brokenPhotoPreviewUrls.has(raw)) return "";
+      if(/^blob:/i.test(raw) || /^data:image\//i.test(raw)) return raw;
+      if(/^https?:\/\//i.test(raw)) return raw;
+      return "";
+    }
+
     function getMarkerPhotoBadgeText(marker){
       const hasBefore = !!(marker?.beforePhoto?.public_url || marker?.beforePhotoFile);
       const hasAfter = !!(marker?.afterPhoto?.public_url || marker?.afterPhotoFile);
@@ -4777,10 +4788,20 @@
 
     function setQuickPhotoPreviewElement(el, photo, kind){
       if(!el) return;
-      const url = photo?.public_url || "";
+      const url = getSafePhotoPreviewUrl(photo);
+      el.innerHTML = "";
       if(url){
         const alt = `${photoKindLabel(kind)}写真`;
-        el.innerHTML = `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" />`;
+        const img = document.createElement("img");
+        img.alt = alt;
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.src = url;
+        img.addEventListener("error", ()=>{
+          brokenPhotoPreviewUrls.add(url);
+          el.textContent = "写真読込失敗";
+        }, { once: true });
+        el.appendChild(img);
       }else{
         el.textContent = "写真なし";
       }
