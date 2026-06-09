@@ -1034,12 +1034,15 @@
         saving: { text: "自動保存中", level: "warn" },
         dirty: { text: "未保存の変更あり", level: "warn" },
         local_only: { text: "ローカル保存中", level: "warn" },
+        local: { text: "ローカル保存中", level: "warn" },
         pdf_unsaved: { text: "PDF未保存", level: "warn" },
         photo_unsaved: { text: "写真未保存", level: "warn" },
         failed: { text: "自動保存失敗", level: "err" },
       };
       const base = map[status] || map.saved;
-      const text = message ? `${base.text} (${message})` : base.text;
+      const text = message
+        ? (status === "local" ? message : `${base.text} (${message})`)
+        : base.text;
       setCloudStatus(text, base.level);
     }
 
@@ -1376,6 +1379,7 @@
             bubbleMoved: !!row.bubble_moved,
             cloud_marker_id: row.id || md.cloud_marker_id || null,
             supabase_marker_id: row.id || md.cloud_marker_id || null,
+            sync_status: "synced",
             beforePhoto: clonePhotoInfo(md.beforePhoto),
             afterPhoto: clonePhotoInfo(md.afterPhoto),
             beforePhotoFile: null,
@@ -1395,6 +1399,21 @@
         return mbk;
       }
       return {};
+    }
+
+    function setAllMarkerSyncStatus(status){
+      const nextStatus = status === "synced" ? "synced" : "pending";
+      let changed = false;
+      for(const arr of Object.values(store.markersByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        arr.forEach(marker=>{
+          if(marker.sync_status !== nextStatus){
+            marker.sync_status = nextStatus;
+            changed = true;
+          }
+        });
+      }
+      return changed;
     }
 
     function readInspectionForm(){
@@ -1766,6 +1785,7 @@
           const mappedId = idMap.get(String(m.id)) || null;
           m.cloud_marker_id = mappedId;
           m.supabase_marker_id = mappedId;
+          m.sync_status = mappedId ? "synced" : "pending";
           ensureMarkerPhotoState(m);
         });
       });
@@ -2140,44 +2160,54 @@
           }
           return false;
         }
-        updateSaveStatus("saving");
-        if(normalizeAllMarkersInStore()) saveStore();
-        const sb = getSupabase();
-        const inspectionId = await ensureCurrentInspection();
-        await uploadCurrentPdfToStorage();
-        let payload = readInspectionForm();
-        const { error: updErr } = await sb.from("inspections")
-          .update(payload)
-          .eq("id", inspectionId);
-        if(updErr) throw updErr;
-        const markerSaveRes = await saveMarkersToCloud(inspectionId);
-        const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
-        let photoSavedCount = 0;
-        for(const arr of Object.values(store.markersByKey || {})){
-          if(!Array.isArray(arr)) continue;
-          for(const marker of arr){
-            photoSavedCount += await saveMarkerPhotosToCloud(marker);
+        try{
+          updateSaveStatus("saving");
+          if(normalizeAllMarkersInStore()) saveStore();
+          const sb = getSupabase();
+          const inspectionId = await ensureCurrentInspection();
+          await uploadCurrentPdfToStorage();
+          let payload = readInspectionForm();
+          const { error: updErr } = await sb.from("inspections")
+            .update(payload)
+            .eq("id", inspectionId);
+          if(updErr) throw updErr;
+          const markerSaveRes = await saveMarkersToCloud(inspectionId);
+          const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
+          let photoSavedCount = 0;
+          for(const arr of Object.values(store.markersByKey || {})){
+            if(!Array.isArray(arr)) continue;
+            for(const marker of arr){
+              photoSavedCount += await saveMarkerPhotosToCloud(marker);
+            }
           }
+          await cleanupPendingPhotoStorageDeletes();
+          setAllMarkerSyncStatus("synced");
+          saveStore();
+          dirty = false;
+          updateSaveStatus("saved");
+          if(manual){
+            toast("クラウド保存しました");
+          }else{
+            console.debug("[autosave] success", {
+              reason,
+              markerCount: markerSaveRes.markerCount,
+              textNoteCount: textNoteSaveRes.textNoteCount,
+              photoCount: photoSavedCount,
+            });
+          }
+          updateCloudCurrentIdLabel();
+          await refreshCloudInspectionList();
+          if(selectedSiteId) await loadInspectionSites();
+          if(selectedSiteId && selectedFloorId) await loadFloors(selectedSiteId);
+          return true;
+        }catch(error){
+          console.error("[autosave] error", error);
+          setAllMarkerSyncStatus("pending");
+          updateSaveStatus("local", "ローカル保存中");
+          saveStore();
+          toast("クラウド保存に失敗しました。ローカルには保存されています");
+          return false;
         }
-        await cleanupPendingPhotoStorageDeletes();
-        saveStore();
-        dirty = false;
-        updateSaveStatus("saved");
-        if(manual){
-          toast("クラウド保存しました");
-        }else{
-          console.debug("[autosave] success", {
-            reason,
-            markerCount: markerSaveRes.markerCount,
-            textNoteCount: textNoteSaveRes.textNoteCount,
-            photoCount: photoSavedCount,
-          });
-        }
-        updateCloudCurrentIdLabel();
-        await refreshCloudInspectionList();
-        if(selectedSiteId) await loadInspectionSites();
-        if(selectedSiteId && selectedFloorId) await loadFloors(selectedSiteId);
-        return true;
       }catch(e){
         console.error("[autosave] error", e);
         let localSaved = true;
@@ -4451,6 +4481,14 @@
           if(normalizeMarkerVendorState(m)) changed = true;
           if(ensureMarkerPhotoState(m)) changed = true;
           if(safeNormalizeMarkerOffset(m)) changed = true;
+          const hasCloudId = !!(m.cloud_marker_id || m.supabase_marker_id);
+          const normalizedSyncStatus = m.sync_status === "synced"
+            ? "synced"
+            : (hasCloudId ? "synced" : "pending");
+          if(m.sync_status !== normalizedSyncStatus){
+            m.sync_status = normalizedSyncStatus;
+            changed = true;
+          }
         });
       }
       return changed;
@@ -5074,6 +5112,7 @@
         bubbleMoved: false,
         cloud_marker_id: null,
         supabase_marker_id: null,
+        sync_status: "pending",
         beforePhoto: null,
         afterPhoto: null,
         beforePhotoFile: null,
