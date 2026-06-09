@@ -37,7 +37,7 @@
     .divider{height:1px;background:var(--line);margin:12px 0}
     .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:hidden;aspect-ratio:16/9;z-index:0;}
     canvas#bg{position:absolute;top:0;left:0;display:block;z-index:1;}
-    svg#overlay{position:absolute;top:0;left:0;touch-action:none;z-index:5;pointer-events:auto}
+    svg#overlay{position:absolute;top:0;left:0;touch-action:none;z-index:20;pointer-events:auto}
     .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:#fff}
     .status{display:flex;gap:10px;flex-wrap:wrap}
     .toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:var(--shadow);max-width:520px;display:none;white-space:pre-wrap}
@@ -148,15 +148,36 @@
       color:#334155;
       font-weight:600;
     }
-    #textNotesLayer{
+    #markerForceLayer{
       position:absolute;
       inset:0;
       z-index:30;
       pointer-events:none;
       touch-action:none;
     }
+    #textNotesLayer{
+      position:absolute;
+      inset:0;
+      z-index:50;
+      pointer-events:none;
+      touch-action:none;
+    }
     .marker-layer{pointer-events:auto}
     .bubble-layer{pointer-events:auto}
+    .marker-dot{
+      filter:drop-shadow(0 0 2px rgba(17,24,39,.45));
+    }
+    .marker-force-dot{
+      position:absolute;
+      width:16px;
+      height:16px;
+      border-radius:50%;
+      background:#dc2626;
+      border:2px solid #ffffff;
+      transform:translate(-50%, -50%);
+      box-shadow:0 0 0 1px rgba(17,24,39,.25);
+      pointer-events:none;
+    }
     .text-notes-layer{pointer-events:none}
     .text-note-box{
       position:absolute;
@@ -612,6 +633,7 @@
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <canvas id="bg"></canvas>
           <svg id="overlay"></svg>
+          <div id="markerForceLayer"></div>
           <div id="textNotesLayer" class="text-notes-layer"></div>
           <div id="quickMarkerEditor">
             <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
@@ -921,6 +943,11 @@
     const INSPECTION_DETAIL_SELECT_COLUMNS = `${INSPECTION_SELECT_COLUMNS}, current_drawing_id, current_page`;
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
     const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
+    const AUTO_SAVE_DELAY_MS = 1500;
+    let dirty = false;
+    let autoSaveTimer = null;
+    let autoSaveInFlight = false;
+    let queuedAutoSaveReason = "";
 
     function isSupabaseConfigured(){
       const urlOk = SUPABASE_URL && !String(SUPABASE_URL).includes("YOUR_SUPABASE");
@@ -959,6 +986,69 @@
       el.textContent = currentInspectionId
         ? `（編集中: ${currentInspectionId.slice(0,8)}…）`
         : "（新規・未保存）";
+    }
+
+    function hasUnsavedPdf(){
+      const bg = store.activeBg || { kind:"none" };
+      if(bg.kind !== "pdf") return false;
+      return !bg.drawingId && !currentDrawingId && !!lastPdfFile;
+    }
+
+    function hasUnsavedPhotos(){
+      for(const arr of Object.values(store.markersByKey || {})){
+        if(!Array.isArray(arr)) continue;
+        for(const marker of arr){
+          if(marker?.beforePhotoFile instanceof File) return true;
+          if(marker?.afterPhotoFile instanceof File) return true;
+          if(marker?.beforePhotoDelete || marker?.afterPhotoDelete) return true;
+          if(marker?.beforePhoto && !marker.beforePhoto.storage_path) return true;
+          if(marker?.afterPhoto && !marker.afterPhoto.storage_path) return true;
+        }
+      }
+      return false;
+    }
+
+    function updateSaveStatus(status, message = ""){
+      const map = {
+        saved: { text: "保存済み", level: "ok" },
+        saving: { text: "自動保存中", level: "warn" },
+        dirty: { text: "未保存の変更あり", level: "warn" },
+        local_only: { text: "ローカル保存中", level: "warn" },
+        pdf_unsaved: { text: "PDF未保存", level: "warn" },
+        photo_unsaved: { text: "写真未保存", level: "warn" },
+        failed: { text: "自動保存失敗", level: "err" },
+      };
+      const base = map[status] || map.saved;
+      const text = message ? `${base.text} (${message})` : base.text;
+      setCloudStatus(text, base.level);
+    }
+
+    function scheduleAutoSave(reason){
+      if(autoSaveTimer){
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+      autoSaveTimer = setTimeout(()=>{
+        autoSaveTimer = null;
+        autoSaveToCloud(reason).catch(err=>{
+          console.error("[autosave] failed", err);
+        });
+      }, AUTO_SAVE_DELAY_MS);
+    }
+
+    function markDirty(reason){
+      dirty = true;
+      const normalizedReason = String(reason || "unknown");
+      console.debug("[dirty]", normalizedReason);
+      if(hasUnsavedPdf()){
+        updateSaveStatus("pdf_unsaved");
+      }else if(hasUnsavedPhotos()){
+        updateSaveStatus("photo_unsaved");
+      }else{
+        updateSaveStatus("dirty");
+      }
+      saveStore();
+      scheduleAutoSave(normalizedReason);
     }
 
     function showCloudError(title, err){
@@ -1173,6 +1263,8 @@
             dy: Number(m.dy),
             type: m.type || "",
             vendor_name: m.vendor_name || m.vendor || "",
+            assigned_vendor_names: assignedVendorNames,
+            sub_vendor_names: subVendorNames,
             status: normalizedStatus,
             completed_at: m.completed_at || null,
             completed_by: m.completed_by || "",
@@ -1387,7 +1479,9 @@
       if(!file) throw new Error("PDFファイルが選択されていません。");
       const sb = getSupabase();
       const safeName = toSafeFileName(file.name || "drawing.pdf");
-      const storagePath = `inspections/${inspectionId}/drawings/${nowStamp()}_${safeName}`;
+      const sitePart = selectedSiteId || "unknown";
+      const floorPart = selectedFloorId || "unknown";
+      const storagePath = `site_${sitePart}/floor_${floorPart}/inspection_${inspectionId}/drawing_${nowStamp()}_${safeName}`;
       const uploadRes = await sb.storage.from(DRAWING_BUCKET).upload(storagePath, file, {
         contentType: file.type || "application/pdf",
         upsert: false,
@@ -1400,7 +1494,7 @@
       const inspectionId = currentInspectionId;
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       const sb = getSupabase();
-      const insertPayload = {
+      const payload = {
         inspection_id: inspectionId,
         site_id: selectedSiteId || null,
         floor_id: selectedFloorId || null,
@@ -1408,14 +1502,24 @@
         file_name: file?.name || "drawing.pdf",
         mime_type: file?.type || "application/pdf",
         storage_path: storagePath,
+        uploaded_at: new Date().toISOString(),
         pdf_id: String(pdfMeta?.pdf_id || ""),
         page_count: Number(pdfMeta?.page_count || 1),
         width: Number(pdfMeta?.width || 0),
         height: Number(pdfMeta?.height || 0),
         metadata: pdfMeta?.metadata || {},
       };
+      if(currentDrawingId){
+        const { data, error } = await sb.from("drawings")
+          .update(payload)
+          .eq("id", currentDrawingId)
+          .select("id")
+          .single();
+        if(error) throw error;
+        return data.id;
+      }
       const { data, error } = await sb.from("drawings")
-        .insert(insertPayload)
+        .insert(payload)
         .select("id")
         .single();
       if(error) throw error;
@@ -1465,6 +1569,15 @@
         store.activeBg.pdfId = String(drawingId);
       }
       saveStore();
+      return drawingId;
+    }
+
+    async function uploadCurrentPdfToStorage(){
+      if(!lastPdfFile) return currentDrawingId || store.activeBg?.drawingId || null;
+      const drawingId = await ensureCloudDrawingSaved();
+      if(!drawingId){
+        updateSaveStatus("pdf_unsaved");
+      }
       return drawingId;
     }
 
@@ -1649,7 +1762,9 @@
       const markerId = marker.cloud_marker_id || marker.supabase_marker_id || null;
       if(!markerId) throw new Error("Supabase上の marker_id が未確定です。");
       const safeName = toSafeImageFileName(file.name || `${kind}.jpg`);
-      const storagePath = `markers/${inspectionId}/${markerId}/${kind}_${nowStamp()}_${safeName}`;
+      const sitePart = selectedSiteId || "unknown";
+      const floorPart = selectedFloorId || "unknown";
+      const storagePath = `site_${sitePart}/floor_${floorPart}/inspection_${inspectionId}/marker_${markerId}/${kind}_${nowStamp()}_${safeName}`;
       const uploadRes = await sb.storage.from(MARKER_PHOTO_BUCKET).upload(storagePath, file, {
         contentType: file.type || "image/jpeg",
         upsert: false,
@@ -1674,6 +1789,10 @@
       const sb = getSupabase();
       const payload = {
         marker_id: markerCloudId,
+        inspection_id: currentInspectionId || null,
+        site_id: selectedSiteId || null,
+        floor_id: selectedFloorId || null,
+        floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
         kind,
         storage_path: photoInfo.storage_path,
         public_url: photoInfo.public_url || "",
@@ -1681,6 +1800,7 @@
         mime_type: photoInfo.mime_type || "image/jpeg",
         caption: null,
         taken_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
         display_order: kind === "before" ? 0 : 1,
       };
       const { error } = await sb.from("marker_photos").upsert(payload, {
@@ -1691,6 +1811,25 @@
         throw error;
       }
       return payload;
+    }
+
+    async function uploadMarkerPhotoToStorage(marker, kind, file){
+      if(kind !== "before" && kind !== "after"){
+        throw new Error("kind は before / after のみ対応です。");
+      }
+      const uploaded = await uploadMarkerPhotoToSupabase(marker, file, kind);
+      await saveMarkerPhotoRecord(marker, uploaded, kind);
+      const photoKey = kind === "after" ? "afterPhoto" : "beforePhoto";
+      const fileKey = kind === "after" ? "afterPhotoFile" : "beforePhotoFile";
+      const delKey = kind === "after" ? "afterPhotoDelete" : "beforePhotoDelete";
+      const delPathKey = kind === "after" ? "afterPhotoDeletePath" : "beforePhotoDeletePath";
+      const stalePath = marker[delPathKey];
+      if(stalePath) queuePhotoStorageDelete(stalePath);
+      marker[photoKey] = uploaded;
+      marker[fileKey] = null;
+      marker[delKey] = false;
+      marker[delPathKey] = null;
+      return uploaded;
     }
 
     async function saveMarkerPhotosToCloud(marker){
@@ -1726,14 +1865,7 @@
           continue;
         }
         if(selectedFile instanceof File){
-          const uploaded = await uploadMarkerPhotoToSupabase(marker, selectedFile, kind);
-          await saveMarkerPhotoRecord(marker, uploaded, kind);
-          const stalePath = marker[delPathKey];
-          if(stalePath) queuePhotoStorageDelete(stalePath);
-          marker[photoKey] = uploaded;
-          marker[fileKey] = null;
-          marker[delKey] = false;
-          marker[delPathKey] = null;
+          await uploadMarkerPhotoToStorage(marker, kind, selectedFile);
           savedCount += 1;
           continue;
         }
@@ -1773,7 +1905,25 @@
         toast("【エラー】写真のクラウド読み込みに失敗しました。");
         throw error;
       }
-      return data || [];
+      const rows = data || [];
+      const hydrated = [];
+      for(const row of rows){
+        const next = { ...row };
+        if(row.storage_path){
+          try{
+            const dlRes = await sb.storage.from(MARKER_PHOTO_BUCKET).download(row.storage_path);
+            if(dlRes.error) throw dlRes.error;
+            const blob = dlRes.data;
+            if(blob){
+              next.public_url = URL.createObjectURL(blob);
+            }
+          }catch(e){
+            console.warn("写真Storage読込失敗", row.storage_path, e);
+          }
+        }
+        hydrated.push(next);
+      }
+      return hydrated;
     }
 
     function attachLoadedPhotosToMarkers(photoRows, markerRows){
@@ -1892,7 +2042,8 @@
         const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
         const tn = Object.values(store.textNotesByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.filter(v=>normalizeTextNote(v).status === "active").length:0),0);
         toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件 / テキスト合計: ${tn}件`);
-        setCloudStatus("読込済", "ok");
+        dirty = false;
+        updateSaveStatus("saved");
         renderCloudInspectionList(lastCloudListCache);
       }catch(e){
         showCloudError("クラウド読み込み", e);
@@ -1922,31 +2073,63 @@
       showView("inspection_list");
     }
 
-    async function saveToCloud(){
+    async function ensureCurrentInspection(){
+      if(currentInspectionId){
+        updateCloudCurrentIdLabel();
+        return currentInspectionId;
+      }
+      if(selectedSiteId && selectedFloorId){
+        const ensuredId = await ensureInspectionForFloor(selectedSiteId, selectedFloorId);
+        currentInspectionId = ensuredId;
+        selectedInspectionId = ensuredId;
+        selectedCloudInspectionId = ensuredId;
+        updateCloudCurrentIdLabel();
+        return ensuredId;
+      }
+      const sb = getSupabase();
+      const payload = readInspectionForm();
+      const { data, error } = await sb.from("inspections")
+        .insert(payload)
+        .select("id")
+        .single();
+      if(error) throw error;
+      currentInspectionId = data.id;
+      selectedInspectionId = data.id;
+      selectedCloudInspectionId = data.id;
+      updateCloudCurrentIdLabel();
+      return data.id;
+    }
+
+    async function autoSaveToCloud(reason = "autosave", options = {}){
+      const manual = !!options.manual;
+      if(autoSaveTimer){
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+      if(autoSaveInFlight){
+        queuedAutoSaveReason = reason || "queued";
+        return false;
+      }
+      autoSaveInFlight = true;
       try{
+        saveStore();
+        if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+          updateSaveStatus("local_only");
+          if(manual){
+            toast("クラウド保存に失敗しました。ローカルには保存されています");
+          }
+          return false;
+        }
+        updateSaveStatus("saving");
         if(normalizeAllMarkersInStore()) saveStore();
         const sb = getSupabase();
+        const inspectionId = await ensureCurrentInspection();
+        await uploadCurrentPdfToStorage();
         let payload = readInspectionForm();
-        let inspectionId = currentInspectionId;
-
-        if(!inspectionId){
-          const { data, error } = await sb.from("inspections")
-            .insert(payload)
-            .select("id")
-            .single();
-          if(error) throw error;
-          inspectionId = data.id;
-          currentInspectionId = inspectionId;
-          selectedInspectionId = inspectionId;
-        }
-
-        await ensureCloudDrawingSaved();
-        payload = readInspectionForm();
         const { error: updErr } = await sb.from("inspections")
           .update(payload)
           .eq("id", inspectionId);
         if(updErr) throw updErr;
-
         const markerSaveRes = await saveMarkersToCloud(inspectionId);
         const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
         let photoSavedCount = 0;
@@ -1957,14 +2140,50 @@
           }
         }
         await cleanupPendingPhotoStorageDeletes();
-
         saveStore();
-        setCloudStatus("保存済", "ok");
-        toast(`クラウド保存しました。マーカー：${markerSaveRes.markerCount}件 / テキスト：${textNoteSaveRes.textNoteCount}件 / 写真：${photoSavedCount}件`);
+        dirty = false;
+        updateSaveStatus("saved");
+        if(manual){
+          toast("クラウド保存しました");
+        }else{
+          console.debug("[autosave] success", {
+            reason,
+            markerCount: markerSaveRes.markerCount,
+            textNoteCount: textNoteSaveRes.textNoteCount,
+            photoCount: photoSavedCount,
+          });
+        }
         updateCloudCurrentIdLabel();
         await refreshCloudInspectionList();
         if(selectedSiteId) await loadInspectionSites();
         if(selectedSiteId && selectedFloorId) await loadFloors(selectedSiteId);
+        return true;
+      }catch(e){
+        console.error("[autosave] error", e);
+        let localSaved = true;
+        try{
+          saveStore();
+        }catch(_){
+          localSaved = false;
+        }
+        updateSaveStatus(localSaved ? "local_only" : "failed");
+        if(manual){
+          toast("クラウド保存に失敗しました。ローカルには保存されています");
+        }
+        return false;
+      }finally{
+        autoSaveInFlight = false;
+        if(queuedAutoSaveReason){
+          const queuedReason = queuedAutoSaveReason;
+          queuedAutoSaveReason = "";
+          scheduleAutoSave(queuedReason);
+        }
+      }
+    }
+
+    async function saveToCloud(){
+      try{
+        await autoSaveToCloud("manual save", { manual: true });
       }catch(e){
         showCloudError("クラウド保存", e);
       }
@@ -2036,9 +2255,9 @@
 
     function initCloudUi(){
       if(!isSupabaseConfigured()){
-        setCloudStatus("未設定", "warn");
+        updateSaveStatus("local_only");
       }else{
-        setCloudStatus("設定済", "ok");
+        updateSaveStatus("saved");
       }
       updateCloudCurrentIdLabel();
     }
@@ -2592,11 +2811,11 @@
 
     async function saveCurrentFloorInspection(){
       if(!selectedSiteId || !selectedFloorId){
-        toast("先に検査案件とフロアを選択してください。");
+        await autoSaveToCloud("manual save", { manual: true });
         return;
       }
       await ensureInspectionForFloor(selectedSiteId, selectedFloorId);
-      await saveToCloud();
+      await autoSaveToCloud("manual save", { manual: true });
       await loadInspectionSites();
       await loadFloors(selectedSiteId);
     }
@@ -3815,6 +4034,7 @@
     const bgCanvas = $("bg");
     const ctx = bgCanvas.getContext("2d");
     const overlay = $("overlay");
+    const markerForceLayer = $("markerForceLayer");
     const textNotesLayer = $("textNotesLayer");
     const stageWrap = $("stageWrap");
     const quickMarkerEditor = $("quickMarkerEditor");
@@ -4549,6 +4769,7 @@
       note.font_weight = isBold ? "bold" : "normal";
       note.updated_at = new Date().toISOString();
       saveStore();
+      markDirty("text note updated");
       redrawOverlay();
     }
 
@@ -4578,6 +4799,7 @@
       if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
       closeTextNoteEditor();
       saveStore();
+      markDirty("text note deleted");
       redrawOverlay();
     }
 
@@ -4604,6 +4826,7 @@
       selectedTextNoteId = note.local_text_id;
       closeQuickMarkerEditor({ keepDraft: false });
       saveStore();
+      markDirty("text note created");
       redrawOverlay();
       openTextNoteEditor(note, { isNew: true });
       return note;
@@ -4687,6 +4910,9 @@
           const target = getTextNoteByLocalId(note.local_text_id);
           if(target){
             saveStore();
+            if(moved){
+              markDirty("text note moved");
+            }
             redrawOverlay();
             if(!moved){
               openTextNoteEditor(target, { isNew: false });
@@ -4719,6 +4945,8 @@
       const m = {
         id: markerId,
         local_marker_id: markerId,
+        inspection_id: currentInspectionId || null,
+        drawing_id: store?.activeBg?.drawingId || store?.activeBg?.pdfId || null,
         page_number: pageNumber,
         x: ratio.x,
         y: ratio.y,
@@ -4766,13 +4994,18 @@
       safeNormalizeMarkerOffset(m);
       applyDefaultVendorByCategory(m.type || "共通", m, true);
       store.markersByKey[key].push(m);
-      console.debug("marker created data:", {
+      console.debug("marker created data", {
         key,
         marker: m,
-        page_number: m.page_number,
+        markerCount: store.markersByKey[key]?.length,
+        allKeys: Object.keys(store.markersByKey || {}),
+      });
+      console.debug("marker create verify", {
+        key,
+        markerId: m.id,
         x: m.x,
         y: m.y,
-        count: store.markersByKey[key]?.length ?? 0,
+        markerCount: store.markersByKey[key]?.length ?? 0,
       });
       console.debug("activeKey after create", activeKey());
       selectedId = m.id;
@@ -4780,6 +5013,7 @@
       redrawOverlay();
       redrawList();
       saveStore();
+      markDirty("marker created");
       requestAnimationFrame(()=> redrawOverlay());
       syncButtons();
       syncSelectorsFromSelectedMarker();
@@ -4800,6 +5034,11 @@
       }
       const d = quickEditorState.draft;
       const prevStatus = normalizeMarkerStatus(marker);
+      const prevType = marker.type || "";
+      const prevVendor = marker.vendor_name || marker.vendor || "";
+      const prevMemo = marker.memo || "";
+      const prevBeforePhotoPath = marker.beforePhoto?.storage_path || "";
+      const prevAfterPhotoPath = marker.afterPhoto?.storage_path || "";
       const nextStatus = normalizeMarkerStatus(d.status || "open");
       marker.type = d.type || "共通";
       marker.memo = d.memo || "";
@@ -4890,6 +5129,14 @@
       quickMarkerEditor.style.display = "none";
       selectedId = marker.id;
       saveStore();
+      let dirtyReason = "marker updated";
+      if(prevStatus !== normalizeMarkerStatus(marker.status)) dirtyReason = "marker status changed";
+      else if(prevType !== (marker.type || "")) dirtyReason = "marker type changed";
+      else if(prevVendor !== (marker.vendor_name || marker.vendor || "")) dirtyReason = "marker vendor changed";
+      else if(prevMemo !== (marker.memo || "")) dirtyReason = "marker memo changed";
+      else if(marker.beforePhotoFile instanceof File || marker.beforePhotoDelete || prevBeforePhotoPath !== (marker.beforePhoto?.storage_path || "")) dirtyReason = "before photo uploaded";
+      else if(marker.afterPhotoFile instanceof File || marker.afterPhotoDelete || prevAfterPhotoPath !== (marker.afterPhoto?.storage_path || "")) dirtyReason = "after photo uploaded";
+      markDirty(dirtyReason);
       redrawOverlay();
       redrawList();
       syncButtons();
@@ -4921,6 +5168,7 @@
         quickMarkerEditor.style.display = "none";
       }
       saveStore();
+      markDirty("marker deleted");
       if(!options.skipCloseEditor){
         redrawOverlay();
         redrawList();
@@ -4955,14 +5203,20 @@
 
     function redrawOverlay(){
       const key = activeKey();
-      console.debug("activeKey in redrawOverlay", key);
       if(!store.markersByKey) store.markersByKey = {};
       if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
       const markersForKey = store.markersByKey[key];
       const arr = markersForKey.filter(m=>normalizeMarkerStatus(m) !== "deleted");
-      console.debug("redrawOverlay start:", { key, markerCount: arr.length });
+      console.debug("redrawOverlay start", {
+        key,
+        markerCount: (store.markersByKey[key] || []).length,
+        selectedId,
+        pageInputValue: document.getElementById("pageInput")?.value,
+        activeBg: store?.activeBg
+      });
       console.debug("redrawOverlay markers source", { key, totalCount: markersForKey.length, markerCount: arr.length });
       while(overlay.firstChild) overlay.removeChild(overlay.firstChild);
+      if(markerForceLayer) markerForceLayer.innerHTML = "";
 
       let offsetFixed = false;
       arr.forEach(m=>{
@@ -4979,6 +5233,7 @@
       overlay.appendChild(bubbleLayer);
       overlay.appendChild(markerLayer);
 
+      const imgRectNow = getCurrentImageRect();
       arr.forEach((m, idx)=>{
         const isSel = m.id === selectedId;
         const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
@@ -4994,7 +5249,17 @@
         const ax = _a.x, ay = _a.y;
         const _b = imgRatioToCanvasPx(mx + mdx, my + mdy);
         const bx = _b.x, by = _b.y;
-        console.debug("render marker:", { id: m.id, x: mx, y: my, px: ax, py: ay });
+        console.debug("render marker", {
+          id: m.id,
+          key,
+          x: mx,
+          y: my,
+          dx: mdx,
+          dy: mdy,
+          px: ax,
+          py: ay,
+          imgRect: imgRectNow
+        });
         // 線の終点は吹き出しの中心（回転しても常にここに繋がる）
         const linex2 = bx + BUBBLE_W / 2;
         const liney2 = by + BUBBLE_H / 2;
@@ -5041,6 +5306,8 @@
           "stroke-width": isSel ? 3.5 : 2,
           cursor: "grab",
         });
+        anchor.classList.add("marker-dot");
+        anchor.setAttribute("data-marker-id", String(m.id || ""));
         if(isSel) anchor.classList.add("sel");
         anchor.setAttribute("data-role","anchor");
         anchorGroup.appendChild(anchor);
@@ -5058,6 +5325,16 @@
 
         bubbleLayer.appendChild(bubbleGroup);
         markerLayer.appendChild(anchorGroup);
+
+        // 可視化切り分け用: SVGとは別に赤丸を強制表示する
+        if(markerForceLayer){
+          const dot = document.createElement("div");
+          dot.className = "marker-force-dot marker-dot";
+          dot.dataset.markerId = String(m.id || "");
+          dot.style.left = `${ax}px`;
+          dot.style.top = `${ay}px`;
+          markerForceLayer.appendChild(dot);
+        }
       });
       if(quickEditorState){
         const target = getMarkerById(quickEditorState.markerId);
@@ -5070,6 +5347,10 @@
       // フルスクリーン時に件数を更新
       if(typeof isFullscreen !== "undefined" && isFullscreen) updateFsInfo();
       redrawTextNotes();
+      console.debug("overlay children", {
+        overlayChildren: overlay?.children?.length || 0,
+        markerElements: document.querySelectorAll(".marker-dot, .pin-dot, [data-marker-id]").length
+      });
       console.debug("redrawOverlay done");
     }
 
@@ -5345,6 +5626,7 @@
         drag = null;
         suppressTapCreateUntil = Date.now() + 220;
         saveStore();
+        markDirty("marker moved");
       }
       e.preventDefault();
     });
@@ -6558,6 +6840,7 @@
       currentDrawingId = null;
       currentDrawingStoragePath = null;
       await setPdfBackground(file);
+      markDirty("pdf uploaded");
     });
 
     async function setPage(newPage){
@@ -6599,7 +6882,7 @@
     // -------------------- Buttons --------------------
     $("btnSupabaseTest").addEventListener("click", ()=>{ testSupabaseConnection(); });
     $("btnNewInspection").addEventListener("click", ()=>{ showView("inspection_list"); });
-    $("btnCloudSave").addEventListener("click", ()=>{ saveCurrentFloorInspection(); });
+    $("btnCloudSave").addEventListener("click", ()=>{ autoSaveToCloud("manual save", { manual: true }); });
     $("btnCloudLoad").addEventListener("click", ()=>{
       loadFromCloud(selectedCloudInspectionId || currentInspectionId);
     });
@@ -6640,6 +6923,7 @@
         if(marker){
           setMarkerStatus(marker, "completed");
           saveStore();
+          markDirty("marker status changed");
           redrawOverlay();
           redrawList();
           renderVendorWorkList();
@@ -6654,6 +6938,7 @@
         if(marker){
           setMarkerStatus(marker, "open");
           saveStore();
+          markDirty("marker status changed");
           redrawOverlay();
           redrawList();
           renderVendorWorkList();
@@ -6993,6 +7278,12 @@
     // ウィンドウリサイズ時も中央下に戻す
     window.addEventListener("resize", ()=>{
       if(isFullscreen){ panelPos = null; setPanelDefault(); }
+    });
+
+    window.addEventListener("beforeunload", (e)=>{
+      if(!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
     });
 
     // -------------------- Boot --------------------
