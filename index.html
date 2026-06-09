@@ -36,6 +36,12 @@
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .divider{height:1px;background:var(--line);margin:12px 0}
     .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:visible;aspect-ratio:16/9;z-index:0;}
+    .stage-rotate-layer{
+      position:absolute;
+      inset:0;
+      transform-origin:center center;
+      z-index:1;
+    }
     #bg,
     #bg canvas,
     #bg img,
@@ -1040,9 +1046,11 @@
 
         <!-- 図面ステージ（横画面デフォルト） -->
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
-          <canvas id="bg"></canvas>
-          <svg id="overlay"></svg>
-          <div id="textNotesLayer" class="text-notes-layer"></div>
+          <div id="stageRotateLayer" class="stage-rotate-layer">
+            <canvas id="bg"></canvas>
+            <svg id="overlay"></svg>
+            <div id="textNotesLayer" class="text-notes-layer"></div>
+          </div>
           <div id="quickMarkerEditor">
             <div class="qe-label" style="margin-bottom:6px">ピン編集</div>
             <div class="qe-row" id="quickTypeChips"></div>
@@ -1355,6 +1363,8 @@
       markersByKey: {},
       // textNotesByKey: { "template": [..], "pdf:PDFID:1": [..] }
       textNotesByKey: {},
+      // rotationByKey: { "<floor+drawing+page key>": 0|90|180|270 }
+      rotationByKey: {},
       inputMode: "pin",
     };
 
@@ -1372,6 +1382,7 @@
         }
         if(!obj.markersByKey) obj.markersByKey = {};
         if(!obj.textNotesByKey) obj.textNotesByKey = {};
+        if(!obj.rotationByKey || typeof obj.rotationByKey !== "object") obj.rotationByKey = {};
         if(obj.inputMode !== "text") obj.inputMode = "pin";
         if(!obj.activeBg) obj.activeBg = { kind:"none" };
         try{
@@ -2066,7 +2077,8 @@
       Object.assign(store.markersByKey, loadedMarkersByKey);
       normalizeAllMarkersInStore();
       if(typeof settings.normalRotation === "number"){
-        normalRotation = settings.normalRotation;
+        setRotationForKey(activeKey(), settings.normalRotation);
+        normalRotation = getRotationForKey(activeKey());
       }
       store.inputMode = settings.inputMode === "text" ? "text" : (store.inputMode || "pin");
       store.version = 1;
@@ -2077,6 +2089,7 @@
       closeTextNoteEditor();
       selectedId = null;
       selectedTextNoteId = null;
+      syncRotationForActiveKey();
       setInputMode(store.inputMode || "pin");
       saveStore();
       updatePageInfo();
@@ -2090,6 +2103,9 @@
     }
 
     function clearCurrentFloorDrawingState(){
+      cancelActivePdfRenderTask();
+      pdfRenderToken += 1;
+      hidePdfLoading();
       currentDrawingId = null;
       currentDrawingStoragePath = null;
       lastPdfFile = null;
@@ -2101,6 +2117,8 @@
       store.activeBg = { kind: "none" };
       const pageInputEl = $("pageInput");
       if(pageInputEl) pageInputEl.value = "1";
+      normalRotation = 0;
+      applyNormalRotationToStage(normalRotation);
       const pdfInputEl = $("pdfInput");
       if(pdfInputEl) pdfInputEl.value = "";
       updatePageInfo();
@@ -6274,6 +6292,55 @@
       }
       return makeTemplateKeyForFloor(floorId);
     }
+    function ensureRotationByKeyStore(){
+      if(!store.rotationByKey || typeof store.rotationByKey !== "object"){
+        store.rotationByKey = {};
+      }
+      return store.rotationByKey;
+    }
+    function getRotationForKey(key = activeKey()){
+      if(!key) return 0;
+      const rotationByKey = ensureRotationByKeyStore();
+      return normalizeQuarterTurn(rotationByKey[key] || 0);
+    }
+    function setRotationForKey(key, rotation){
+      if(!key) return;
+      const rotationByKey = ensureRotationByKeyStore();
+      rotationByKey[key] = normalizeQuarterTurn(rotation);
+    }
+    function getNormalRotationVisualScale(rotation = normalRotation){
+      const rot = normalizeQuarterTurn(rotation);
+      if(rot !== 90 && rot !== 270) return 1;
+      if(!Number(stageW) || !Number(stageH)) return 1;
+      const scale = Math.min(stageW / stageH, stageH / stageW);
+      return Number.isFinite(scale) && scale > 0 ? scale : 1;
+    }
+    function applyNormalRotationToStage(rotation = normalRotation){
+      if(!stageRotateLayer) return;
+      const rot = normalizeQuarterTurn(rotation);
+      const scale = getNormalRotationVisualScale(rot);
+      stageRotateLayer.style.transformOrigin = "center center";
+      stageRotateLayer.style.transform = `rotate(${rot}deg) scale(${scale})`;
+      stageRotateLayer.dataset.rotation = String(rot);
+    }
+    function syncRotationForActiveKey(){
+      const key = activeKey();
+      activeRotationKey = key;
+      normalRotation = getRotationForKey(key);
+      applyNormalRotationToStage(normalRotation);
+    }
+    function applyRotationAndPersist(rotation){
+      const key = activeKey();
+      const next = normalizeQuarterTurn(rotation);
+      activeRotationKey = key;
+      normalRotation = next;
+      setRotationForKey(key, next);
+      applyNormalRotationToStage(next);
+      if(typeof redrawOverlay === "function") redrawOverlay();
+      if(typeof redrawList === "function") redrawList();
+      if(typeof redrawTextNotes === "function") redrawTextNotes();
+      saveStore();
+    }
     function markers(){
       const key = activeKey();
       if(!store.markersByKey[key]) store.markersByKey[key] = [];
@@ -6371,6 +6438,8 @@
       if($("pageInput")){
         $("pageInput").value = String(Math.max(1, Number(snapshot.currentPage || store?.activeBg?.page || 1) || 1));
       }
+      setRotationForKey(activeKey(), normalRotation);
+      applyNormalRotationToStage(normalRotation);
       if(targetIsPdf){
         try{
           await loadPdfFromSupabaseDrawing(targetDrawingId, Number(snapshot.currentPage || 1) || 1);
@@ -6418,6 +6487,7 @@
     const overlay = $("overlay");
     const textNotesLayer = $("textNotesLayer");
     const stageWrap = $("stageWrap");
+    const stageRotateLayer = $("stageRotateLayer");
     const quickMarkerEditor = $("quickMarkerEditor");
     const textNoteEditor = $("textNoteEditor");
     const QUICK_TYPE_CHIP_ORDER = ["共通","傷","汚れ","建具","設備","補修","その他"];
@@ -6429,6 +6499,14 @@
     const MAX_UNDO_STACK = 40;
     const dragUndoPushed = new Set();
     const textDragUndoPushed = new Set();
+    let activeRotationKey = null;
+    let lastLoadedBgCacheKey = "";
+    let lastLoadedBgDataUrl = "";
+    let lastLoadedBgImage = null;
+    let pdfRenderToken = 0;
+    let currentPdfRenderTask = null;
+    let isRenderingPdfPage = false;
+    let pdfLoadingMessage = "";
 
     function removeMarkerForceLayer(){
       const layer = document.getElementById("markerForceLayer");
@@ -6503,8 +6581,8 @@
     let normalRotation = 0;
 
     function drawImageFit(img){
-      // フルスクリーン時は rot=0（CSSで回転）、通常時は normalRotation でcanvas回転
-      const rot = isFullscreen ? 0 : normalRotation;
+      // 回転はCSS transformで扱うため、canvas描画自体は常に非回転
+      const rot = 0;
       const iw = img.width, ih = img.height;
       const cw = stageW, ch = stageH;
 
@@ -6777,19 +6855,27 @@
     }
 
     function redrawBackground(){
+      const keyNow = activeKey();
+      if(keyNow !== activeRotationKey){
+        activeRotationKey = keyNow;
+        normalRotation = getRotationForKey(keyNow);
+        applyNormalRotationToStage(normalRotation);
+      }
       const bg = store.activeBg;
       if(bg?.kind === "pdf"){
         const pdfIdentity = resolvePdfIdentity(bg);
         const cacheKey = `${pdfIdentity}:${bg.page}`;
         const dataURL = bg.pageCache?.[cacheKey];
         if(dataURL){
-          const img = new Image();
-          img.onload = ()=>{
-            // アスペクト比をまず変更し、その後サイズを再計算してから描画
+          const canReuseLoadedImage = (
+            lastLoadedBgImage &&
+            lastLoadedBgImage.complete &&
+            lastLoadedBgCacheKey === cacheKey &&
+            lastLoadedBgDataUrl === dataURL
+          );
+          const drawLoadedImage = (img)=>{
             applyPdfAspectRatio(img.width, img.height);
-            // DOMのレイアウト更新を待ってからcanvasサイズ再計算
             requestAnimationFrame(()=>{
-              // resizeStageと同じロジックでDPR対応
               const dpr2 = window.devicePixelRatio || 1;
               const rot2 = (typeof fsRotation !== "undefined") ? fsRotation : 0;
               const inFs2 = (typeof isFullscreen !== "undefined") && isFullscreen;
@@ -6813,19 +6899,35 @@
               ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
               overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
               drawImageFit(img);
+              applyNormalRotationToStage(normalRotation);
               redrawOverlay();
             });
           };
-          img.onerror = ()=>{
-            clearBackground();
-            redrawOverlay();
-          };
-          img.src = dataURL;
+          if(canReuseLoadedImage){
+            drawLoadedImage(lastLoadedBgImage);
+          }else{
+            const img = new Image();
+            img.onload = ()=>{
+              lastLoadedBgImage = img;
+              lastLoadedBgCacheKey = cacheKey;
+              lastLoadedBgDataUrl = dataURL;
+              drawLoadedImage(img);
+            };
+            img.onerror = ()=>{
+              clearBackground();
+              redrawOverlay();
+            };
+            img.src = dataURL;
+          }
         }else{
           clearBackground();
           ctx.fillStyle="#111827";
           ctx.font="14px system-ui, sans-serif";
-          ctx.fillText("PDFページ画像を生成中…（少し待ってください）", 18, 50);
+          if(isRenderingPdfPage){
+            ctx.fillText(pdfLoadingMessage || "PDFページ画像を生成中…", 18, 50);
+          }else{
+            ctx.fillText("このページのPDF画像は未生成です。ページ移動で生成を開始します。", 18, 50);
+          }
           redrawOverlay();
         }
       }else{
@@ -7868,8 +7970,10 @@
 
     // -------------------- Interactions --------------------
     function svgPointFromEvent(e){
-      // フルスクリーン中はCSS回転(fsRotation)、通常時はcanvas描画回転(normalRotation)
-      const rot = isFullscreen ? fsRotation : 0; // 通常モードはcanvas側で回転済みなので0扱い
+      // フルスクリーン/通常ともにCSS回転を逆変換して論理座標へ戻す
+      const rot = isFullscreen
+        ? normalizeQuarterTurn(fsRotation)
+        : normalizeQuarterTurn(normalRotation);
 
       if(rot === 0){
         const rect = overlay.getBoundingClientRect();
@@ -7879,13 +7983,20 @@
         };
       }
 
-      // フルスクリーン回転時: stageWrapの画面上の中心 = ウィンドウ中心
-      const cx = window.innerWidth  / 2;
-      const cy = window.innerHeight / 2;
+      const rect = stageWrap.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const scaleX = stageW / Math.max(1, rect.width);
+      const scaleY = stageH / Math.max(1, rect.height);
+      const visualScale = isFullscreen ? 1 : getNormalRotationVisualScale(rot);
 
       // 画面座標 → 中心基準
-      let dx = e.clientX - cx;
-      let dy = e.clientY - cy;
+      let dx = (e.clientX - cx) * scaleX;
+      let dy = (e.clientY - cy) * scaleY;
+      if(visualScale > 0){
+        dx /= visualScale;
+        dy /= visualScale;
+      }
 
       // 逆回転 (-rot degrees)
       const rad = -rot * Math.PI / 180;
@@ -9549,6 +9660,27 @@
     let cachedPdfDoc = null;
     let cachedPdfFileRef = null;
 
+    function showPdfLoading(message = "PDFページ画像を生成中…"){
+      isRenderingPdfPage = true;
+      pdfLoadingMessage = String(message || "PDFページ画像を生成中…");
+      redrawBackground();
+    }
+    function hidePdfLoading(){
+      pdfLoadingMessage = "";
+      isRenderingPdfPage = false;
+      redrawBackground();
+    }
+    function cancelActivePdfRenderTask(){
+      if(!currentPdfRenderTask) return;
+      try{
+        currentPdfRenderTask.cancel();
+      }catch(e){
+        console.warn("[pdf render] cancel skipped", e);
+      }finally{
+        currentPdfRenderTask = null;
+      }
+    }
+
     async function getCachedPdfDoc(file){
       // 同じファイルなら再利用、違うファイルなら再読込
       if(cachedPdfDoc && cachedPdfFileRef === file) return cachedPdfDoc;
@@ -9588,17 +9720,62 @@
       cctx.fillStyle = "#ffffff";
       cctx.fillRect(0, 0, c.width, c.height);
 
-      await page.render({ canvasContext: cctx, viewport, intent: "print" }).promise;
+      cancelActivePdfRenderTask();
+      const renderTask = page.render({ canvasContext: cctx, viewport, intent: "print" });
+      currentPdfRenderTask = renderTask;
+      try{
+        await renderTask.promise;
+      }finally{
+        if(currentPdfRenderTask === renderTask){
+          currentPdfRenderTask = null;
+        }
+      }
       const dataURL = c.toDataURL("image/png");
       return { dataURL, pageCount };
     }
 
+    async function renderCurrentPdfPageImage(file, page, options = {}){
+      const token = ++pdfRenderToken;
+      const loadingMessage = options.loadingMessage || "PDFページ画像を生成中...";
+      showPdfLoading(loadingMessage);
+      try{
+        const result = await renderPdfPageToDataUrl(file, page);
+        if(token !== pdfRenderToken){
+          console.warn("[pdf render] stale render ignored");
+          return null;
+        }
+        return result;
+      }catch(error){
+        if(error?.name === "RenderingCancelledException"){
+          console.warn("[pdf render] cancelled render ignored");
+          return null;
+        }
+        if(token === pdfRenderToken){
+          console.error("[pdf render] failed", error);
+          if(!options.suppressErrorToast){
+            toast("PDFページ画像の生成に失敗しました");
+          }
+        }
+        throw error;
+      }finally{
+        if(token === pdfRenderToken){
+          hidePdfLoading();
+        }
+      }
+    }
+
     async function setPdfBackground(file, opts = {}){
       removeMarkerForceLayer();
+      cancelActivePdfRenderTask();
+      lastLoadedBgImage = null;
+      lastLoadedBgCacheKey = "";
+      lastLoadedBgDataUrl = "";
       const pdfId = String(opts.pdfId || randomPdfId());
       const drawingId = opts.drawingId || null;
       const page = clamp(parseInt(String(opts.page || $("pageInput").value || "1"),10), 1, 9999);
       store.activeBg = { kind:"pdf", pdfId, drawingId, page, pageCount: 1, pageCache: {} };
+      if($("pageInput")) $("pageInput").value = String(page);
+      syncRotationForActiveKey();
       saveStore();
       redrawBackground();
       updatePageInfo();
@@ -9607,7 +9784,12 @@
         if(!opts.silent){
           toast("PDFページ画像を生成しています…\n（図面が大きい場合、数秒かかります）");
         }
-        const { dataURL, pageCount } = await renderPdfPageToDataUrl(file, page);
+        const rendered = await renderCurrentPdfPageImage(file, page, {
+          loadingMessage: "PDFページ画像を生成中...",
+          suppressErrorToast: true
+        });
+        if(!rendered) return;
+        const { dataURL, pageCount } = rendered;
         const cacheIdentity = resolvePdfIdentity(store.activeBg);
         store.activeBg.pageCount = pageCount;
         store.activeBg.pageCache[`${cacheIdentity}:${page}`] = dataURL;
@@ -9649,8 +9831,12 @@
         return;
       }
       try{
-        toast("ページ画像を生成しています…");
-        const { dataURL, pageCount } = await renderPdfPageToDataUrl(lastPdfFile, page);
+        const rendered = await renderCurrentPdfPageImage(lastPdfFile, page, {
+          loadingMessage: "PDFページ画像を生成中...",
+          suppressErrorToast: true
+        });
+        if(!rendered) return;
+        const { dataURL, pageCount } = rendered;
         bg.pageCount = pageCount;
         bg.pageCache[cacheKey] = dataURL;
         saveStore();
@@ -10458,6 +10644,7 @@
       const p = clamp(newPage, 1, bg.pageCount || 9999);
       bg.page = p;
       $("pageInput").value = String(p);
+      syncRotationForActiveKey();
       saveStore();
 
       await ensurePageRendered(p);
@@ -10901,6 +11088,7 @@
       // 通常モードの回転をフルスクリーンに引き継ぎ、通常モードはリセット
       fsRotation = normalRotation;
       normalRotation = 0;
+      applyNormalRotationToStage(0);
       panelPos = null;
       stageWrap.classList.remove("rot90","rot180","rot270");
       const initCls = ROT_CLASSES[fsRotation];
@@ -10919,6 +11107,8 @@
       isFullscreen = false;
       // フルスクリーンの回転を通常モードに引き継ぎ
       normalRotation = fsRotation;
+      setRotationForKey(activeKey(), normalRotation);
+      applyNormalRotationToStage(normalRotation);
       fsRotation = 0;
       stageWrap.classList.remove("fullscreen","is-fullscreen","pseudo-fullscreen","rot90","rot180","rot270");
       const _panel = $("fsPanel");
@@ -11067,26 +11257,34 @@
     // 通常モード回転ボタン
     $("btnRotL").addEventListener("click", ()=>{
       pushUndoSnapshot("図面回転");
-      normalRotation = (normalRotation - 90 + 360) % 360;
-      redrawBackground();
-      redrawOverlay();
+      const next = (normalRotation + 270) % 360;
+      applyRotationAndPersist(next);
       markDirty("drawing rotated");
     });
     $("btnRotR").addEventListener("click", ()=>{
       pushUndoSnapshot("図面回転");
-      normalRotation = (normalRotation + 90) % 360;
-      redrawBackground();
-      redrawOverlay();
+      const next = (normalRotation + 90) % 360;
+      applyRotationAndPersist(next);
       markDirty("drawing rotated");
     });
 
     $("fsBtnRotL").addEventListener("click", ()=>{
       fsRotation = (fsRotation - 90 + 360) % 360;
       applyRotationClass();
+      setRotationForKey(activeKey(), fsRotation);
+      saveStore();
+      redrawOverlay();
+      redrawList();
+      markDirty("drawing rotated");
     });
     $("fsBtnRotR").addEventListener("click", ()=>{
       fsRotation = (fsRotation + 90) % 360;
       applyRotationClass();
+      setRotationForKey(activeKey(), fsRotation);
+      saveStore();
+      redrawOverlay();
+      redrawList();
+      markDirty("drawing rotated");
     });
 
     // フルスクリーン時のselectをメインと同期
@@ -11211,6 +11409,7 @@
         // Ensure active key exists
         markers();
         textNotes();
+        syncRotationForActiveKey();
         setInputMode(store.inputMode || "pin");
         redrawBackground();
         redrawOverlay();
