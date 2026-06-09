@@ -501,8 +501,6 @@
       </h3>
       <div class="cloud-meta-row">
         <input id="inpTitle" type="hidden" />
-        <input id="inpPropertyName" type="hidden" />
-        <input id="inpBuildingName" type="hidden" />
         <input id="inpSiteName" type="text" placeholder="現場名" readonly />
         <input id="inpInspectedAt" type="date" />
         <input id="inpInspectorName" type="text" placeholder="検査担当者" />
@@ -1289,10 +1287,8 @@
 
     function applyInspectionForm(insp){
       $("inpTitle").value = insp.title || "";
-      const siteName = insp.site_name || insp.property_name || "";
-      $("inpPropertyName").value = "";
+      const siteName = insp.site_name || selectedSite?.site_name || "";
       $("inpSiteName").value = siteName;
-      $("inpBuildingName").value = "";
       $("inpFloorName").value = insp.floor_name || selectedFloor?.floor_name || "";
       $("inpInspectorName").value = insp.inspector_name || "";
       if(insp.inspected_at){
@@ -2019,7 +2015,7 @@
     }
 
     function displaySiteName(site){
-      return (site?.site_name || site?.property_name || "").trim() || "（現場名未設定）";
+      return (site?.site_name || "").trim() || "（現場名未設定）";
     }
 
     function formatDateLabel(value){
@@ -2124,7 +2120,7 @@
       try{
         const sb = getSupabase();
         const { data: sites, error } = await sb.from("sites")
-          .select("id, site_name, property_name, inspection_date, inspector_name, memo, status, created_at, updated_at")
+          .select("id, site_name, inspection_date, inspector_name, memo, status, created_at, updated_at")
           .eq("status", "active")
           .order("inspection_date", { ascending: false })
           .order("updated_at", { ascending: false });
