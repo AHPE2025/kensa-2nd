@@ -470,8 +470,22 @@
         <button class="btn" id="btnNextPage" style="padding:7px 10px">▶</button>
         <input id="pageInput" type="number" min="1" value="1" style="width:64px;border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px" />
       </div>
-      <div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap">
-        <button class="btn primary" id="btnSavePng" style="padding:7px 12px;font-size:13px">💾 保存</button>
+      <div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;align-items:center">
+        <select id="pdfExportMode" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+          <option value="full" selected>図面＋指摘詳細＋写真</option>
+          <option value="drawing_only">図面のみ</option>
+          <option value="details_only">指摘一覧のみ</option>
+        </select>
+        <select id="pdfExportStatus" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+          <option value="open" selected>未対応のみ</option>
+          <option value="all">全て</option>
+          <option value="completed">完了のみ</option>
+        </select>
+        <select id="pdfExportVendor" style="border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px">
+          <option value="">業者: 全て</option>
+        </select>
+        <button class="btn primary" id="btnExportPdf" style="padding:7px 12px;font-size:13px">📄 PDF出力</button>
+        <button class="btn" id="btnSavePng" style="padding:7px 12px;font-size:13px">💾 PNG保存</button>
         <button class="btn" id="btnEditMemo" disabled style="padding:7px 12px;font-size:13px">📝 メモ</button>
         <button class="btn danger" id="btnDeleteSelected" disabled style="padding:7px 12px;font-size:13px">🗑 削除</button>
         <button class="btn" id="btnClearStorage" style="padding:7px 12px;font-size:13px">⚠ データ消去</button>
@@ -1079,6 +1093,21 @@
       });
     }
 
+    function remapTextNotesPdfIdentity(oldId, newId){
+      if(!oldId || !newId || oldId === newId) return;
+      const byKey = store.textNotesByKey || {};
+      const entries = Object.entries(byKey);
+      entries.forEach(([key, arr])=>{
+        const m = /^pdf:([^:]+):(\d+)$/.exec(key);
+        if(!m) return;
+        if(m[1] !== String(oldId)) return;
+        const nextKey = `pdf:${newId}:${m[2]}`;
+        if(!Array.isArray(byKey[nextKey])) byKey[nextKey] = [];
+        if(Array.isArray(arr)) byKey[nextKey].push(...arr);
+        delete byKey[key];
+      });
+    }
+
     function buildMarkerRows(inspectionId){
       const rows = [];
       const mbk = store.markersByKey || {};
@@ -1406,6 +1435,7 @@
       if(store.activeBg?.kind === "pdf"){
         const oldIdentity = resolvePdfIdentity(store.activeBg);
         remapMarkersPdfIdentity(oldIdentity, String(drawingId));
+        remapTextNotesPdfIdentity(oldIdentity, String(drawingId));
         store.activeBg.drawingId = drawingId;
         store.activeBg.pdfId = String(drawingId);
       }
@@ -1481,7 +1511,6 @@
         arr.forEach((noteRaw, idx)=>{
           const note = normalizeTextNote(noteRaw);
           rows.push({
-            id: note.id || null,
             inspection_id: inspectionId,
             site_id: selectedSiteId || null,
             floor_id: selectedFloorId || null,
@@ -1836,7 +1865,8 @@
         refreshUiAfterDataChange();
         updateCurrentContextLabels();
         const n = Object.values(store.markersByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0);
-        toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件`);
+        const tn = Object.values(store.textNotesByKey || {}).reduce((s,a)=>s+(Array.isArray(a)?a.filter(v=>normalizeTextNote(v).status === "active").length:0),0);
+        toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件 / テキスト合計: ${tn}件`);
         setCloudStatus("読込済", "ok");
         renderCloudInspectionList(lastCloudListCache);
       }catch(e){
@@ -2614,6 +2644,12 @@
       $("filterVendor").innerHTML = filterHtml;
       if($("vendorWorkVendor")){
         $("vendorWorkVendor").innerHTML = filterHtml;
+      }
+      const pdfVendorSelect = $("pdfExportVendor");
+      if(pdfVendorSelect){
+        pdfVendorSelect.innerHTML = [`<option value="">業者: 全て</option>`]
+          .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
+          .join("");
       }
       if(!activeVendors.some(v=>v.name === $("vendorSelect").value)){
         $("vendorSelect").value = activeVendors[0]?.name || "業者未定";
@@ -4366,6 +4402,7 @@
 
     function openTextNoteEditor(note, options = {}){
       if(!note || !textNoteEditor) return;
+      closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       const isNew = !!options.isNew;
       textNoteEditorState = {
         local_text_id: note.local_text_id,
@@ -4466,8 +4503,8 @@
             baseX: base.x,
             baseY: base.y,
           };
-          closeQuickMarkerEditor({ keepDraft: false });
-          redrawTextNotes();
+          closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
+          el.classList.add("is-selected");
           try{ el.setPointerCapture(e.pointerId); }catch(_){}
           e.preventDefault();
           e.stopPropagation();
@@ -4482,7 +4519,8 @@
           target.x = clamp(r.x, 0, 1);
           target.y = clamp(r.y, 0, 1);
           target.updated_at = new Date().toISOString();
-          redrawTextNotes();
+          el.style.left = `${clamp(nx, 0, Math.max(0, stageW - w))}px`;
+          el.style.top = `${clamp(ny, 0, Math.max(0, stageH - h))}px`;
           if(textNoteEditorState && textNoteEditorState.local_text_id === target.local_text_id){
             positionTextNoteEditor(target);
           }
@@ -4966,6 +5004,7 @@
         const id = groupEl.getAttribute("data-id");
         selectedId = id;
         selectedTextNoteId = null;
+        closeTextNoteEditor();
         redrawOverlay();
         redrawList();
         syncButtons();
@@ -5085,6 +5124,7 @@
         if(marker){
           selectedId = id;
           selectedTextNoteId = null;
+          closeTextNoteEditor();
           redrawOverlay();
           redrawList();
           syncButtons();
@@ -5258,6 +5298,7 @@
       const act = e.target.closest("button")?.dataset?.act;
       selectedId = id;
       selectedTextNoteId = null;
+      closeTextNoteEditor();
       syncButtons();
       redrawOverlay();
       redrawList();
@@ -5469,6 +5510,456 @@
         a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       }, "image/png");
+    }
+
+    // -------------------- PDF Export --------------------
+    let jsPdfCtor = null;
+
+    async function loadJsPdf(){
+      if(jsPdfCtor) return jsPdfCtor;
+      if(window.jspdf?.jsPDF){
+        jsPdfCtor = window.jspdf.jsPDF;
+        return jsPdfCtor;
+      }
+      const candidates = [
+        "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
+        "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
+        "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
+      ];
+      for(const src of candidates){
+        try{
+          await loadScript(src);
+          if(window.jspdf?.jsPDF){
+            jsPdfCtor = window.jspdf.jsPDF;
+            return jsPdfCtor;
+          }
+        }catch(err){
+          console.warn("jsPDF failed:", src, err);
+        }
+      }
+      throw new Error("PDF出力ライブラリ（jsPDF）の読み込みに失敗しました。");
+    }
+
+    function resolvePdfExportMode(mode){
+      const raw = String(mode || "full").toLowerCase();
+      if(raw === "drawing_only" || raw === "drawingonly" || raw === "drawing") return "drawing_only";
+      if(raw === "details_only" || raw === "detailsonly" || raw === "details") return "details_only";
+      return "full";
+    }
+
+    function resolvePdfStatusFilter(status){
+      const raw = String(status || "open").toLowerCase();
+      if(raw === "all" || raw === "全て") return "all";
+      if(raw === "completed" || raw === "完了") return "completed";
+      return "open";
+    }
+
+    function markerMatchesStatusFilter(marker, statusFilter){
+      const normalizedStatus = normalizeMarkerStatus(marker);
+      if(statusFilter === "all") return true;
+      if(statusFilter === "completed") return normalizedStatus === "completed";
+      return normalizedStatus === "open";
+    }
+
+    function getOrderedMarkersForPdf(options = {}){
+      const markerKey = activeKey();
+      const source = Array.isArray(store.markersByKey?.[markerKey]) ? store.markersByKey[markerKey] : [];
+      const selectedVendor = String(options.vendorName || "").trim();
+      const statusFilter = resolvePdfStatusFilter(options.statusFilter || "open");
+      const filtered = source.filter(marker=>{
+        if(!marker || typeof marker !== "object") return false;
+        if(String(marker.status || "").toLowerCase() === "deleted") return false;
+        if(!shouldShowMarkerForVendor(marker, selectedVendor)) return false;
+        if(!markerMatchesStatusFilter(marker, statusFilter)) return false;
+        return true;
+      });
+      return filtered.map((marker, idx)=>({ marker, number: idx + 1 }));
+    }
+
+    function getMarkerPhotoPair(marker){
+      const out = { before: null, after: null };
+      if(marker?.beforePhoto) out.before = clonePhotoInfo(marker.beforePhoto) || marker.beforePhoto;
+      if(marker?.afterPhoto) out.after = clonePhotoInfo(marker.afterPhoto) || marker.afterPhoto;
+      const candidates = []
+        .concat(Array.isArray(marker?.marker_photos) ? marker.marker_photos : [])
+        .concat(Array.isArray(marker?.photos) ? marker.photos : []);
+      candidates.forEach(photo=>{
+        const kind = String(photo?.kind || photo?.photo_kind || photo?.type || photo?.photo_type || "").toLowerCase();
+        if(kind === "before" && !out.before) out.before = photo;
+        if(kind === "after" && !out.after) out.after = photo;
+      });
+      return out;
+    }
+
+    function parseHexToRgb(color, fallback = [17,24,39]){
+      const raw = String(color || "").trim();
+      if(/^#([0-9a-f]{3})$/i.test(raw)){
+        const m = raw.slice(1);
+        return [
+          parseInt(m[0] + m[0], 16),
+          parseInt(m[1] + m[1], 16),
+          parseInt(m[2] + m[2], 16),
+        ];
+      }
+      if(/^#([0-9a-f]{6})$/i.test(raw)){
+        return [
+          parseInt(raw.slice(1, 3), 16),
+          parseInt(raw.slice(3, 5), 16),
+          parseInt(raw.slice(5, 7), 16),
+        ];
+      }
+      return fallback;
+    }
+
+    function renderMarkerNumberForPdf(pdf, marker, number, opts = {}){
+      const x = Number(opts.x || 0);
+      const y = Number(opts.y || 0);
+      const radius = Number(opts.radius || 3.1);
+      pdf.setFillColor(220, 38, 38);
+      pdf.circle(x, y, radius, "F");
+      pdf.setDrawColor(255, 255, 255);
+      pdf.setLineWidth(0.5);
+      pdf.circle(x, y, radius, "S");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8.5);
+      const text = String(number);
+      const tw = pdf.getTextWidth(text);
+      pdf.text(text, x - (tw / 2), y + 2.2);
+      return { x, y, radius, marker };
+    }
+
+    function renderTextNotesForPdf(pdf, opts = {}){
+      const area = opts.area || { x: 0, y: 0, w: 1, h: 1 };
+      const noteArr = textNotes()
+        .map(n=>normalizeTextNote(n))
+        .filter(n=>n.status === "active")
+        .sort((a,b)=>(a.display_order || 0) - (b.display_order || 0));
+      noteArr.forEach(note=>{
+        const nx = area.x + clamp(note.x, 0, 1) * area.w;
+        const ny = area.y + clamp(note.y, 0, 1) * area.h;
+        const nw = clamp(note.width * area.w, 16, area.w * 0.7);
+        const nh = clamp(note.height * area.h, 9, area.h * 0.4);
+        const fill = parseHexToRgb(note.background_color, [255,255,255]);
+        const border = parseHexToRgb(note.border_color, [215,220,228]);
+        const textColor = parseHexToRgb(note.text_color, [17,24,39]);
+        pdf.setFillColor(fill[0], fill[1], fill[2]);
+        pdf.setDrawColor(border[0], border[1], border[2]);
+        pdf.setLineWidth(0.35);
+        pdf.roundedRect(nx, ny, nw, nh, 1.6, 1.6, "FD");
+        const content = String(note.text_content ?? "").trim() || "メモなし";
+        const fontSize = clamp(Number(note.font_size || 12) * 0.5, 6, 10);
+        pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+        pdf.setFont("helvetica", note.font_weight === "bold" ? "bold" : "normal");
+        pdf.setFontSize(fontSize);
+        const lines = pdf.splitTextToSize(content, Math.max(8, nw - 3));
+        const maxLines = Math.max(1, Math.floor((nh - 2.4) / (fontSize * 0.55)));
+        lines.slice(0, maxLines).forEach((line, idx)=>{
+          pdf.text(line, nx + 1.5, ny + 2.2 + idx * (fontSize * 0.55));
+        });
+      });
+    }
+
+    function getPhotoSource(photo){
+      if(!photo) return "";
+      if(typeof photo === "string") return photo;
+      return String(
+        photo.public_url ||
+        photo.url ||
+        photo.src ||
+        photo.data_url ||
+        photo.dataUrl ||
+        photo.blob_url ||
+        photo.blobUrl ||
+        photo.base64 ||
+        ""
+      ).trim();
+    }
+
+    function blobToDataUrl(blob){
+      return new Promise((resolve, reject)=>{
+        const fr = new FileReader();
+        fr.onload = ()=>resolve(String(fr.result || ""));
+        fr.onerror = ()=>reject(new Error("blobの読み取りに失敗しました。"));
+        fr.readAsDataURL(blob);
+      });
+    }
+
+    async function resolveImageForPdf(photo){
+      const src = getPhotoSource(photo);
+      if(!src) return { dataUrl: "", error: null };
+      if(/^data:image\//i.test(src)) return { dataUrl: src, error: null };
+      if(/^[A-Za-z0-9+/=\r\n]+$/.test(src) && src.length > 128 && !/^https?:/i.test(src) && !/^blob:/i.test(src)){
+        return { dataUrl: `data:image/jpeg;base64,${src.replace(/\s+/g, "")}`, error: null };
+      }
+      try{
+        if(/^blob:/i.test(src) || /^https?:/i.test(src)){
+          const res = await fetch(src);
+          if(!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const dataUrl = await blobToDataUrl(blob);
+          return { dataUrl, error: null };
+        }
+      }catch(err){
+        return { dataUrl: "", error: err };
+      }
+      return { dataUrl: "", error: new Error("未対応の画像形式です。") };
+    }
+
+    function loadImageElement(src){
+      return new Promise((resolve, reject)=>{
+        const img = new Image();
+        img.onload = ()=>resolve(img);
+        img.onerror = ()=>reject(new Error("画像の読み込みに失敗しました。"));
+        img.src = src;
+      });
+    }
+
+    async function getCurrentDrawingDataUrlForPdf(){
+      const bg = store.activeBg;
+      if(bg?.kind !== "pdf") return null;
+      const pdfIdentity = resolvePdfIdentity(bg);
+      if(!pdfIdentity || !bg.page) return null;
+      const cacheKey = `${pdfIdentity}:${bg.page}`;
+      if(bg.pageCache?.[cacheKey]) return bg.pageCache[cacheKey];
+      if(lastPdfFile){
+        try{
+          const rendered = await renderPdfPageToDataUrl(lastPdfFile, bg.page);
+          bg.pageCount = rendered.pageCount;
+          bg.pageCache[cacheKey] = rendered.dataURL;
+          saveStore();
+          return rendered.dataURL;
+        }catch(err){
+          console.warn("draw page render for PDF export failed", err);
+        }
+      }
+      return null;
+    }
+
+    async function drawPhotoCell(pdf, rect, label, photoInfo){
+      const x = rect.x, y = rect.y, w = rect.w, h = rect.h;
+      pdf.setDrawColor(203, 213, 225);
+      pdf.setFillColor(248, 250, 252);
+      pdf.roundedRect(x, y, w, h, 2, 2, "FD");
+      pdf.setTextColor(30, 41, 59);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.text(label, x + 3, y + 5.5);
+      const bodyY = y + 7;
+      const bodyH = h - 9;
+      const result = await resolveImageForPdf(photoInfo);
+      if(!result.dataUrl){
+        pdf.setTextColor(100, 116, 139);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(11);
+        pdf.text(result.error ? "写真読込失敗" : "写真なし", x + 3, bodyY + 8);
+        return;
+      }
+      try{
+        const img = await loadImageElement(result.dataUrl);
+        const scale = Math.min((w - 4) / img.width, (bodyH - 3) / img.height);
+        const dw = Math.max(1, img.width * scale);
+        const dh = Math.max(1, img.height * scale);
+        const dx = x + (w - dw) / 2;
+        const dy = bodyY + (bodyH - dh) / 2;
+        const fmt = /png/i.test(result.dataUrl.slice(0, 50)) ? "PNG" : "JPEG";
+        pdf.addImage(result.dataUrl, fmt, dx, dy, dw, dh, undefined, "FAST");
+      }catch(err){
+        console.warn("photo draw failed", err);
+        pdf.setTextColor(100, 116, 139);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(11);
+        pdf.text("写真読込失敗", x + 3, bodyY + 8);
+      }
+    }
+
+    async function buildPdfDrawingPage(pdf, orderedMarkers, options = {}){
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const headerH = 15;
+      const footerH = 8;
+      const drawArea = {
+        x: margin,
+        y: margin + headerH,
+        w: pageW - margin * 2,
+        h: pageH - margin * 2 - headerH - footerH,
+      };
+      const siteName = (selectedSite?.site_name || $("inpSiteName")?.value || "（現場名未設定）").trim();
+      const dateText = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt")?.value || "");
+      const floorName = (selectedFloor?.floor_name || $("inpFloorName")?.value || "-").trim() || "-";
+      pdf.setTextColor(17, 24, 39);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.text(`現場名: ${siteName}`, margin, margin + 5);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(`検査日: ${dateText} / フロア: ${floorName}`, margin, margin + 10);
+
+      let actualArea = { ...drawArea };
+      const drawingDataUrl = await getCurrentDrawingDataUrlForPdf();
+      if(drawingDataUrl){
+        try{
+          const img = await loadImageElement(drawingDataUrl);
+          const scale = Math.min(drawArea.w / img.width, drawArea.h / img.height);
+          const dw = img.width * scale;
+          const dh = img.height * scale;
+          const dx = drawArea.x + (drawArea.w - dw) / 2;
+          const dy = drawArea.y + (drawArea.h - dh) / 2;
+          actualArea = { x: dx, y: dy, w: dw, h: dh };
+          pdf.addImage(drawingDataUrl, "PNG", dx, dy, dw, dh, undefined, "FAST");
+        }catch(err){
+          console.warn("drawing image placement failed", err);
+          pdf.setDrawColor(203, 213, 225);
+          pdf.rect(drawArea.x, drawArea.y, drawArea.w, drawArea.h);
+          pdf.setTextColor(100, 116, 139);
+          pdf.text("図面画像を読み込めませんでした。", drawArea.x + 6, drawArea.y + 10);
+        }
+      }else{
+        pdf.setDrawColor(203, 213, 225);
+        pdf.rect(drawArea.x, drawArea.y, drawArea.w, drawArea.h);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("図面が未選択のため、図面表示は省略されました。", drawArea.x + 6, drawArea.y + 10);
+      }
+
+      orderedMarkers.forEach(entry=>{
+        const marker = entry.marker;
+        const px = actualArea.x + clamp(Number(marker.x), 0, 1) * actualArea.w;
+        const py = actualArea.y + clamp(Number(marker.y), 0, 1) * actualArea.h;
+        renderMarkerNumberForPdf(pdf, marker, entry.number, { x: px, y: py, radius: 3.2 });
+        const memo = String(marker.memo || "").trim();
+        if(memo){
+          const memoW = clamp(actualArea.w * 0.22, 28, 56);
+          const lines = pdf.splitTextToSize(memo, memoW - 3);
+          const memoH = clamp(4 + lines.length * 3.5, 7, 24);
+          const mx = clamp(px + 4, actualArea.x, actualArea.x + actualArea.w - memoW);
+          const my = clamp(py + 2, actualArea.y, actualArea.y + actualArea.h - memoH);
+          pdf.setFillColor(255, 255, 255);
+          pdf.setDrawColor(226, 232, 240);
+          pdf.roundedRect(mx, my, memoW, memoH, 1.2, 1.2, "FD");
+          pdf.setTextColor(71, 85, 105);
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(8);
+          lines.slice(0, 5).forEach((line, idx)=>{
+            pdf.text(line, mx + 1.4, my + 3.3 + idx * 3.2);
+          });
+        }
+      });
+      renderTextNotesForPdf(pdf, { area: actualArea });
+      pdf.setTextColor(100, 116, 139);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.text(`ページ ${pdf.getNumberOfPages()}`, pageW - margin - 16, pageH - 3.5);
+    }
+
+    async function buildPdfMarkerDetailPages(pdf, orderedMarkers, options = {}){
+      const useCurrentFirstPage = !!options.useCurrentPageForFirst;
+      if(orderedMarkers.length === 0){
+        if(!useCurrentFirstPage){
+          pdf.addPage("a4", "portrait");
+        }
+        const pageW = pdf.internal.pageSize.getWidth();
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(16);
+        pdf.setTextColor(30, 41, 59);
+        pdf.text("指摘詳細", 14, 18);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(11);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("対象の指摘はありません。", 14, 30);
+        return;
+      }
+      for(let i = 0; i < orderedMarkers.length; i++){
+        if(i > 0 || !useCurrentFirstPage){
+          pdf.addPage("a4", "portrait");
+        }
+        const { marker, number } = orderedMarkers[i];
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 12;
+        const contentW = pageW - margin * 2;
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(15);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text("指摘詳細", margin, 14);
+
+        const mainVendor = getVendorDisplayName(marker) || "未設定";
+        const assigned = Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names : [];
+        const subs = Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : [];
+        const relatedVendors = Array.from(new Set([...subs, ...assigned])).filter(name=>name && name !== mainVendor && name !== "全業者");
+        const statusLabel = normalizeMarkerStatus(marker) === "completed" ? "完了" : "未対応";
+        const memoText = String(marker.memo || "").trim() || "なし";
+
+        let cursorY = 23;
+        const lineH = 6;
+        const rows = [
+          `指摘 No.${number}`,
+          `指摘種別: ${marker.type || "-"}`,
+          `担当業者: ${mainVendor}`,
+          `関連業者: ${relatedVendors.length ? relatedVendors.join("、") : "なし"}`,
+          `ステータス: ${statusLabel}`,
+        ];
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(11);
+        rows.forEach(row=>{
+          pdf.setTextColor(30, 41, 59);
+          pdf.text(row, margin, cursorY);
+          cursorY += lineH;
+        });
+        const memoLines = pdf.splitTextToSize(`メモ: ${memoText}`, contentW);
+        memoLines.forEach(line=>{
+          pdf.setTextColor(30, 41, 59);
+          pdf.text(line, margin, cursorY);
+          cursorY += 5;
+        });
+
+        const photosTop = cursorY + 2;
+        const photoH = Math.max(70, pageH - photosTop - 14);
+        const gap = 6;
+        const cellW = (contentW - gap) / 2;
+        const pair = getMarkerPhotoPair(marker);
+        await drawPhotoCell(pdf, { x: margin, y: photosTop, w: cellW, h: photoH }, "Before", pair.before);
+        await drawPhotoCell(pdf, { x: margin + cellW + gap, y: photosTop, w: cellW, h: photoH }, "After", pair.after);
+
+        pdf.setTextColor(100, 116, 139);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        pdf.text(`ページ ${pdf.getNumberOfPages()}`, pageW - margin - 16, pageH - 4);
+      }
+    }
+
+    async function exportInspectionPdfWithPhotos(options = {}){
+      if(normalizeAllMarkersInStore()) saveStore();
+      const mode = resolvePdfExportMode(options.mode || $("pdfExportMode")?.value || "full");
+      const statusFilter = resolvePdfStatusFilter(options.statusFilter || $("pdfExportStatus")?.value || "open");
+      const vendorName = String(options.vendorName ?? $("pdfExportVendor")?.value ?? "").trim();
+      const orderedMarkers = getOrderedMarkersForPdf({ statusFilter, vendorName });
+      const includesDrawing = mode !== "details_only";
+      const includesDetails = mode !== "drawing_only";
+      const JsPdf = await loadJsPdf();
+      const pdf = new JsPdf({
+        orientation: includesDrawing ? "landscape" : "portrait",
+        unit: "mm",
+        format: "a4",
+        compress: true,
+      });
+      if(includesDrawing){
+        await buildPdfDrawingPage(pdf, orderedMarkers, { statusFilter, vendorName });
+      }
+      if(includesDetails){
+        await buildPdfMarkerDetailPages(pdf, orderedMarkers, {
+          useCurrentPageForFirst: !includesDrawing,
+          statusFilter,
+          vendorName,
+        });
+      }
+      const siteName = (selectedSite?.site_name || $("inpSiteName")?.value || "inspection").trim() || "inspection";
+      const floorName = (selectedFloor?.floor_name || $("inpFloorName")?.value || "floor").trim() || "floor";
+      const ts = new Date().toISOString().slice(0, 10);
+      const fileName = toSafeFileName(`${siteName}_${floorName}_${ts}.pdf`);
+      pdf.save(fileName);
+      toast(`PDF出力しました（${orderedMarkers.length}件）`);
     }
 
     // -------------------- PDF Handling (with CDN fallback) --------------------
@@ -5781,6 +6272,18 @@
     });
 
     $("btnSavePng").addEventListener("click", savePng);
+    $("btnExportPdf").addEventListener("click", async ()=>{
+      try{
+        await exportInspectionPdfWithPhotos({
+          mode: $("pdfExportMode")?.value || "full",
+          statusFilter: $("pdfExportStatus")?.value || "open",
+          vendorName: $("pdfExportVendor")?.value || "",
+        });
+      }catch(err){
+        console.error(err);
+        toast("PDF出力に失敗しました。\n" + String(err?.message || err));
+      }
+    });
     $("btnDeleteSelected").addEventListener("click", ()=>{
       deleteSelected();
     });
