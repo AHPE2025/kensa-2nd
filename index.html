@@ -1671,7 +1671,7 @@
 
     function sanitizeMarkerPhotoPublicUrl(publicUrl){
       let url = String(publicUrl || "").trim();
-      if(url.startsWith("blob:")) url = "";
+      if(url.startsWith("blob:") || url.startsWith("data:image")) url = "";
       return url;
     }
 
@@ -2989,7 +2989,7 @@
       for(const row of rows){
         const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
         next.signed_url = sanitizeMarkerPhotoPublicUrl(next.signed_url);
-        if(!resolvePhotoUrl(next) && next.storage_path){
+        if(!resolvePhotoUrl(next, { warn: false }) && next.storage_path){
           try{
             const bucket = getPhotoBucketName();
             const normalizedPath = normalizePhotoStoragePath(next.storage_path);
@@ -3002,7 +3002,7 @@
             }
           }catch(_){}
         }
-        if(!resolvePhotoUrl(next) && hasPhotoData(next)){
+        if(!resolvePhotoUrl(next, { warn: false }) && next.storage_path){
           console.warn("[photo] failed to resolve url", next);
         }
         hydrated.push(next);
@@ -3067,10 +3067,10 @@
         });
         marker.beforePhoto = beforePhoto;
         marker.afterPhoto = afterPhoto;
-        const beforeUrl = resolvePhotoUrl(beforePhoto);
-        const afterUrl = resolvePhotoUrl(afterPhoto);
-        if(beforePhoto && !beforeUrl) console.warn("[photo] failed to resolve url", beforePhoto);
-        if(afterPhoto && !afterUrl) console.warn("[photo] failed to resolve url", afterPhoto);
+        const beforeUrl = resolvePhotoUrl(beforePhoto, { warn: false });
+        const afterUrl = resolvePhotoUrl(afterPhoto, { warn: false });
+        if(beforePhoto?.storage_path && !beforeUrl) console.warn("[photo] failed to resolve url", beforePhoto);
+        if(afterPhoto?.storage_path && !afterUrl) console.warn("[photo] failed to resolve url", afterPhoto);
         marker.photos = marker.photos && typeof marker.photos === "object" ? marker.photos : {};
         marker.photos.before = beforeUrl || "";
         marker.photos.after = afterUrl || "";
@@ -5219,7 +5219,7 @@
     }
 
     function resolveMarkerPhotoUrlCandidate(value){
-      return resolvePhotoUrl(value);
+      return resolvePhotoUrl(value, { warn: false });
     }
 
     function collectVendorPhotoRowsForMarker(marker){
@@ -5293,6 +5293,11 @@
       return vendorWorkPhotoLoadingPromise;
     }
 
+    function photoHasStoragePath(photo){
+      if(!photo || typeof photo !== "object") return false;
+      return !!(photo.storage_path || photo.storagePath || photo.path);
+    }
+
     function getMarkerPhotosForVendorView(marker){
       const out = {
         before: null,
@@ -5303,8 +5308,8 @@
         afterRaw: null,
       };
       const setPhoto = (kind, value)=>{
-        if(out[`${kind}HasData`] || hasPhotoData(value)){
-          out[`${kind}HasData`] = true;
+        if(value){
+          if(photoHasStoragePath(value)) out[`${kind}HasData`] = true;
           if(!out[`${kind}Raw`]) out[`${kind}Raw`] = value;
         }
         if(out[kind]) return;
@@ -5336,7 +5341,7 @@
       photoRows.forEach(row=>{
         const kind = normalizeVendorPhotoKind(row?.kind || row?.photo_type);
         if(!kind) return;
-        out[`${kind}HasData`] = true;
+        if(photoHasStoragePath(row)) out[`${kind}HasData`] = true;
         if(!out[`${kind}Raw`]) out[`${kind}Raw`] = row;
         if((kind === "before" && out.before) || (kind === "after" && out.after)) return;
         const resolved = resolveMarkerPhotoUrlCandidate(row);
@@ -5346,11 +5351,11 @@
     }
 
     function makeVendorPhotoSlotHtml(url, label, hasData, rawPhoto){
-      const resolvedUrl = url || (rawPhoto ? resolvePhotoUrl(rawPhoto) : "");
+      const resolvedUrl = url || (rawPhoto ? resolvePhotoUrl(rawPhoto, { warn: false }) : "");
       if(resolvedUrl){
         return `<img class="vendor-photo-thumb" src="${escapeHtml(resolvedUrl)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(resolvedUrl)}" data-photo-label="${escapeHtml(label)}" />`;
       }
-      if(hasData){
+      if(hasData || photoHasStoragePath(rawPhoto)){
         console.warn("[photo] failed to resolve url", rawPhoto);
         return `<div class="vendor-photo-empty vendor-photo-error">写真を読み込めません</div>`;
       }
@@ -6828,12 +6833,16 @@
       }
     }
 
-    function resolvePhotoUrl(photo){
+    function resolvePhotoUrl(photo, options = {}){
       if(!photo) return "";
 
       if(typeof photo === "string"){
         const d = String(photo).trim();
         if(!d) return "";
+        if(d.startsWith("data:image")){
+          logPhotoResolved(photo, d);
+          return d;
+        }
         if(d.startsWith("http://") || d.startsWith("https://")){
           logPhotoResolved(photo, d);
           return d;
@@ -6859,25 +6868,42 @@
 
       if(typeof photo !== "object") return "";
 
-      const direct =
-        photo.public_url ||
-        photo.publicUrl ||
-        photo.signed_url ||
-        photo.signedUrl ||
-        photo.url;
+      const localPreview =
+        photo.local_preview_url ||
+        photo.localPreviewUrl ||
+        photo.preview_data_url ||
+        photo.previewDataUrl;
 
-      if(direct && typeof direct === "string"){
-        const d = direct.trim();
+      if(
+        localPreview &&
+        typeof localPreview === "string" &&
+        localPreview.startsWith("data:image")
+      ){
+        logPhotoResolved(photo, localPreview);
+        return localPreview;
+      }
 
-        if(d.startsWith("http://") || d.startsWith("https://")){
-          logPhotoResolved(photo, d);
-          return d;
+      const directCandidates = [
+        photo.public_url,
+        photo.publicUrl,
+        photo.signed_url,
+        photo.signedUrl,
+        photo.url,
+        photo.previewUrl
+      ];
+
+      for(const value of directCandidates){
+        if(!value || typeof value !== "string") continue;
+
+        const v = value.trim();
+
+        if(v.startsWith("http://") || v.startsWith("https://")){
+          logPhotoResolved(photo, v);
+          return v;
         }
 
-        if(d.startsWith("blob:")){
-          console.warn("[photo] ignored blob url", d);
-        }else if(isUuidLikeToken(d)){
-          // UUIDのみはURLとして使わない
+        if(v.startsWith("blob:")){
+          console.warn("[photo] ignored blob url", v);
         }
       }
 
@@ -6888,50 +6914,58 @@
 
       const path = normalizePhotoStoragePath(rawPath);
 
-      if(!path){
-        const localPreview = String(photo.local_preview_url || "").trim();
-        if(/^data:image\//i.test(localPreview)){
-          return "";
+      if(path){
+        if(path.startsWith("http://") || path.startsWith("https://")){
+          logPhotoResolved(photo, path);
+          return path;
         }
-        console.warn("[photo] failed to resolve url: no storage_path", photo);
-        return "";
-      }
 
-      if(path.startsWith("http://") || path.startsWith("https://")){
-        logPhotoResolved(photo, path);
-        return path;
-      }
+        if(isSupabaseConfigured() && isSupabaseSdkReady()){
+          try{
+            const sb = getSupabase();
+            const { data } = sb.storage
+              .from(getPhotoBucketName())
+              .getPublicUrl(path);
 
-      if(isSupabaseConfigured() && isSupabaseSdkReady()){
-        try{
-          const sb = getSupabase();
-          const { data } = sb.storage
-            .from(getPhotoBucketName())
-            .getPublicUrl(path);
-
-          if(data && data.publicUrl){
-            logPhotoResolved(photo, data.publicUrl);
-            return data.publicUrl;
+            if(data && data.publicUrl){
+              logPhotoResolved(photo, data.publicUrl);
+              return data.publicUrl;
+            }
+          }catch(error){
+            console.warn("[photo] getPublicUrl failed", error, photo);
           }
-        }catch(error){
-          console.warn("[photo] getPublicUrl failed", error, photo);
+        }
+
+        const fallback = getPhotoPublicUrlFromStoragePath(path);
+        if(fallback){
+          logPhotoResolved(photo, fallback);
+          return fallback;
         }
       }
 
-      const fallback = getPhotoPublicUrlFromStoragePath(path);
-      if(fallback){
-        logPhotoResolved(photo, fallback);
-        return fallback;
-      }
+      const hasAnyPhotoSignal =
+        photo.id ||
+        photo.marker_id ||
+        photo.local_marker_id ||
+        photo.file_name ||
+        photo.fileName ||
+        photo.storage_path ||
+        photo.storagePath ||
+        photo.public_url ||
+        photo.publicUrl ||
+        photo.signed_url ||
+        photo.signedUrl;
 
-      console.warn("[photo] failed to resolve url", {
-        id: photo.id,
-        kind: photo.kind,
-        photo_type: photo.photo_type,
-        rawPath,
-        normalizedPath: path,
-        public_url: photo.public_url
-      });
+      if(hasAnyPhotoSignal && options.warn !== false){
+        console.warn("[photo] failed to resolve url", {
+          id: photo.id,
+          kind: photo.kind,
+          photo_type: photo.photo_type,
+          storage_path: photo.storage_path,
+          public_url: photo.public_url,
+          file_name: photo.file_name
+        });
+      }
 
       return "";
     }
@@ -7076,8 +7110,8 @@
       marker.afterPhotoDeletePath = marker.afterPhotoDeletePath || null;
       marker.cloud_marker_id = marker.cloud_marker_id || null;
       marker.supabase_marker_id = marker.supabase_marker_id || marker.cloud_marker_id || null;
-      const beforeUrl = resolvePhotoUrl(marker.beforePhoto);
-      const afterUrl = resolvePhotoUrl(marker.afterPhoto);
+      const beforeUrl = resolvePhotoUrl(marker.beforePhoto, { warn: false });
+      const afterUrl = resolvePhotoUrl(marker.afterPhoto, { warn: false });
       marker.beforePhotoUrl = beforeUrl || "";
       marker.afterPhotoUrl = afterUrl || "";
       marker.photos = {
@@ -8145,8 +8179,7 @@
     }
 
     function getSafePhotoPreviewUrl(photo){
-      let url = resolvePhotoUrl(photo);
-      if(!url) url = getLocalPhotoPreviewDataUrl(photo);
+      const url = resolvePhotoUrl(photo);
       if(!url) return "";
       if(brokenPhotoPreviewUrls.has(url)) return "";
       if(/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url;
@@ -8169,8 +8202,7 @@
 
     function setQuickPhotoPreviewElement(el, photo, kind){
       if(!el) return;
-      let url = resolvePhotoUrl(photo);
-      if(!url) url = getLocalPhotoPreviewDataUrl(photo);
+      const url = resolvePhotoUrl(photo);
       el.innerHTML = "";
       const alt = `${photoKindLabel(kind)}写真`;
       el.classList.toggle("is-empty", !url);
@@ -8190,7 +8222,7 @@
         }, { once: true });
         el.appendChild(img);
       }else{
-        if(hasPhotoData(photo) && !getLocalPhotoPreviewDataUrl(photo)){
+        if(photoHasStoragePath(photo)){
           console.warn("[photo] failed to resolve url", photo);
           el.textContent = "写真を読み込めません";
         }else{
@@ -10707,16 +10739,10 @@
       const resolved = resolvePhotoUrl(photo);
       if(resolved) return resolved;
       if(typeof photo === "object"){
-        const localPreview = String(photo.local_preview_url || "").trim();
-        if(/^data:image\//i.test(localPreview)) return localPreview;
         const fallback = String(photo.data_url || photo.dataUrl || photo.base64 || "").trim();
         if(/^data:image\//i.test(fallback)) return fallback;
       }
-      if(typeof photo === "string"){
-        const raw = String(photo).trim();
-        if(/^data:image\//i.test(raw)) return raw;
-      }
-      if(hasPhotoData(photo) && !getLocalPhotoPreviewDataUrl(photo)){
+      if(photoHasStoragePath(photo)){
         console.warn("[photo] failed to resolve url", photo);
       }
       return "";
