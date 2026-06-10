@@ -196,6 +196,18 @@
       flex-wrap:wrap;
     }
     .floor-inspection-head .meta{display:flex;gap:8px;flex-wrap:wrap}
+    .floor-switch-pill{display:inline-flex;align-items:center;gap:6px}
+    .floor-switch-pill select{
+      min-width:110px;
+      height:30px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:4px 8px;
+      background:#fff;
+      color:#0f172a;
+      font-size:13px;
+    }
+    .floor-current-hidden{display:none}
     .floor-inspection-head .save-indicator{
       display:inline-flex;
       align-items:center;
@@ -207,6 +219,7 @@
     }
     .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
     .vendor-row:last-child{border-bottom:none}
+    .vendor-row.sel{border-left:4px solid #2563eb;background:#eff6ff}
     .vendor-row-main{flex:1;min-width:0}
     .vendor-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
     .vendor-photo-thumbs{display:flex;gap:12px;margin-top:10px;flex-wrap:wrap}
@@ -223,8 +236,8 @@
       display:block;
     }
     .vendor-photo-empty{
-      width:140px;
-      height:100px;
+      min-width:96px;
+      min-height:32px;
       border-radius:10px;
       border:1px dashed #cbd5e1;
       background:#f8fafc;
@@ -233,9 +246,21 @@
       align-items:center;
       justify-content:center;
       font-size:12px;
-      padding:6px;
+      padding:6px 10px;
       text-align:center;
     }
+    .inline-vendor-section{margin-top:12px}
+    .inline-vendor-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap}
+    .inline-vendor-title{display:flex;flex-direction:column;gap:4px}
+    .inline-vendor-counts{font-size:12px;color:#475569;display:flex;gap:12px;flex-wrap:wrap}
+    .inline-vendor-filters{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap}
+    .inline-vendor-filters .field{min-width:180px}
+    .inline-vendor-filter-summary{font-size:12px;color:#334155;margin-top:4px}
+    .inline-vendor-list-wrap{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:#fff}
+    .inline-vendor-list-wrap.collapsed #vendorWorkList{display:none}
+    .inline-vendor-row-title{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .inline-vendor-no{font-weight:800}
+    .inline-vendor-meta{font-size:12px;color:#475569;margin-top:4px}
     .vendor-photo-error{color:#dc2626;border-style:solid;border-color:#fecaca;background:#fef2f2}
     .photo-preview-overlay{
       position:fixed;
@@ -387,7 +412,7 @@
     .mapping-toggle-wrap{margin-top:10px;display:flex;justify-content:flex-end}
 
     /* フルスクリーンモード */
-    .fs-btn{position:absolute;top:10px;right:10px;z-index:10;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
+    .fs-btn{position:absolute;top:10px;right:10px;z-index:50;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
     .fs-btn:hover{background:rgba(17,24,39,.95)}
     body.fullscreen-active{overflow:hidden}
     .pseudo-fullscreen{
@@ -432,6 +457,24 @@
     .stageWrap.fullscreen.rot270,
     .stageWrap.is-fullscreen.rot270,
     .stageWrap.pseudo-fullscreen.rot270{transform:rotate(270deg);width:100vh;height:100vw;top:calc((100vh - 100vw)/2);left:calc((100vw - 100vh)/2);}
+    .stage-fullscreen,
+    #stageWrap:fullscreen,
+    #drawingArea:fullscreen{
+      width:100vw !important;
+      height:100vh !important;
+      background:#ffffff !important;
+      overflow:auto !important;
+    }
+    #stageWrap:fullscreen .stage-inner,
+    #drawingArea:fullscreen .stage-inner{
+      position:relative !important;
+      margin:0 auto !important;
+    }
+    #stageWrap:fullscreen img,
+    #drawingArea:fullscreen img{
+      max-width:none !important;
+      max-height:none !important;
+    }
     #fsPanel{display:none;position:fixed;z-index:2000;background:rgba(17,24,39,.88);backdrop-filter:blur(12px);border-radius:20px;padding:12px 20px;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center;box-shadow:0 8px 32px rgba(0,0,0,.5);max-width:96vw;cursor:grab;user-select:none;touch-action:none;}
     #fsPanel.show{display:flex}
     #fsPanel.dragging{cursor:grabbing;}
@@ -533,7 +576,10 @@
     #bg,
     #bg canvas,
     #bg img{
-      position:relative;
+      position:absolute;
+      left:0;
+      top:0;
+      display:block;
       z-index:1;
     }
     svg#overlay,
@@ -558,6 +604,50 @@
       position:absolute;
       z-index:70;
     }
+    .annotation-selected{
+      outline:3px solid #2563eb;
+      outline-offset:2px;
+      border-radius:12px;
+    }
+    .annotation-delete-btn{
+      position:absolute;
+      top:-10px;
+      right:-10px;
+      width:22px;
+      height:22px;
+      min-width:24px;
+      min-height:24px;
+      border-radius:999px;
+      background:#ef4444;
+      color:#ffffff;
+      border:2px solid #ffffff;
+      font-weight:800;
+      font-size:14px;
+      line-height:18px;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      z-index:9999;
+      box-shadow:0 2px 8px rgba(15, 23, 42, 0.25);
+      user-select:none;
+      touch-action:none;
+    }
+    .annotation-resize-handle{
+      position:absolute;
+      right:-6px;
+      bottom:-6px;
+      width:14px;
+      height:14px;
+      border-radius:4px;
+      background:#2563eb;
+      border:2px solid #ffffff;
+      cursor:nwse-resize;
+      display:none;
+      z-index:9999;
+      box-shadow:0 2px 6px rgba(15, 23, 42, 0.25);
+      touch-action:none;
+    }
     .text-notes-layer{pointer-events:none}
     .text-note-box{
       position:absolute;
@@ -573,14 +663,40 @@
       cursor:grab;
       user-select:none;
       white-space:pre-wrap;
+      word-break:break-word;
       overflow:hidden;
       z-index:90;
+    }
+    .text-note-box .text-note-content{
+      width:100%;
+      height:100%;
+      white-space:pre-wrap;
+      word-break:break-word;
+      overflow:hidden;
+      pointer-events:none;
     }
     .text-note-box:active{cursor:grabbing}
     .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
     .text-note-box.note-time{border-color:#60a5fa;background:#eff6ff}
     .text-note-box.note-other{border-color:#9ca3af;background:#f8fafc}
     .text-note-box.is-selected{outline:2px solid #2563eb}
+    .text-note-box.is-selected .annotation-delete-btn,
+    .text-note-box.is-selected .annotation-resize-handle,
+    .text-note-box:hover .annotation-delete-btn{
+      display:flex;
+    }
+    .text-note-box.is-selected .annotation-resize-handle{
+      display:block;
+    }
+    .annotation-delete-control,
+    .annotation-resize-control{
+      display:none;
+    }
+    .annotation-box.annotation-selected .annotation-delete-control,
+    .annotation-box.annotation-selected .annotation-resize-control,
+    .annotation-box:hover .annotation-delete-control{
+      display:block;
+    }
     #textNoteEditor{
       position:absolute;
       z-index:9999;
@@ -888,44 +1004,18 @@
       </div>
     </div>
 
-    <div id="vendorWorkView" class="app-view">
-      <div class="inspection-header">
-        <div>
-          <strong style="font-size:16px">業者別確認</strong>
-          <div class="small" id="vendorViewMeta"></div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" id="btnOpenMappingManager" type="button">指摘種別・業者設定</button>
-          <button class="btn" id="btnBackToFloorInspection" type="button">図面で見る</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="body">
-          <div class="toolbar" style="margin-bottom:10px">
-            <div class="field" style="min-width:220px">
-              <label>業者名</label>
-              <select id="vendorWorkVendor"></select>
-            </div>
-            <div class="field" style="min-width:180px">
-              <label>ステータス</label>
-              <select id="vendorWorkStatusFilter">
-                <option value="open" selected>未対応</option>
-                <option value="completed">完了</option>
-                <option value="all">全て</option>
-              </select>
-            </div>
-          </div>
-          <div id="vendorWorkList" class="list"></div>
-        </div>
-      </div>
-    </div>
-
     <div id="floorInspectionView" class="app-view">
       <div class="card floor-inspection-head">
         <div class="meta">
           <span class="pill">現場名: <strong id="currentSiteTitle">-</strong></span>
           <span class="pill">検査日: <strong id="currentInspectionDate">-</strong></span>
-          <span class="pill">フロア: <strong id="currentFloorTitle">-</strong></span>
+          <span class="pill floor-switch-pill">
+            フロア切替:
+            <select id="floorSwitchSelect" aria-label="フロア切替">
+              <option value="">フロアを選択</option>
+            </select>
+            <strong id="currentFloorTitle" class="floor-current-hidden">-</strong>
+          </span>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
           <div class="save-indicator"><span class="small">保存状態:</span><span class="tag" id="cloudStatus">未設定</span></div>
@@ -933,7 +1023,6 @@
         </div>
         <div class="toolbar">
           <button class="btn" id="btnBackToFloorList" type="button">フロア一覧に戻る</button>
-          <button class="btn" id="btnOpenVendorWork" type="button">業者別確認を開く</button>
         </div>
       </div>
 
@@ -979,7 +1068,7 @@
         <select id="pdfExportVendor" class="toolbar-hidden">
           <option value="">業者: 全て</option>
         </select>
-        <button class="btn" id="btnToggleIssuePanel" type="button">指摘一覧を開く</button>
+        <button class="btn" id="btnToggleIssuePanel" type="button">指摘一覧へ移動</button>
         <button class="btn primary" id="btnExportPdf" type="button">PDF出力</button>
         <button class="btn" id="btnSavePng" type="button">PNG保存</button>
         <button class="btn" id="btnClearStorage" type="button">データ消去</button>
@@ -1047,7 +1136,7 @@
 
         <!-- 図面ステージ（横画面デフォルト） -->
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
-          <div id="stageRotateLayer" class="stage-rotate-layer">
+          <div id="stageRotateLayer" class="stage-rotate-layer stage-inner">
             <canvas id="bg"></canvas>
             <svg id="overlay"></svg>
             <div id="textNotesLayer" class="text-notes-layer"></div>
@@ -1152,6 +1241,36 @@
           <button class="fs-btn" id="btnFullscreen">⛶ フルスクリーン</button>
         </div>
 
+      </div>
+
+      <div class="card inline-vendor-section">
+        <div class="body">
+          <div class="inline-vendor-head">
+            <div class="inline-vendor-title">
+              <strong style="font-size:16px">指摘一覧・業者別確認</strong>
+              <div id="inlineVendorCounts" class="inline-vendor-counts"></div>
+              <div id="inlineVendorFilterSummary" class="inline-vendor-filter-summary"></div>
+            </div>
+            <button class="btn" id="btnInlineVendorCollapse" type="button">閉じる</button>
+          </div>
+          <div id="inlineVendorListWrap" class="inline-vendor-list-wrap">
+            <div class="inline-vendor-filters" style="padding:10px 12px;border-bottom:1px solid var(--line)">
+              <div class="field">
+                <label>業者フィルター</label>
+                <select id="vendorWorkVendor"></select>
+              </div>
+              <div class="field">
+                <label>ステータスフィルター</label>
+                <select id="vendorWorkStatusFilter">
+                  <option value="open" selected>未対応</option>
+                  <option value="all">全て</option>
+                  <option value="completed">完了</option>
+                </select>
+              </div>
+            </div>
+            <div id="vendorWorkList" class="list"></div>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -1337,8 +1456,18 @@
     const MIN_BUBBLE_OFFSET_DIST = 0.03;
     const PIN_VIS_R = 7;
     const PIN_CLEAR_MARGIN = 5;
-    const BUBBLE_W = 150;
-    const BUBBLE_H = 44;
+    const BUBBLE_DEFAULT_W = 220;
+    const BUBBLE_DEFAULT_H = 70;
+    const BUBBLE_MIN_W = 120;
+    const BUBBLE_MIN_H = 56;
+    const BUBBLE_MAX_W = 500;
+    const BUBBLE_MAX_H = 300;
+    const TEXT_NOTE_DEFAULT_W_PX = 260;
+    const TEXT_NOTE_DEFAULT_H_PX = 90;
+    const TEXT_NOTE_MIN_W = 120;
+    const TEXT_NOTE_MIN_H = 50;
+    const TEXT_NOTE_MAX_W = 700;
+    const TEXT_NOTE_MAX_H = 400;
     // 初期化順で参照されても落ちないように先行宣言
     let imgRect = null;
     let stageW = 1, stageH = 1;
@@ -1438,7 +1567,6 @@
     let currentFloorId = null;
     let currentFloorName = "";
     let selectedInspectionId = null;
-    let selectedVendorWorkName = "";
     let vendorWorkPhotoRowsCache = [];
     let vendorWorkPhotoIndexByMarkerId = new Map();
     let vendorWorkPhotoIndexByLocalMarkerId = new Map();
@@ -1454,6 +1582,7 @@
     let pendingConfirmResolver = null;
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
+    const FLOOR_CONTEXT_STORAGE_KEY = "kensa:last-floor-context";
     const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
     const INSPECTION_SELECT_COLUMNS = "id, title, site_id, floor_id, floor_name, site_name, inspected_at, inspector_name, status, inspection_mode, settings, created_at, updated_at";
     const INSPECTION_DETAIL_SELECT_COLUMNS = `${INSPECTION_SELECT_COLUMNS}, current_drawing_id, current_page`;
@@ -1550,6 +1679,7 @@
       autoSaveTimer = setTimeout(()=>{
         autoSaveTimer = null;
         autoSaveToCloud(reason).catch(err=>{
+          console.warn("[inline vendor list autosave] failed", err);
           console.error("[autosave] failed", err);
         });
       }, AUTO_SAVE_DELAY_MS);
@@ -1673,6 +1803,8 @@
           memo: m.memo || "",
           createdAt: m.createdAt,
           bubbleMoved: !!m.bubbleMoved,
+          bubbleWidth: getMarkerBubbleSize(m).width,
+          bubbleHeight: getMarkerBubbleSize(m).height,
           cloud_marker_id: m.cloud_marker_id || null,
           supabase_marker_id: m.supabase_marker_id || m.cloud_marker_id || null,
           beforePhoto: clonePhotoInfo(m.beforePhoto),
@@ -1923,6 +2055,8 @@
               original_auto_vendor_name: m.original_auto_vendor_name || null,
               is_common: !!m.is_common,
               is_vendor_unassigned: !!m.is_vendor_unassigned,
+              bubbleWidth: getMarkerBubbleSize(m).width,
+              bubbleHeight: getMarkerBubbleSize(m).height,
               cloud_marker_id: m.cloud_marker_id || null,
               beforePhoto: clonePhotoInfo(m.beforePhoto),
               afterPhoto: clonePhotoInfo(m.afterPhoto),
@@ -1973,6 +2107,8 @@
             memo: row.memo || "",
             createdAt: md.createdAt || Date.now(),
             bubbleMoved: !!row.bubble_moved,
+            bubbleWidth: clamp(Number(row.bubble_width || md.bubbleWidth || BUBBLE_DEFAULT_W), BUBBLE_MIN_W, BUBBLE_MAX_W),
+            bubbleHeight: clamp(Number(row.bubble_height || md.bubbleHeight || BUBBLE_DEFAULT_H), BUBBLE_MIN_H, BUBBLE_MAX_H),
             cloud_marker_id: row.id || md.cloud_marker_id || null,
             supabase_marker_id: row.id || md.cloud_marker_id || null,
             sync_status: "synced",
@@ -2128,6 +2264,15 @@
     function resetFloorRuntimeState(){
       selectedId = null;
       selectedTextNoteId = null;
+      quickEditorState = null;
+      textNoteEditorState = null;
+      drag = null;
+      markerBubbleResize = null;
+      pendingDrag = null;
+      textNoteDrag = null;
+      textNoteResize = null;
+      dragUndoPushed.clear();
+      textDragUndoPushed.clear();
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       closeTextNoteEditor();
       clearCurrentFloorDrawingState();
@@ -2829,11 +2974,12 @@
       });
     }
 
-    async function loadInspectionWithDrawingAndMarkers(inspectionId){
+    async function loadInspectionWithDrawingAndMarkers(inspectionId, options = {}){
       if(!inspectionId){
         toast("【確認】一覧から案件を選択するか、行の「読込」を押してください。");
         return;
       }
+      const forceFirstPage = !!options.forceFirstPage;
       try{
         const sb = getSupabase();
         const { data: insp, error: iErr } = await sb.from("inspections")
@@ -2913,7 +3059,7 @@
 
         if(drawingRow?.id){
           try{
-            await loadPdfFromSupabaseDrawing(drawingRow.id, insp.current_page || 1);
+            await loadPdfFromSupabaseDrawing(drawingRow.id, forceFirstPage ? 1 : (insp.current_page || 1));
             if(store.activeBg?.kind === "pdf"){
               store.activeBg.kind = "pdf";
             }
@@ -3333,11 +3479,96 @@
     }
 
     function updateCurrentContextLabels(){
+      const floorLabel = selectedFloor?.floor_name || currentFloorName || "-";
       $("currentSiteTitle").textContent = displaySiteName(selectedSite);
       $("currentInspectionDate").textContent = formatDateLabel(selectedSite?.inspection_date || $("inpInspectedAt").value);
-      $("currentFloorTitle").textContent = selectedFloor?.floor_name || "-";
-      $("vendorViewMeta").textContent = `${displaySiteName(selectedSite)} / ${formatDateLabel(selectedSite?.inspection_date)} / ${selectedFloor?.floor_name || "-"}`;
+      $("currentFloorTitle").textContent = floorLabel;
+      renderFloorSwitchOptions();
       updatePdfTrashButtonState();
+    }
+
+    function getFloorSwitchCandidates(){
+      const siteId = selectedSiteId || selectedSite?.id || null;
+      if(!siteId) return [];
+      const base = Array.isArray(floorsCache) ? floorsCache : [];
+      const candidates = base.filter(f=>{
+        if(!f) return false;
+        if(!isActiveFloorStatus(f.status)) return false;
+        return String(f.site_id || "") === String(siteId);
+      });
+      return sortFloorsByLevel(candidates);
+    }
+
+    function renderFloorSwitchOptions(){
+      const select = $("floorSwitchSelect");
+      if(!select) return;
+      const candidates = getFloorSwitchCandidates();
+      const currentId = String(currentFloorId || selectedFloorId || selectedFloor?.id || "");
+      const optionsHtml = [
+        '<option value="">フロアを選択</option>',
+        ...candidates.map(f=>{
+          const id = String(f.id || "");
+          const name = getFloorDisplayName(f) || "-";
+          return `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`;
+        }),
+      ].join("");
+      select.innerHTML = optionsHtml;
+      if(currentId && candidates.some(f=>String(f.id) === currentId)){
+        select.value = currentId;
+      }else{
+        select.value = "";
+      }
+      const isFloorInspectionView = currentView === "floor_inspection";
+      select.disabled = !isFloorInspectionView || candidates.length === 0;
+    }
+
+    function persistCurrentFloorContext(){
+      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || null;
+      const payload = {
+        site_id: selectedSiteId || selectedSite?.id || null,
+        inspection_id: currentInspectionId || selectedInspectionId || null,
+        floor_id: floorId,
+        floor_name: selectedFloor?.floor_name || currentFloorName || "",
+        updated_at: new Date().toISOString(),
+      };
+      try{
+        localStorage.setItem(FLOOR_CONTEXT_STORAGE_KEY, JSON.stringify(payload));
+      }catch(_){}
+      try{
+        const url = new URL(window.location.href);
+        const hash = new URLSearchParams(String(url.hash || "").replace(/^#/, ""));
+        if(payload.site_id) hash.set("site_id", String(payload.site_id));
+        if(payload.inspection_id) hash.set("inspection_id", String(payload.inspection_id));
+        if(payload.floor_id) hash.set("floor_id", String(payload.floor_id));
+        url.hash = hash.toString();
+        history.replaceState(history.state || {}, "", url.toString());
+      }catch(_){}
+    }
+
+    async function askFloorSwitchSaveMode(){
+      const saveAndMove = await askConfirm(
+        "現在のフロアに未保存の変更があります。保存してから移動しますか？",
+        {
+          title: "フロア切替",
+          okLabel: "保存して移動",
+          cancelLabel: "その他",
+          danger: false,
+        }
+      );
+      if(saveAndMove) return "save";
+      const moveWithoutSave = window.confirm("保存せず移動しますか？\nキャンセルを選ぶとフロア切替を中止します。");
+      return moveWithoutSave ? "skip" : "cancel";
+    }
+
+    function ensureActiveFloorScopedBuffers(){
+      if(!store || typeof store !== "object") return;
+      if(!store.markersByKey || typeof store.markersByKey !== "object") store.markersByKey = {};
+      if(!store.textNotesByKey || typeof store.textNotesByKey !== "object") store.textNotesByKey = {};
+      const key = activeKey();
+      if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
+      if(!Array.isArray(store.textNotesByKey[key])) store.textNotesByKey[key] = [];
+      activeRotationKey = key;
+      saveStore();
     }
 
     function showView(viewName){
@@ -3347,7 +3578,6 @@
         inspection_detail: "inspectionDetailView",
         category_vendor_settings: "categoryVendorSettingsView",
         floor_inspection: "floorInspectionView",
-        vendor_work: "vendorWorkView",
       };
       Object.values(map).forEach(id=>{
         const el = $(id);
@@ -3362,8 +3592,10 @@
       if(viewName === "inspection_list"){
         loadInspectionSites();
       }
-      if(viewName === "vendor_work"){
+      if(viewName === "floor_inspection"){
+        syncInlineVendorFilterControls();
         renderVendorWorkList();
+        applyInlineVendorListCollapsed(inlineVendorListCollapsed);
       }
       updateCurrentContextLabels();
     }
@@ -3816,6 +4048,7 @@
           ...(summaryByFloor.get(String(f.id)) || {}),
         })));
         renderFloorList(floorsCache);
+        renderFloorSwitchOptions();
         await loadTrashFloors(siteId, { render: false });
       }catch(e){
         showCloudError("フロア一覧の取得", e);
@@ -4671,16 +4904,28 @@
       }
     }
 
-    async function openFloor(floorId){
+    async function openFloor(floorId, options = {}){
       const siteId = selectedSiteId;
       if(!siteId || !floorId) return;
       try{
         const previousFloorId = selectedFloorId || currentFloorId || null;
-        if(previousFloorId && String(previousFloorId) !== String(floorId)){
-          try{
-            await autoSaveToCloud("floor switch");
-          }catch(saveErr){
-            console.error("[floor switch] autosave failed", saveErr);
+        const isSwitchingFloor = previousFloorId && String(previousFloorId) !== String(floorId);
+        if(isSwitchingFloor){
+          let saveMode = "save";
+          if(dirty){
+            saveMode = await askFloorSwitchSaveMode();
+            if(saveMode === "cancel"){
+              renderFloorSwitchOptions();
+              return;
+            }
+          }
+          if(saveMode !== "skip"){
+            try{
+              await autoSaveToCloud("floor switch");
+            }catch(saveErr){
+              console.error("[floor switch] autosave failed", saveErr);
+              toast("現在のフロアの保存に失敗しました。切替後に内容を確認してください。");
+            }
           }
         }
         let floor = floorsCache.find(f=>String(f.id) === String(floorId));
@@ -4710,9 +4955,13 @@
         resetFloorRuntimeState();
         const inspectionId = await ensureInspectionForFloor(siteId, floor.id);
         selectedInspectionId = inspectionId;
-        await loadInspectionForFloor(siteId, floor.id);
+        await loadInspectionForFloor(siteId, floor.id, {
+          forceFirstPage: !!options.forceFirstPage || !!isSwitchingFloor,
+        });
+        persistCurrentFloorContext();
         showView("floor_inspection");
       }catch(e){
+        renderFloorSwitchOptions();
         logFloorOpenError("openFloor", e, siteId, floorId);
         toast("フロアを開けませんでした。Supabaseの inspections テーブル設定を確認してください。");
       }
@@ -4781,7 +5030,7 @@
       await loadFloors(selectedSiteId);
     }
 
-    async function loadInspectionForFloor(siteId, floorId){
+    async function loadInspectionForFloor(siteId, floorId, options = {}){
       if(!siteId || !floorId) return;
       removeMarkerForceLayer();
       currentFloorId = floorId;
@@ -4801,7 +5050,11 @@
       }
       currentInspectionId = inspectionId;
       selectedInspectionId = inspectionId;
-      await loadInspectionWithDrawingAndMarkers(inspectionId);
+      await loadInspectionWithDrawingAndMarkers(inspectionId, {
+        forceFirstPage: !!options.forceFirstPage,
+      });
+      ensureActiveFloorScopedBuffers();
+      persistCurrentFloorContext();
       updateCurrentContextLabels();
     }
 
@@ -5047,16 +5300,36 @@
       activePhotoPreviewOverlay = overlay;
     }
 
+    function updateInlineVendorSummary(allRows, vendorFiltered){
+      const countsEl = $("inlineVendorCounts");
+      const summaryEl = $("inlineVendorFilterSummary");
+      const total = allRows.length;
+      const openCount = allRows.filter(({ marker })=>normalizeMarkerStatus(marker) === "open").length;
+      const completedCount = total - openCount;
+      if(countsEl){
+        countsEl.innerHTML = `
+          <span>全指摘：${total}件</span>
+          <span>未対応：${openCount}件</span>
+          <span>完了：${completedCount}件</span>
+        `;
+      }
+      if(summaryEl){
+        const vendorLabel = filterVendor || "全て";
+        const filteredOpen = vendorFiltered.filter(({ marker })=>normalizeMarkerStatus(marker) === "open").length;
+        const filteredCompleted = vendorFiltered.length - filteredOpen;
+        summaryEl.textContent = `${vendorLabel}：未対応 ${filteredOpen}件 / 完了 ${filteredCompleted}件`;
+      }
+    }
+
     function renderVendorWorkList(){
       const list = $("vendorWorkList");
-      const vendorSelect = $("vendorWorkVendor");
-      const vendorName = selectedVendorWorkName || vendorSelect.value || "";
-      const statusFilter = $("vendorWorkStatusFilter")?.value || "open";
+      if(!list) return;
+      const statusFilter = $("vendorWorkStatusFilter")?.value || filterStatus || "open";
       list.innerHTML = "";
       const cacheKey = getVendorWorkPhotoCacheKey();
       if(cacheKey && vendorWorkPhotoCacheKey !== cacheKey){
         ensureVendorWorkPhotoCache().then(()=>{
-          if(currentView === "vendor_work"){
+          if(currentView === "floor_inspection"){
             renderVendorWorkList();
           }
         }).catch(()=>{});
@@ -5064,7 +5337,8 @@
       const markerRows = getCurrentFloorMarkerEntries().flatMap(([key, arr])=>
         (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
       );
-      const vendorFiltered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, vendorName));
+      const vendorFiltered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, filterVendor));
+      updateInlineVendorSummary(markerRows, vendorFiltered);
       const filtered = filterMarkersByStatus(vendorFiltered, statusFilter);
       if(filtered.length === 0){
         list.innerHTML = `<div class="vendor-row"><span class="small">該当する指摘がありません。</span></div>`;
@@ -5073,14 +5347,21 @@
       filtered.forEach(({ marker, markerKey }, idx)=>{
         const row = document.createElement("div");
         const markerStatus = normalizeMarkerStatus(marker);
-        row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "");
+        const isSelected = String(selectedId || "") === String(marker.id || "");
+        row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "") + (isSelected ? " sel" : "");
         const statusText = getMarkerStatusLabel(markerStatus);
-        const canComplete = markerStatus !== "completed";
+        const vendorName = getVendorDisplayName(marker) || marker.vendor_name || marker.vendor || "業者未定";
+        const memoText = (marker.memo || "").trim() || "なし";
         const photos = getMarkerPhotosForVendorView(marker);
         row.innerHTML = `
           <div class="vendor-row-main">
-            <div><strong>${idx + 1}. ${escapeHtml(marker.type || "種別未設定")}</strong></div>
-            <div class="small">${escapeHtml(marker.memo || "メモなし")} / ${escapeHtml(statusText)}</div>
+            <div class="inline-vendor-row-title">
+              <span class="inline-vendor-no">No.${idx + 1}</span>
+              <span>${escapeHtml(marker.type || "種別未設定")}</span>
+              <span>${escapeHtml(vendorName)}</span>
+              <span class="status-badge ${escapeHtml(markerStatus)}">${escapeHtml(statusText)}</span>
+            </div>
+            <div class="inline-vendor-meta">メモ：${escapeHtml(memoText)}</div>
             <div class="vendor-photo-thumbs">
               <div class="vendor-photo-box">
                 <div class="vendor-photo-label">Before</div>
@@ -5094,8 +5375,10 @@
           </div>
           <div class="vendor-row-actions">
             <button class="btn" type="button" data-act="goto-marker" data-marker-id="${escapeHtml(String(marker.id))}" data-marker-key="${escapeHtml(markerKey)}">図面で見る</button>
-            <button class="btn ok" type="button" data-act="mark-completed" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "" : "disabled"}>完了にする</button>
-            <button class="btn" type="button" data-act="mark-open" data-marker-id="${escapeHtml(String(marker.id))}" ${canComplete ? "disabled" : ""}>未対応に戻す</button>
+            <button class="btn" type="button" data-act="edit-marker" data-marker-id="${escapeHtml(String(marker.id))}" data-marker-key="${escapeHtml(markerKey)}">編集</button>
+            <button class="btn ok" type="button" data-act="mark-completed" data-marker-id="${escapeHtml(String(marker.id))}" ${markerStatus === "completed" ? "disabled" : ""}>完了にする</button>
+            <button class="btn" type="button" data-act="mark-open" data-marker-id="${escapeHtml(String(marker.id))}" ${markerStatus === "open" ? "disabled" : ""}>未対応に戻す</button>
+            <button class="btn danger" type="button" data-act="delete-marker" data-marker-id="${escapeHtml(String(marker.id))}">削除</button>
           </div>
         `;
         row.querySelectorAll("img.vendor-photo-thumb").forEach(img=>{
@@ -5103,16 +5386,6 @@
         });
         list.appendChild(row);
       });
-    }
-
-    async function openVendorWorkView(vendorName){
-      selectedVendorWorkName = vendorName || $("vendorSelect").value || "";
-      const vendorSelect = $("vendorWorkVendor");
-      if(vendorSelect){
-        vendorSelect.value = selectedVendorWorkName;
-      }
-      await ensureVendorWorkPhotoCache();
-      showView("vendor_work");
     }
 
     // -------------------- Category / Vendor Mapping --------------------
@@ -5227,7 +5500,7 @@
           .concat(activeVendors.filter(v=>v.name !== "業者未定").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
           .join("");
       }
-      const filterHtml = [`<option value="">全て</option>`]
+      const filterHtml = [`<option value="">全て</option>`, `<option value="全業者">全業者</option>`]
         .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
         .join("");
       $("filterVendor").innerHTML = filterHtml;
@@ -5237,6 +5510,7 @@
       }
       if($("vendorWorkVendor")){
         $("vendorWorkVendor").innerHTML = filterHtml;
+        $("vendorWorkVendor").value = filterVendor;
       }
       const pdfVendorSelect = $("pdfExportVendor");
       if(pdfVendorSelect){
@@ -5244,9 +5518,12 @@
           .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
           .join("");
       }
+      const validFilterNames = new Set(["", "全業者", ...activeVendors.map(v=>v.name)]);
+      if(!validFilterNames.has(filterVendor)) filterVendor = "";
       if(!activeVendors.some(v=>v.name === $("vendorSelect").value)){
         $("vendorSelect").value = activeVendors[0]?.name || "業者未定";
       }
+      syncInlineVendorFilterControls();
       syncFsSelects();
     }
 
@@ -6227,7 +6504,7 @@
     }
 
     function shouldShowMarkerForVendor(marker, selectedVendor){
-      if(!selectedVendor || selectedVendor === "全て" || selectedVendor === "全業者") return true;
+      if(!selectedVendor || selectedVendor === "all" || selectedVendor === "全て" || selectedVendor === "全業者") return true;
       if(marker.is_common || marker.vendor_source === "common" || marker.vendor_name === "全業者") return true;
       const assigned = Array.isArray(marker.assigned_vendor_names) ? marker.assigned_vendor_names : [];
       const subNames = Array.isArray(marker.sub_vendor_names) ? marker.sub_vendor_names : [];
@@ -6250,13 +6527,14 @@
     let filterVendor = "";
     let filterStatus = "open";
     let issuePanelOpen = false;
+    let inlineVendorListCollapsed = false;
     let inputMode = "pin";
 
     function syncIssuePanelButton(){
       const btn = $("btnToggleIssuePanel");
       if(!btn) return;
-      btn.classList.toggle("open", issuePanelOpen);
-      btn.textContent = issuePanelOpen ? "指摘一覧を閉じる" : "指摘一覧を開く";
+      btn.classList.remove("open");
+      btn.textContent = "指摘一覧へ移動";
     }
 
     function openIssuePanel(){
@@ -6277,6 +6555,70 @@
       panel.classList.remove("open");
       panel.setAttribute("aria-hidden", "true");
       syncIssuePanelButton();
+    }
+
+    function syncInlineVendorFilterControls(){
+      const vendorSelect = $("vendorWorkVendor");
+      if(vendorSelect) vendorSelect.value = filterVendor;
+      const statusSelect = $("vendorWorkStatusFilter");
+      if(statusSelect) statusSelect.value = filterStatus;
+      const topVendor = $("filterVendor");
+      if(topVendor) topVendor.value = filterVendor;
+      const topStatus = $("filterStatus");
+      if(topStatus) topStatus.value = filterStatus;
+      if($("issuePanelFilterVendor")) $("issuePanelFilterVendor").value = filterVendor;
+      if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = filterStatus;
+      if($("pdfExportVendor")) $("pdfExportVendor").value = filterVendor;
+      if($("pdfExportStatus")) $("pdfExportStatus").value = filterStatus;
+    }
+
+    function scrollToInlineVendorSection(){
+      const section = $("inlineVendorListWrap");
+      if(section){
+        section.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    async function focusMarkerFromInlineList(markerId, markerKey, options = {}){
+      const markerIdText = String(markerId || "");
+      if(!markerIdText) return;
+      const parsed = parseMarkerKey(markerKey || "");
+      if(parsed.page_number > 0){
+        await setPage(parsed.page_number);
+      }
+      selectedId = markerIdText;
+      selectedTextNoteId = null;
+      closeTextNoteEditor();
+      redrawOverlay();
+      redrawList();
+      renderVendorWorkList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      const stage = $("stageWrap");
+      if(stage){
+        stage.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      if(options.openEditor){
+        const marker = markers().find(m=>String(m.id) === markerIdText);
+        if(marker){
+          openQuickMarkerEditor(marker, { isNew: false });
+        }
+      }
+    }
+
+    function applyInlineVendorListCollapsed(nextCollapsed){
+      inlineVendorListCollapsed = !!nextCollapsed;
+      const wrap = $("inlineVendorListWrap");
+      const btn = $("btnInlineVendorCollapse");
+      if(wrap) wrap.classList.toggle("collapsed", inlineVendorListCollapsed);
+      if(btn){
+        if(inlineVendorListCollapsed){
+          const countsText = ($("inlineVendorCounts")?.textContent || "").trim();
+          btn.textContent = countsText ? `${countsText} / 開く` : "開く";
+        }else{
+          btn.textContent = "閉じる";
+        }
+      }
     }
 
     function activeKey(){
@@ -6641,7 +6983,7 @@
       }
       const imgWidth = Number(lastLoadedBgImage?.naturalWidth || lastLoadedBgImage?.width || imgRect?.iw || store.activeBgWidth || 1);
       const imgHeight = Number(lastLoadedBgImage?.naturalHeight || lastLoadedBgImage?.height || imgRect?.ih || store.activeBgHeight || 1);
-      const rotation = isFullscreen ? 0 : getRotationForKey(activeKey());
+      const rotation = getRotationForKey(activeKey());
       const fit = calculatePdfFitSize(imgWidth, imgHeight, containerWidth, containerHeight, rotation);
       imgRect = {
         iw: imgWidth,
@@ -6657,6 +6999,17 @@
         imgHeight,
         fit,
       });
+      console.log("[fullscreen/pdf fit]", {
+        containerWidth,
+        containerHeight,
+        imgWidth,
+        imgHeight,
+        rotation,
+        displayWidth: fit.displayWidth,
+        displayHeight: fit.displayHeight,
+        visualWidth: fit.visualWidth,
+        visualHeight: fit.visualHeight
+      });
       if(!options.skipRedraw){
         redrawBackground();
         redrawOverlay();
@@ -6666,7 +7019,7 @@
     }
 
     function drawImageFit(img){
-      const rot = isFullscreen ? 0 : normalizeQuarterTurn(normalRotation);
+      const rot = getRotationForKey(activeKey());
       const iw = img.width, ih = img.height;
       const cw = stageW, ch = stageH;
       const fit = calculatePdfFitSize(iw, ih, cw, ch, rot);
@@ -6776,6 +7129,7 @@
     }
 
     function bubbleOverlapsPin(m, dx, dy){
+      const bubbleSize = getMarkerBubbleSize(m);
       const rect = getCurrentImageRect();
       if(!rect) return false;
       if(!canUseCanvasOffsetCheck()) return false;
@@ -6786,22 +7140,75 @@
       const pad = PIN_VIS_R + PIN_CLEAR_MARGIN;
       return (
         ax + pad > bx &&
-        ax - pad < bx + BUBBLE_W &&
+        ax - pad < bx + bubbleSize.width &&
         ay + pad > by &&
-        ay - pad < by + BUBBLE_H
+        ay - pad < by + bubbleSize.height
       );
     }
 
     function bubbleMostlyOnStage(m, dx, dy){
+      const bubbleSize = getMarkerBubbleSize(m);
       if(!canUseCanvasOffsetCheck()) return true;
       const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
       const margin = 8;
       return (
         _b.x >= -margin &&
         _b.y >= -margin &&
-        _b.x + BUBBLE_W <= stageW + margin &&
-        _b.y + BUBBLE_H <= stageH + margin
+        _b.x + bubbleSize.width <= stageW + margin &&
+        _b.y + bubbleSize.height <= stageH + margin
       );
+    }
+
+    function getMarkerBubbleSize(marker){
+      const widthRaw = Number(marker?.bubbleWidth ?? marker?.marker_data?.bubbleWidth ?? BUBBLE_DEFAULT_W);
+      const heightRaw = Number(marker?.bubbleHeight ?? marker?.marker_data?.bubbleHeight ?? BUBBLE_DEFAULT_H);
+      return {
+        width: clamp(Number.isFinite(widthRaw) ? widthRaw : BUBBLE_DEFAULT_W, BUBBLE_MIN_W, BUBBLE_MAX_W),
+        height: clamp(Number.isFinite(heightRaw) ? heightRaw : BUBBLE_DEFAULT_H, BUBBLE_MIN_H, BUBBLE_MAX_H),
+      };
+    }
+
+    function setMarkerBubbleSize(marker, width, height){
+      if(!marker || typeof marker !== "object") return;
+      const next = {
+        width: clamp(Number(width || BUBBLE_DEFAULT_W), BUBBLE_MIN_W, BUBBLE_MAX_W),
+        height: clamp(Number(height || BUBBLE_DEFAULT_H), BUBBLE_MIN_H, BUBBLE_MAX_H),
+      };
+      marker.bubbleWidth = next.width;
+      marker.bubbleHeight = next.height;
+      if(!marker.marker_data || typeof marker.marker_data !== "object"){
+        marker.marker_data = {};
+      }
+      marker.marker_data.bubbleWidth = next.width;
+      marker.marker_data.bubbleHeight = next.height;
+    }
+
+    function getTextNoteSizePx(note){
+      const defaultW = TEXT_NOTE_DEFAULT_W_PX / Math.max(1, stageW);
+      const defaultH = TEXT_NOTE_DEFAULT_H_PX / Math.max(1, stageH);
+      const widthRatio = Number.isFinite(Number(note?.width)) ? Number(note.width) : defaultW;
+      const heightRatio = Number.isFinite(Number(note?.height)) ? Number(note.height) : defaultH;
+      return {
+        width: clamp(widthRatio * stageW, TEXT_NOTE_MIN_W, TEXT_NOTE_MAX_W),
+        height: clamp(heightRatio * stageH, TEXT_NOTE_MIN_H, TEXT_NOTE_MAX_H),
+      };
+    }
+
+    function setTextNoteSizePx(note, width, height){
+      if(!note || typeof note !== "object") return;
+      const w = clamp(Number(width || TEXT_NOTE_DEFAULT_W_PX), TEXT_NOTE_MIN_W, TEXT_NOTE_MAX_W);
+      const h = clamp(Number(height || TEXT_NOTE_DEFAULT_H_PX), TEXT_NOTE_MIN_H, TEXT_NOTE_MAX_H);
+      note.width = w / Math.max(1, stageW);
+      note.height = h / Math.max(1, stageH);
+    }
+
+    function getBubbleConnectionPoint(ax, ay, bx, by, bw, bh){
+      const cx = clamp(ax, bx, bx + bw);
+      const cy = clamp(ay, by, by + bh);
+      if(cx === ax && cy === ay){
+        return { x: bx + bw / 2, y: by + bh / 2 };
+      }
+      return { x: cx, y: cy };
     }
 
     function pickDefaultBubbleOffset(m){
@@ -6865,13 +7272,19 @@
       const src = (note && typeof note === "object") ? note : {};
       const createdAt = src.created_at || src.createdAt || new Date().toISOString();
       const updatedAt = src.updated_at || src.updatedAt || createdAt;
+      const widthRatioMin = TEXT_NOTE_MIN_W / Math.max(1, stageW || 1);
+      const widthRatioMax = TEXT_NOTE_MAX_W / Math.max(1, stageW || 1);
+      const heightRatioMin = TEXT_NOTE_MIN_H / Math.max(1, stageH || 1);
+      const heightRatioMax = TEXT_NOTE_MAX_H / Math.max(1, stageH || 1);
+      const defaultWidthRatio = TEXT_NOTE_DEFAULT_W_PX / Math.max(1, stageW || 1);
+      const defaultHeightRatio = TEXT_NOTE_DEFAULT_H_PX / Math.max(1, stageH || 1);
       return {
         id: src.id || null,
         local_text_id: src.local_text_id || src.localTextId || ("t_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16)),
         x: clamp(Number.isFinite(Number(src.x)) ? Number(src.x) : 0.5, 0, 1),
         y: clamp(Number.isFinite(Number(src.y)) ? Number(src.y) : 0.5, 0, 1),
-        width: clamp(Number.isFinite(Number(src.width)) ? Number(src.width) : 0.18, 0.08, 0.6),
-        height: clamp(Number.isFinite(Number(src.height)) ? Number(src.height) : 0.065, 0.04, 0.3),
+        width: clamp(Number.isFinite(Number(src.width)) ? Number(src.width) : defaultWidthRatio, widthRatioMin, widthRatioMax),
+        height: clamp(Number.isFinite(Number(src.height)) ? Number(src.height) : defaultHeightRatio, heightRatioMin, heightRatioMax),
         text_content: (src.text_content ?? src.textContent ?? ""),
         note_type: src.note_type || src.noteType || "memo",
         font_size: clamp(parseInt(String(src.font_size ?? src.fontSize ?? 14), 10) || 14, 10, 32),
@@ -6919,6 +7332,11 @@
           if(normalizeMarkerVendorState(m)) changed = true;
           if(ensureMarkerPhotoState(m)) changed = true;
           if(safeNormalizeMarkerOffset(m)) changed = true;
+          const bubbleSize = getMarkerBubbleSize(m);
+          if(Number(m.bubbleWidth) !== bubbleSize.width || Number(m.bubbleHeight) !== bubbleSize.height){
+            setMarkerBubbleSize(m, bubbleSize.width, bubbleSize.height);
+            changed = true;
+          }
           const hasCloudId = !!(m.cloud_marker_id || m.supabase_marker_id);
           const normalizedSyncStatus = m.sync_status === "synced"
             ? "synced"
@@ -7434,7 +7852,7 @@
       if(!note) return;
       const ok = confirm("このテキストメモを削除しますか？");
       if(!ok) return;
-      pushUndoSnapshot("テキスト削除");
+      pushUndoSnapshot("テキストメモ削除");
       note.status = "deleted";
       note.updated_at = new Date().toISOString();
       if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
@@ -7442,6 +7860,10 @@
       saveStore();
       markDirty("text note deleted");
       redrawOverlay();
+      redrawList();
+      autoSaveToCloud("text note delete").catch(error=>{
+        console.warn("[annotation resize/delete autosave] failed", error);
+      });
     }
 
     function createTextNoteAt(x, y){
@@ -7452,8 +7874,8 @@
         local_text_id: "txt_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16),
         x: ratio.x,
         y: ratio.y,
-        width: 0.18,
-        height: 0.065,
+        width: TEXT_NOTE_DEFAULT_W_PX / Math.max(1, stageW),
+        height: TEXT_NOTE_DEFAULT_H_PX / Math.max(1, stageH),
         text_content: "",
         note_type: "memo",
         font_size: 14,
@@ -7475,6 +7897,7 @@
     }
 
     let textNoteDrag = null;
+    let textNoteResize = null;
     function redrawTextNotes(){
       if(!textNotesLayer) return;
       textNotesLayer.innerHTML = "";
@@ -7490,15 +7913,16 @@
       arr.forEach(noteRaw=>{
         const note = noteRaw;
         const point = imgRatioToCanvasPx(note.x, note.y);
-        const w = clamp(note.width * stageW, 90, 360);
-        const h = clamp(note.height * stageH, 34, 220);
+        const noteSize = getTextNoteSizePx(note);
+        const w = noteSize.width;
+        const h = noteSize.height;
         const el = document.createElement("div");
         el.className = "text-note-box note-" + note.note_type + (selectedTextNoteId === note.local_text_id ? " is-selected" : "");
         el.dataset.localTextId = note.local_text_id;
         el.style.left = `${clamp(point.x, 0, Math.max(0, stageW - w))}px`;
         el.style.top = `${clamp(point.y, 0, Math.max(0, stageH - h))}px`;
         el.style.width = `${w}px`;
-        el.style.minHeight = `${h}px`;
+        el.style.height = `${h}px`;
         el.style.fontSize = `${note.font_size}px`;
         el.style.fontWeight = note.font_weight || "normal";
         el.style.color = note.text_color || "#111827";
@@ -7506,10 +7930,51 @@
         el.style.borderColor = note.border_color || "#d7dce4";
         el.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
         const text = String(note.text_content ?? "");
-        el.textContent = text.trim() ? text : " ";
+        const textContent = document.createElement("div");
+        textContent.className = "text-note-content";
+        textContent.textContent = text.trim() ? text : " ";
+        el.appendChild(textContent);
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "annotation-delete-btn";
+        delBtn.textContent = "×";
+        delBtn.title = "削除";
+        el.appendChild(delBtn);
+        const resizeHandle = document.createElement("div");
+        resizeHandle.className = "annotation-resize-handle";
+        resizeHandle.title = "サイズ変更";
+        el.appendChild(resizeHandle);
         el.title = textNoteTypeLabel(note.note_type);
+        delBtn.addEventListener("pointerdown", (event)=>{
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        delBtn.addEventListener("click", (event)=>{
+          event.preventDefault();
+          event.stopPropagation();
+          selectedTextNoteId = note.local_text_id;
+          deleteTextNote(note);
+        });
+        resizeHandle.addEventListener("pointerdown", (event)=>{
+          if(event.button === 2) return;
+          event.preventDefault();
+          event.stopPropagation();
+          selectedTextNoteId = note.local_text_id;
+          pushUndoSnapshot("テキストメモサイズ変更");
+          textNoteResize = {
+            local_text_id: note.local_text_id,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            baseWidth: w,
+            baseHeight: h,
+          };
+          try{ resizeHandle.setPointerCapture(event.pointerId); }catch(_){}
+          el.classList.add("is-selected");
+        });
         el.addEventListener("pointerdown", (e)=>{
           if(e.button === 2) return;
+          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id) return;
           selectedTextNoteId = note.local_text_id;
           const base = imgRatioToCanvasPx(note.x, note.y);
           textNoteDrag = {
@@ -7527,6 +7992,22 @@
           e.stopPropagation();
         });
         el.addEventListener("pointermove", (e)=>{
+          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id){
+            const target = getTextNoteByLocalId(textNoteResize.local_text_id);
+            if(!target) return;
+            const nextW = clamp(textNoteResize.baseWidth + (e.clientX - textNoteResize.startX), TEXT_NOTE_MIN_W, TEXT_NOTE_MAX_W);
+            const nextH = clamp(textNoteResize.baseHeight + (e.clientY - textNoteResize.startY), TEXT_NOTE_MIN_H, TEXT_NOTE_MAX_H);
+            setTextNoteSizePx(target, nextW, nextH);
+            target.updated_at = new Date().toISOString();
+            el.style.width = `${nextW}px`;
+            el.style.height = `${nextH}px`;
+            if(textNoteEditorState && textNoteEditorState.local_text_id === target.local_text_id){
+              positionTextNoteEditor(target);
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
           const target = getTextNoteByLocalId(textNoteDrag.local_text_id);
           if(!target) return;
@@ -7550,6 +8031,25 @@
           e.stopPropagation();
         });
         el.addEventListener("pointerup", (e)=>{
+          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id){
+            const target = getTextNoteByLocalId(textNoteResize.local_text_id);
+            try{ resizeHandle.releasePointerCapture(e.pointerId); }catch(_){}
+            textNoteResize = null;
+            if(target){
+              saveStore();
+              markDirty("text note resized");
+              redrawOverlay();
+              redrawList();
+              autoSaveToCloud("text note resize").catch(error=>{
+                console.warn("[annotation resize/delete autosave] failed", error);
+              });
+            }else{
+              redrawTextNotes();
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
           const moved = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY) >= 3;
           textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
@@ -7562,12 +8062,17 @@
               markDirty("text note moved");
             }
             redrawOverlay();
-            if(!moved){
-              openTextNoteEditor(target, { isNew: false });
-            }
           }
           e.preventDefault();
           e.stopPropagation();
+        });
+        el.addEventListener("dblclick", (e)=>{
+          e.preventDefault();
+          e.stopPropagation();
+          const target = getTextNoteByLocalId(note.local_text_id);
+          if(!target) return;
+          selectedTextNoteId = target.local_text_id;
+          openTextNoteEditor(target, { isNew: false });
         });
         textNotesLayer.appendChild(el);
       });
@@ -7629,6 +8134,8 @@
         createdAt: Date.now(),
         bubble_moved: false,
         bubbleMoved: false,
+        bubbleWidth: BUBBLE_DEFAULT_W,
+        bubbleHeight: BUBBLE_DEFAULT_H,
         cloud_marker_id: null,
         supabase_marker_id: null,
         sync_status: "pending",
@@ -7897,6 +8404,9 @@
       const imgRectNow = getCurrentImageRect();
       arr.forEach((m, idx)=>{
         const isSel = m.id === selectedId;
+        const bubbleSize = getMarkerBubbleSize(m);
+        const bubbleW = bubbleSize.width;
+        const bubbleH = bubbleSize.height;
         const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
         const my = clamp(Number.isFinite(Number(m.y)) ? Number(m.y) : 0.5, 0, 1);
         const mdx = Number.isFinite(Number(m.dx)) ? Number(m.dx) : DEFAULT_BUBBLE_DX;
@@ -7921,11 +8431,10 @@
           py: ay,
           imgRect: imgRectNow
         });
-        // 線の終点は吹き出しの中心（回転しても常にここに繋がる）
-        const linex2 = bx + BUBBLE_W / 2;
-        const liney2 = by + BUBBLE_H / 2;
+        // 線の終点は吹き出しの近い辺（被り時は中心）
+        const lineEnd = getBubbleConnectionPoint(ax, ay, bx, by, bubbleW, bubbleH);
         const line = svgEl("line", {
-          x1: ax, y1: ay, x2: linex2, y2: liney2,
+          x1: ax, y1: ay, x2: lineEnd.x, y2: lineEnd.y,
           stroke: isSel ? "#2563eb" : "#111827",
           "stroke-width": isSel ? 2.5 : 2,
           "stroke-opacity": isSel ? 0.85 : 0.65,
@@ -7933,30 +8442,83 @@
         bubbleGroup.appendChild(line);
 
         // bubble（先に描画し、ピンを上に重ねて常に見えるようにする）
-        const rot = isFullscreen ? fsRotation : 0;
-        const bcx = BUBBLE_W / 2, bcy = BUBBLE_H / 2;
+        const rot = getRotationForKey(activeKey());
+        const bcx = bubbleW / 2, bcy = bubbleH / 2;
         const bubbleTransform = rot === 0
           ? `translate(${bx},${by})`
           : `translate(${bx},${by}) rotate(${-rot},${bcx},${bcy})`;
         const bubbleG = svgEl("g", { transform: bubbleTransform, cursor:"grab" });
         bubbleG.setAttribute("data-role","bubble");
+        bubbleG.setAttribute("class", `annotation-box${isSel ? " annotation-selected" : ""}`);
 
-        const bubble = svgEl("rect", { x:0,y:0,width:BUBBLE_W,height:BUBBLE_H, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
+        const bubble = svgEl("rect", { x:0,y:0,width:bubbleW,height:bubbleH, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
+        bubble.setAttribute("data-role","bubble");
         bubbleG.appendChild(bubble);
 
         const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
-        const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827" });
+        const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827", "data-role":"bubble" });
         t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
         bubbleG.appendChild(t1);
 
         const statusLabel = getMarkerStatusLabel(m.status);
         const memo = (m.memo||"").trim();
         const photoTag = getMarkerPhotoBadgeText(m);
-        const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280" });
+        const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280", "data-role":"bubble" });
         const line2 = memo ? (memo.length>16? memo.slice(0,16)+"…" : memo) : "（メモなし）";
         const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
         t2.textContent = `${statusLine} / ${line2}`;
         bubbleG.appendChild(t2);
+
+        const deleteControl = svgEl("g", {
+          "data-role":"bubble-delete",
+          cursor:"pointer",
+          class:`annotation-delete-control${isSel ? " is-active" : ""}`
+        });
+        const deleteHit = svgEl("circle", {
+          cx: bubbleW + 2,
+          cy: -2,
+          r: 12,
+          fill: "rgba(239,68,68,0.08)",
+          class: "annotation-delete-hit"
+        });
+        const deleteBtn = svgEl("circle", {
+          cx: bubbleW + 2,
+          cy: -2,
+          r: 10,
+          fill: "#ef4444",
+          stroke: "#ffffff",
+          "stroke-width": 2
+        });
+        const deleteTxt = svgEl("text", {
+          x: bubbleW + 2,
+          y: 2,
+          "text-anchor": "middle",
+          "font-size": "14",
+          "font-weight": "800",
+          fill: "#ffffff",
+          "pointer-events":"none"
+        });
+        deleteTxt.textContent = "×";
+        deleteControl.appendChild(deleteHit);
+        deleteControl.appendChild(deleteBtn);
+        deleteControl.appendChild(deleteTxt);
+        bubbleG.appendChild(deleteControl);
+
+        const resizeControl = svgEl("rect", {
+          x: bubbleW - 8,
+          y: bubbleH - 8,
+          width: 14,
+          height: 14,
+          rx: 3,
+          ry: 3,
+          fill: "#2563eb",
+          stroke: "#ffffff",
+          "stroke-width": 2,
+          cursor: "nwse-resize",
+          "data-role":"bubble-resize",
+          class:`annotation-resize-control${isSel ? " is-active" : ""}`
+        });
+        bubbleG.appendChild(resizeControl);
         bubbleGroup.appendChild(bubbleG);
 
         // anchor point（ピン本体）
@@ -8020,6 +8582,8 @@
         div.style.cursor = "default";
         div.innerHTML = `<div class="meta"><div class="t">このページの指摘はまだありません</div><div class="s">図面をクリックして追加してください</div></div>`;
         list.appendChild(div);
+        renderVendorWorkList();
+        applyInlineVendorListCollapsed(inlineVendorListCollapsed);
         return;
       }
 
@@ -8045,6 +8609,8 @@
         `;
         list.appendChild(div);
       });
+      renderVendorWorkList();
+      applyInlineVendorListCollapsed(inlineVendorListCollapsed);
     }
     function escapeHtml(s){
       return String(s).replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -8093,6 +8659,7 @@
 
     // Dragging state
     let drag = null;
+    let markerBubbleResize = null;
     const DRAG_THRESHOLD = 6; // ドラッグ開始までの最小移動距離(px)
     let pendingDrag = null;   // ドラッグ確定前の候補
     let suppressTapCreateUntil = 0;
@@ -8125,7 +8692,7 @@
 
     function handleStagePointerTap(e, source = "stage"){
       if(shouldIgnoreBlankCreate(e)) return;
-      if(drag || pendingDrag || textNoteDrag) return;
+      if(drag || pendingDrag || markerBubbleResize || textNoteDrag || textNoteResize) return;
       const target = e?.target;
       if(target?.closest){
         if(target.closest("g[data-id]")) return;
@@ -8188,6 +8755,34 @@
           const role = roleEl.getAttribute("data-role");
           const m = markers().find(mm=>mm.id===id);
           if(m){
+            if(role === "bubble-delete"){
+              e.preventDefault();
+              e.stopPropagation();
+              const ok = confirm("この指摘を削除しますか？");
+              if(!ok) return;
+              pushUndoSnapshot("指摘削除");
+              deleteMarkerById(id, { skipUndo: true });
+              autoSaveToCloud("marker delete").catch(error=>{
+                console.warn("[annotation resize/delete autosave] failed", error);
+              });
+              return;
+            }
+            if(role === "bubble-resize"){
+              const size = getMarkerBubbleSize(m);
+              pushUndoSnapshot("吹き出しサイズ変更");
+              markerBubbleResize = {
+                id,
+                pointerId: e.pointerId,
+                startX: e.clientX,
+                startY: e.clientY,
+                baseWidth: size.width,
+                baseHeight: size.height,
+              };
+              overlay.setPointerCapture(e.pointerId);
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
             const p = svgPointFromEvent(e);
             const _base = imgRatioToCanvasPx(m.x, m.y);
             const rectNow = getCurrentImageRect();
@@ -8203,12 +8798,10 @@
             overlay.setPointerCapture(e.pointerId);
           }
         }else{
-          const marker = markers().find(mm=>mm.id===id);
-          if(marker){
-            openQuickMarkerEditor(marker, { isNew: false });
-          }
+          // クリック時は選択のみ。編集はダブルクリックで行う。
         }
         e.preventDefault();
+        e.stopPropagation();
       } else {
         // 空白エリアをクリック → 仮ピン作成してクイック編集
         handleStagePointerTap(e, "overlay.pointerdown");
@@ -8217,6 +8810,19 @@
     });
 
     overlay.addEventListener("pointermove", (e)=>{
+      if(markerBubbleResize){
+        const marker = markers().find(mm=>mm.id===markerBubbleResize.id);
+        if(!marker) return;
+        const nextW = clamp(markerBubbleResize.baseWidth + (e.clientX - markerBubbleResize.startX), BUBBLE_MIN_W, BUBBLE_MAX_W);
+        const nextH = clamp(markerBubbleResize.baseHeight + (e.clientY - markerBubbleResize.startY), BUBBLE_MIN_H, BUBBLE_MAX_H);
+        setMarkerBubbleSize(marker, nextW, nextH);
+        saveStore();
+        redrawOverlay();
+        redrawList();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       // pendingDrag が一定距離動いたらドラッグ確定
       if(pendingDrag && !drag){
         const p = svgPointFromEvent(e);
@@ -8249,7 +8855,7 @@
       }else if(drag.role === "bubble"){
         // 吹き出しオフセットは画像ローカル座標系なので、
         // 通常モード回転中はcanvas差分を逆回転して画像ローカルに変換する
-        const nr = isFullscreen ? 0 : (normalRotation || 0);
+        const nr = getRotationForKey(activeKey());
         let ddx = rawDx, ddy = rawDy;
         if(nr !== 0){
           const rad = -nr * Math.PI / 180;
@@ -8272,17 +8878,28 @@
     });
 
     overlay.addEventListener("pointerup", (e)=>{
+      if(markerBubbleResize){
+        try{ overlay.releasePointerCapture(markerBubbleResize.pointerId); }catch(_){}
+        const marker = markers().find(mm=>mm.id===markerBubbleResize.id);
+        markerBubbleResize = null;
+        suppressTapCreateUntil = Date.now() + 220;
+        if(marker){
+          saveStore();
+          markDirty("marker bubble resized");
+          redrawOverlay();
+          redrawList();
+          autoSaveToCloud("marker bubble resize").catch(error=>{
+            console.warn("[annotation resize/delete autosave] failed", error);
+          });
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if(pendingDrag){
-        const tapped = { ...pendingDrag };
         // ドラッグなしで離した → キャプチャ解放のみ
         try{ overlay.releasePointerCapture(pendingDrag.pointerId); }catch(_){}
         pendingDrag = null;
-        if(!drag && (tapped.role === "bubble" || tapped.role === "anchor")){
-          const marker = markers().find(mm=>mm.id===tapped.id);
-          if(marker){
-            openQuickMarkerEditor(marker, { isNew: false });
-          }
-        }
       }
       if(drag){
         try{ overlay.releasePointerCapture(drag.pointerId); }catch(_){}
@@ -8293,6 +8910,27 @@
         markDirty("marker moved");
       }
       e.preventDefault();
+      e.stopPropagation();
+    });
+
+    overlay.addEventListener("dblclick", (e)=>{
+      const groupEl = e.target.closest("g[data-id]");
+      if(!groupEl) return;
+      const role = e.target.closest("[data-role]")?.getAttribute("data-role") || "";
+      if(role === "bubble-delete" || role === "bubble-resize") return;
+      const id = groupEl.getAttribute("data-id");
+      const marker = markers().find(mm=>mm.id===id);
+      if(!marker) return;
+      selectedId = id;
+      selectedTextNoteId = null;
+      closeTextNoteEditor();
+      redrawOverlay();
+      redrawList();
+      syncButtons();
+      syncSelectorsFromSelectedMarker();
+      openQuickMarkerEditor(marker, { isNew: false });
+      e.preventDefault();
+      e.stopPropagation();
     });
 
     // pointerイベントが取りこぼされる端末向けフォールバック
@@ -8309,7 +8947,6 @@
           redrawList();
           syncButtons();
           syncSelectorsFromSelectedMarker();
-          openQuickMarkerEditor(marker, { isNew: false });
         }
         return;
       }
@@ -8525,28 +9162,22 @@
     // Filter
     $("filterVendor").addEventListener("change", ()=>{
       filterVendor = $("filterVendor").value;
-      const panelFilter = $("issuePanelFilterVendor");
-      if(panelFilter) panelFilter.value = filterVendor;
-      if($("pdfExportVendor")) $("pdfExportVendor").value = filterVendor;
+      syncInlineVendorFilterControls();
       redrawList();
     });
     $("filterStatus").addEventListener("change", ()=>{
       filterStatus = $("filterStatus").value || "open";
-      const panelStatus = $("issuePanelFilterStatus");
-      if(panelStatus) panelStatus.value = filterStatus;
-      if($("pdfExportStatus")) $("pdfExportStatus").value = filterStatus;
+      syncInlineVendorFilterControls();
       redrawList();
     });
     $("issuePanelFilterVendor").addEventListener("change", ()=>{
       filterVendor = $("issuePanelFilterVendor").value || "";
-      $("filterVendor").value = filterVendor;
-      if($("pdfExportVendor")) $("pdfExportVendor").value = filterVendor;
+      syncInlineVendorFilterControls();
       redrawList();
     });
     $("issuePanelFilterStatus").addEventListener("change", ()=>{
       filterStatus = $("issuePanelFilterStatus").value || "open";
-      $("filterStatus").value = filterStatus;
-      if($("pdfExportStatus")) $("pdfExportStatus").value = filterStatus;
+      syncInlineVendorFilterControls();
       redrawList();
     });
 
@@ -8610,10 +9241,12 @@
       // ── マーカーをCanvas 2D APIで直接描画 ──
       const arr = markers();
       const sw = stageW * scale, sh = stageH * scale;
-      const bw = BUBBLE_W * scale, bh = BUBBLE_H * scale;
 
       arr.forEach((m, idx) => {
         safeNormalizeMarkerOffset(m);
+        const bubbleSize = getMarkerBubbleSize(m);
+        const bw = bubbleSize.width * scale;
+        const bh = bubbleSize.height * scale;
         const _a = imgRatioToCanvasPx(m.x, m.y);
         const ax = _a.x * scale, ay = _a.y * scale;
         const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
@@ -8622,9 +9255,10 @@
         const isSel = m.id === selectedId;
 
         // 線
+        const lineEnd = getBubbleConnectionPoint(ax, ay, bx, by, bw, bh);
         octx.beginPath();
         octx.moveTo(ax, ay);
-        octx.lineTo(bx + bw/2, by + bh/2);
+        octx.lineTo(lineEnd.x, lineEnd.y);
         octx.strokeStyle = isSel ? "rgba(37,99,235,0.85)" : "rgba(17,24,39,0.65)";
         octx.lineWidth = (isSel ? 2.5 : 2) * scale;
         octx.stroke();
@@ -8683,8 +9317,9 @@
         const p = imgRatioToCanvasPx(note.x, note.y);
         const nx = p.x * scale;
         const ny = p.y * scale;
-        const nw = clamp(note.width * stageW * scale, 90 * scale, 360 * scale);
-        const nh = clamp(note.height * stageH * scale, 34 * scale, 220 * scale);
+        const noteSize = getTextNoteSizePx(note);
+        const nw = noteSize.width * scale;
+        const nh = noteSize.height * scale;
         octx.globalAlpha = clamp(Number(note.opacity || 1), 0.2, 1);
         octx.fillStyle = note.background_color || "#ffffff";
         octx.strokeStyle = note.border_color || "#d7dce4";
@@ -9052,6 +9687,39 @@
       stageImg.style.height = `${drawH}px`;
       stageImg.style.objectFit = "contain";
       drawingPanel.appendChild(stageImg);
+
+      const activeNotes = textNotes()
+        .map(n=>normalizeTextNote(n))
+        .filter(n=>n.status === "active")
+        .sort((a,b)=>(a.display_order || 0) - (b.display_order || 0));
+      const xScaleToDrawing = drawW / Math.max(1, stageW);
+      const yScaleToDrawing = drawH / Math.max(1, stageH);
+      activeNotes.forEach(note=>{
+        const noteSize = getTextNoteSizePx(note);
+        const noteW = clamp(noteSize.width * xScaleToDrawing, TEXT_NOTE_MIN_W * xScaleToDrawing, TEXT_NOTE_MAX_W * xScaleToDrawing);
+        const noteH = clamp(noteSize.height * yScaleToDrawing, TEXT_NOTE_MIN_H * yScaleToDrawing, TEXT_NOTE_MAX_H * yScaleToDrawing);
+        const noteEl = document.createElement("div");
+        noteEl.style.position = "absolute";
+        noteEl.style.left = `${drawX + (drawW * clamp(Number(note.x), 0, 1))}px`;
+        noteEl.style.top = `${drawY + (drawH * clamp(Number(note.y), 0, 1))}px`;
+        noteEl.style.width = `${Math.max(10, noteW)}px`;
+        noteEl.style.height = `${Math.max(10, noteH)}px`;
+        noteEl.style.padding = "5px 7px";
+        noteEl.style.boxSizing = "border-box";
+        noteEl.style.borderRadius = "8px";
+        noteEl.style.border = `1px solid ${note.border_color || "#d7dce4"}`;
+        noteEl.style.background = note.background_color || "#ffffff";
+        noteEl.style.color = note.text_color || "#111827";
+        noteEl.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
+        noteEl.style.whiteSpace = "pre-wrap";
+        noteEl.style.wordBreak = "break-word";
+        noteEl.style.overflow = "hidden";
+        noteEl.style.fontSize = `${Math.max(10, Math.round(Number(note.font_size || 14) * Math.min(xScaleToDrawing, yScaleToDrawing)))}px`;
+        noteEl.style.lineHeight = "1.35";
+        noteEl.style.fontWeight = note.font_weight === "bold" ? "700" : "400";
+        noteEl.textContent = String(note.text_content || "").trim() || " ";
+        drawingPanel.appendChild(noteEl);
+      });
       main.appendChild(drawingPanel);
 
       const notePane = document.createElement("div");
@@ -10865,24 +11533,28 @@
       }
     });
     $("btnBackToFloorList").addEventListener("click", ()=>{ showView("inspection_detail"); });
-    $("btnOpenVendorWork").addEventListener("click", async ()=>{
-      try{
-        await openVendorWorkView($("vendorSelect").value || "");
-      }catch(error){
-        console.error("業者別確認画面の表示に失敗", error);
-        showView("vendor_work");
+    $("floorSwitchSelect").addEventListener("change", async (e)=>{
+      const nextFloorId = e.target?.value || "";
+      const currentId = String(currentFloorId || selectedFloorId || selectedFloor?.id || "");
+      if(!nextFloorId || String(nextFloorId) === currentId){
+        renderFloorSwitchOptions();
+        return;
       }
+      await openFloor(nextFloorId, { forceFirstPage: true });
+      renderFloorSwitchOptions();
     });
-    $("btnBackToFloorInspection").addEventListener("click", ()=>{ showView("floor_inspection"); });
     $("vendorWorkVendor").addEventListener("change", (e)=>{
-      selectedVendorWorkName = e.target.value || "";
-      renderVendorWorkList();
+      filterVendor = e.target.value || "";
+      syncInlineVendorFilterControls();
+      redrawList();
     });
     $("vendorWorkStatusFilter").addEventListener("change", ()=>{
-      renderVendorWorkList();
+      filterStatus = $("vendorWorkStatusFilter").value || "open";
+      syncInlineVendorFilterControls();
+      redrawList();
     });
-    $("btnOpenMappingManager").addEventListener("click", ()=>{
-      renderCategoryVendorSettingsPage();
+    $("btnInlineVendorCollapse").addEventListener("click", ()=>{
+      applyInlineVendorListCollapsed(!inlineVendorListCollapsed);
     });
     $("inspectionSiteList").addEventListener("click", (e)=>{
       const btn = e.target.closest('button[data-act="open-site"]');
@@ -10925,10 +11597,10 @@
         if(marker){
           setMarkerStatus(marker, "completed");
           saveStore();
-          markDirty("marker status changed");
+          markDirty("inline vendor list status changed");
           redrawOverlay();
           redrawList();
-          renderVendorWorkList();
+          syncButtons();
         }
         return;
       }
@@ -10940,34 +11612,36 @@
         if(marker){
           setMarkerStatus(marker, "open");
           saveStore();
-          markDirty("marker status changed");
+          markDirty("inline vendor list status changed");
           redrawOverlay();
           redrawList();
-          renderVendorWorkList();
+          syncButtons();
         }
+        return;
+      }
+      const deleteBtn = e.target.closest('button[data-act="delete-marker"]');
+      if(deleteBtn){
+        const markerId = deleteBtn.dataset.markerId || "";
+        const ok = confirm("この指摘を削除しますか？");
+        if(!ok) return;
+        if(deleteMarkerById(markerId)){
+          redrawOverlay();
+          redrawList();
+          syncButtons();
+        }
+        return;
+      }
+      const editBtn = e.target.closest('button[data-act="edit-marker"]');
+      if(editBtn){
+        await focusMarkerFromInlineList(editBtn.dataset.markerId || "", editBtn.dataset.markerKey || "", { openEditor: true });
         return;
       }
       const gotoBtn = e.target.closest('button[data-act="goto-marker"]');
       if(!gotoBtn) return;
-      const markerId = gotoBtn.dataset.markerId || "";
-      const markerKey = gotoBtn.dataset.markerKey || "";
-      const mk = parseMarkerKey(markerKey);
-      if(mk.page_number > 0){
-        await setPage(mk.page_number);
-      }
-      selectedId = markerId;
-      redrawOverlay();
-      redrawList();
-      syncButtons();
-      syncSelectorsFromSelectedMarker();
-      showView("floor_inspection");
+      await focusMarkerFromInlineList(gotoBtn.dataset.markerId || "", gotoBtn.dataset.markerKey || "");
     });
     $("btnToggleIssuePanel").addEventListener("click", ()=>{
-      if(issuePanelOpen){
-        closeIssuePanel();
-      }else{
-        openIssuePanel();
-      }
+      scrollToInlineVendorSection();
     });
     $("btnCloseIssuePanel").addEventListener("click", ()=>{
       closeIssuePanel();
@@ -11061,13 +11735,11 @@
       selectedTextNoteId = null;
       filterVendor = "";
       filterStatus = "open";
+      inlineVendorListCollapsed = false;
       closeTextNoteEditor();
       setInputMode("pin");
-      $("filterVendor").value = "";
-      $("filterStatus").value = "open";
-      if($("issuePanelFilterVendor")) $("issuePanelFilterVendor").value = "";
-      if($("issuePanelFilterStatus")) $("issuePanelFilterStatus").value = "open";
-      if($("vendorWorkStatusFilter")) $("vendorWorkStatusFilter").value = "open";
+      syncInlineVendorFilterControls();
+      applyInlineVendorListCollapsed(false);
       $("memoInput").value = "";
       $("pageInput").value = "1";
       closeIssuePanel();
@@ -11129,19 +11801,7 @@
     }
 
     function getFullscreenTarget() {
-      const stageWrapEl = document.getElementById("stageWrap");
-      if(stageWrapEl) return stageWrapEl;
-
-      const drawingAreaEl = document.getElementById("drawingArea");
-      if(drawingAreaEl) return drawingAreaEl;
-
-      const stageWrapClassEl = document.querySelector(".stageWrap");
-      if(stageWrapClassEl) return stageWrapClassEl;
-
-      const drawingAreaLikeEl = document.querySelector(".drawing-area, #bg, #overlay");
-      if(drawingAreaLikeEl && drawingAreaLikeEl.parentElement) return drawingAreaLikeEl.parentElement;
-
-      return document.documentElement;
+      return document.getElementById("stageWrap") || document.getElementById("drawingArea") || null;
     }
 
     function isNativeFs(){
@@ -11163,34 +11823,119 @@
       }
     }
 
+    function recalculateStageSize(){
+      const target = getFullscreenTarget();
+      const nativeFsActive = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      const fullscreenActive = nativeFsActive || isPseudoFullscreen || isFullscreen;
+      if(target){
+        if(fullscreenActive){
+          target.style.width = "100vw";
+          target.style.height = "100vh";
+        }else{
+          target.style.width = "";
+          target.style.height = "";
+        }
+      }
+      resizeStage();
+    }
+
+    function ensurePdfBackgroundVisible(){
+      const bgCanvasEl = document.getElementById("bg");
+      if(bgCanvasEl){
+        bgCanvasEl.style.display = "block";
+        bgCanvasEl.style.opacity = "1";
+        bgCanvasEl.style.visibility = "visible";
+        bgCanvasEl.style.position = "absolute";
+        bgCanvasEl.style.left = "0";
+        bgCanvasEl.style.top = "0";
+        bgCanvasEl.style.transformOrigin = "center center";
+        bgCanvasEl.style.zIndex = "1";
+      }
+      if(overlay){
+        overlay.style.position = "absolute";
+        overlay.style.left = "0";
+        overlay.style.top = "0";
+        overlay.style.zIndex = "10";
+      }
+      if(textNotesLayer){
+        textNotesLayer.style.position = "absolute";
+        textNotesLayer.style.left = "0";
+        textNotesLayer.style.top = "0";
+        textNotesLayer.style.zIndex = "20";
+      }
+    }
+
+    function restoreCurrentPdfBackgroundFromStore(){
+      const bg = store?.activeBg || { kind: "none" };
+      if(bg.kind !== "pdf") return false;
+      const pdfIdentity = resolvePdfIdentity(bg);
+      if(!pdfIdentity) return false;
+      const cacheKey = `${pdfIdentity}:${bg.page}`;
+      const dataURL = String(bg.pageCache?.[cacheKey] || "");
+      if(!dataURL) return false;
+      lastLoadedBgCacheKey = cacheKey;
+      lastLoadedBgDataUrl = dataURL;
+      if(!lastLoadedBgImage || !lastLoadedBgImage.src){
+        const restored = new Image();
+        restored.src = dataURL;
+        lastLoadedBgImage = restored;
+      }
+      return true;
+    }
+
+    function runFullscreenRedrawPipeline(){
+      const key = activeKey();
+      const rotation = getRotationForKey(key);
+      normalRotation = rotation;
+      fsRotation = rotation;
+      applyNormalRotationToStage(rotation);
+      recalculateStageSize();
+      fitPdfToStage({ skipRedraw: true });
+      ensurePdfBackgroundVisible();
+      redrawBackground();
+      redrawOverlay();
+      redrawList();
+      const bg = store?.activeBg || { kind: "none" };
+      if(bg.kind === "pdf" && (!lastLoadedBgImage || !lastLoadedBgImage.src)){
+        if(restoreCurrentPdfBackgroundFromStore()){
+          redrawBackground();
+          redrawOverlay();
+          redrawList();
+        }
+      }
+      if(isFullscreen) updateFsInfo();
+    }
+
+    function refreshStageAfterFullscreen(){
+      requestAnimationFrame(()=>{
+        runFullscreenRedrawPipeline();
+        requestAnimationFrame(()=>{
+          runFullscreenRedrawPipeline();
+        });
+      });
+    }
+
     function applyFullscreenUiOpenState(){
       isFullscreen = true;
-      // 通常モードの回転をフルスクリーンに引き継ぎ、通常モードはリセット
-      fsRotation = normalRotation;
-      normalRotation = 0;
-      applyNormalRotationToStage(0);
+      const rotation = getRotationForKey(activeKey());
+      normalRotation = rotation;
+      fsRotation = rotation;
+      applyNormalRotationToStage(rotation);
       panelPos = null;
-      stageWrap.classList.remove("rot90","rot180","rot270");
-      const initCls = ROT_CLASSES[fsRotation];
-      if(initCls) stageWrap.classList.add(initCls);
       $("fsPanel").classList.add("show");
       syncFsSelects();
       updateFsInfo();
       applyFullscreenClass(true);
-      setTimeout(()=>{
-        resizeStage();
-        fitPdfToStage({ skipRedraw: true });
-        setPanelDefault();
-      }, 200);
+      setPanelDefault();
     }
 
     function applyFullscreenUiCloseState(){
       isFullscreen = false;
-      // フルスクリーンの回転を通常モードに引き継ぎ
-      normalRotation = fsRotation;
+      const rotation = getRotationForKey(activeKey());
+      normalRotation = rotation;
       setRotationForKey(activeKey(), normalRotation);
       applyNormalRotationToStage(normalRotation);
-      fsRotation = 0;
+      fsRotation = rotation;
       stageWrap.classList.remove("fullscreen","is-fullscreen","pseudo-fullscreen","rot90","rot180","rot270");
       const _panel = $("fsPanel");
       _panel.classList.remove("show");
@@ -11200,10 +11945,6 @@
       _panel.style.transform = "";
       panelPos = null;
       applyFullscreenClass(false);
-      setTimeout(()=>{
-        resizeStage();
-        fitPdfToStage({ skipRedraw: true });
-      }, 50);
     }
 
     function enterPseudoFullscreen() {
@@ -11213,33 +11954,27 @@
       isPseudoFullscreen = true;
       lastFullscreenTarget = target;
       target.classList.add("pseudo-fullscreen");
+      target.classList.add("stage-fullscreen");
       document.body.classList.add("fullscreen-active");
+      applyFullscreenUiOpenState();
       applyFullscreenClass(true);
-
-      setTimeout(() => {
-        if (typeof resizeStage === "function") resizeStage();
-        if (typeof redrawBackground === "function") redrawBackground();
-        if (typeof redrawOverlay === "function") redrawOverlay();
-        if (typeof redrawList === "function") redrawList();
-      }, 100);
+      refreshStageAfterFullscreen();
 
       console.debug("[fullscreen] pseudo entered");
     }
 
     function exitPseudoFullscreen() {
       const target = lastFullscreenTarget || getFullscreenTarget();
-      if(target) target.classList.remove("pseudo-fullscreen");
+      if(target){
+        target.classList.remove("pseudo-fullscreen");
+        target.classList.remove("stage-fullscreen");
+      }
 
       lastFullscreenTarget = null;
       isPseudoFullscreen = false;
       document.body.classList.remove("fullscreen-active");
-
-      setTimeout(() => {
-        if (typeof resizeStage === "function") resizeStage();
-        if (typeof redrawBackground === "function") redrawBackground();
-        if (typeof redrawOverlay === "function") redrawOverlay();
-        if (typeof redrawList === "function") redrawList();
-      }, 100);
+      applyFullscreenUiCloseState();
+      refreshStageAfterFullscreen();
 
       console.debug("[fullscreen] pseudo exited");
     }
@@ -11258,6 +11993,7 @@
 
       console.debug("[fullscreen] enter requested", target);
       applyFullscreenUiOpenState();
+      target.classList.add("stage-fullscreen");
 
       try {
         if (target.requestFullscreen) {
@@ -11293,16 +12029,36 @@
         console.warn("[fullscreen] native exit failed", error);
       }
 
-      exitPseudoFullscreen();
+      if(isPseudoFullscreen){
+        exitPseudoFullscreen();
+        return;
+      }
       applyFullscreenUiCloseState();
+      const target = getFullscreenTarget();
+      if(target) target.classList.remove("stage-fullscreen");
+      refreshStageAfterFullscreen();
+    }
+
+    async function toggleFullscreen() {
+      const target = document.getElementById("stageWrap") || document.getElementById("drawingArea");
+      if(!target) return;
+      try{
+        if(!isCurrentlyFullscreen()){
+          target.classList.add("stage-fullscreen");
+          await enterFullscreenMode();
+        }else{
+          await exitFullscreenMode();
+        }
+      }catch(error){
+        console.error("[fullscreen] toggle failed", error);
+        toast("フルスクリーン切替に失敗しました");
+      }finally{
+        refreshStageAfterFullscreen();
+      }
     }
 
     async function toggleFullscreenMode() {
-      if (isCurrentlyFullscreen()) {
-        await exitFullscreenMode();
-      } else {
-        await enterFullscreenMode();
-      }
+      await toggleFullscreen();
     }
 
     async function enterFullscreen(){
@@ -11314,18 +12070,31 @@
     }
 
     // ブラウザのEsc/スワイプでネイティブFSが終了したときにアプリ側も同期
-    document.addEventListener("fullscreenchange",       _onNativeFsChange);
+    document.addEventListener("fullscreenchange", _onNativeFsChange);
     document.addEventListener("webkitfullscreenchange", _onNativeFsChange);
-    document.addEventListener("mozfullscreenchange",    _onNativeFsChange);
+    document.addEventListener("mozfullscreenchange", _onNativeFsChange);
     function _onNativeFsChange(){
-      if(!isNativeFs() && isFullscreen && !isPseudoFullscreen){
-        // ネイティブFSだけ終了した → アプリのUIも閉じる
-        void exitFullscreenMode();
+      const target = getFullscreenTarget();
+      const nowFs = isNativeFs() || isPseudoFullscreen;
+      if(!nowFs){
+        if(target){
+          target.classList.remove("stage-fullscreen");
+        }
+        applyFullscreenUiCloseState();
+      }else{
+        applyFullscreenUiOpenState();
       }
+      console.log("[fullscreen] changed", {
+        isFullscreen: !!document.fullscreenElement,
+        activeKey: activeKey(),
+        hasActiveBg: !!(store.activeBg && store.activeBg.kind === "pdf"),
+        rotation: getRotationForKey(activeKey())
+      });
+      refreshStageAfterFullscreen();
     }
 
     $("btnFullscreen").addEventListener("click", ()=>{
-      void toggleFullscreenMode();
+      void toggleFullscreen();
     });
     $("btnExitFs").addEventListener("click", exitFullscreen);
     $("fsBtnDelete").addEventListener("click", ()=>{
