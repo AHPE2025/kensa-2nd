@@ -1766,6 +1766,7 @@
     const DEBUG_MARKERS = false;
     const DEBUG_FULLSCREEN = false;
     const DEBUG_PHOTOS = false;
+    const DEBUG_TEXT_NOTES = false;
     let dirty = false;
     let autoSaveTimer = null;
     let autoSaveInFlight = false;
@@ -2493,6 +2494,7 @@
       selectedTextNoteId = null;
       quickEditorState = null;
       textNoteEditorState = null;
+      editingTextNoteKey = null;
       drag = null;
       markerBubbleResize = null;
       pendingDrag = null;
@@ -2696,11 +2698,12 @@
         const { page_number, drawing_id } = parseTextNoteKey(key);
         arr.forEach((noteRaw, idx)=>{
           const note = normalizeTextNote(noteRaw);
-          const localTextId = note.local_text_id || note.localTextId || `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-          note.local_text_id = localTextId;
-          note.localTextId = localTextId;
-          const rawContent = note.content ?? note.text_content ?? "";
-          const content = String(rawContent) === "メモ未入力" ? "" : String(rawContent ?? "");
+          ensureTextNoteLocalId(note);
+          noteRaw.local_text_id = note.local_text_id;
+          noteRaw.localTextId = note.localTextId;
+          const localTextId = note.local_text_id;
+          const content = getTextNoteContent(note);
+          const normalizedContent = String(content) === "メモ未入力" ? "" : String(content ?? "");
           const payload = {
             local_text_id: localTextId,
             site_id: selectedSiteId || null,
@@ -2708,7 +2711,7 @@
             floor_id: selectedFloorId || null,
             drawing_id: drawing_id || null,
             page_number: page_number > 0 ? page_number : 1,
-            content,
+            content: normalizedContent,
             x: Number(note.x),
             y: Number(note.y),
             width: Number(note.width),
@@ -2746,12 +2749,22 @@
         });
         throw error;
       }
-      const idMap = new Map((data || []).map(r=>[String(r.local_text_id), r.id]));
-      for(const arr of Object.values(store.textNotesByKey || {})){
-        if(!Array.isArray(arr)) continue;
-        arr.forEach(note=>{
-          const sid = idMap.get(String(note.local_text_id));
-          if(sid) note.id = sid;
+      (data || []).forEach(row=>{
+        if(!row?.local_text_id) return;
+        const note = findTextNoteByKey(row.local_text_id);
+        if(note){
+          note.id = row.id;
+          note.local_text_id = row.local_text_id;
+          note.localTextId = row.local_text_id;
+        }
+      });
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note save] success", {
+          count: (data || []).length,
+          samples: (data || []).slice(0, 3).map(r=>({
+            id: r?.id,
+            local_text_id: r?.local_text_id,
+          })),
         });
       }
       return { textNoteCount: rows.length };
@@ -2778,13 +2791,13 @@
         if(!next[key]) next[key] = [];
         next[key].push(normalizeTextNote({
           id: row.id || null,
-          local_text_id: row.local_text_id,
+          local_text_id: row.local_text_id || row.id,
           x: row.x,
           y: row.y,
           width: row.width,
           height: row.height,
-          content: row.content ?? row.text_content ?? "",
-          text_content: row.content ?? row.text_content ?? "",
+          content: row.content || "",
+          text_content: row.content || "",
           note_type: row.note_type,
           font_size: row.font_size,
           is_bold: row.is_bold ?? (row.font_weight === "bold"),
@@ -7624,6 +7637,7 @@
     const QUICK_TYPE_CHIP_ORDER = ["共通","傷","汚れ","建具","設備","補修","その他"];
     let quickEditorState = null;
     let textNoteEditorState = null;
+    let editingTextNoteKey = null;
     const pendingPhotoStorageDeletes = new Set();
     const undoStack = [];
     const redoStack = [];
@@ -8396,8 +8410,8 @@
       const heightRatioMax = TEXT_NOTE_MAX_H / Math.max(1, stageH || 1);
       const defaultWidthRatio = TEXT_NOTE_DEFAULT_W_PX / Math.max(1, stageW || 1);
       const defaultHeightRatio = TEXT_NOTE_DEFAULT_H_PX / Math.max(1, stageH || 1);
-      const localTextId = src.local_text_id || src.localTextId || `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const rawContent = src.content ?? src.text_content ?? src.textContent ?? "";
+      const localTextId = src.local_text_id || src.localTextId || src.text_note_id || src.textNoteId || `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const rawContent = getTextNoteContent(src);
       const content = String(rawContent) === "メモ未入力" ? "" : String(rawContent);
       const isBold = !!(src.is_bold || src.isBold || String(src.font_weight || src.fontWeight || "normal") === "bold");
       return {
@@ -8943,14 +8957,71 @@
       return "メモ";
     }
 
-    function getTextNoteByLocalId(localTextId){
-      if(!localTextId) return null;
+    function getTextNoteKey(note){
+      if(!note) return "";
+      return (
+        note.local_text_id ||
+        note.localTextId ||
+        note.text_note_id ||
+        note.textNoteId ||
+        note.id ||
+        ""
+      );
+    }
+
+    function isSameTextNote(note, keyOrNote){
+      const key = typeof keyOrNote === "string"
+        ? keyOrNote
+        : getTextNoteKey(keyOrNote);
+      return getTextNoteKey(note) === key;
+    }
+
+    function ensureTextNoteLocalId(note){
+      if(!note) return "";
+      if(!note.local_text_id && !note.localTextId){
+        const newId = `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        note.local_text_id = newId;
+        note.localTextId = newId;
+      }
+      if(!note.localTextId) note.localTextId = note.local_text_id;
+      if(!note.local_text_id) note.local_text_id = note.localTextId;
+      return note.local_text_id;
+    }
+
+    function getTextNoteContent(note){
+      return (
+        note?.content ??
+        note?.text_content ??
+        note?.textContent ??
+        ""
+      );
+    }
+
+    function setTextNoteContent(note, value){
+      const v = String(value || "");
+      note.content = v;
+      note.text_content = v;
+      note.textContent = v;
+      note.updated_at = new Date().toISOString();
+    }
+
+    function findTextNoteByKey(keyOrNote){
+      const key = typeof keyOrNote === "string"
+        ? keyOrNote
+        : getTextNoteKey(keyOrNote);
+      if(!key) return null;
+      const onPage = textNotes().find(n=>isSameTextNote(n, key));
+      if(onPage) return onPage;
       for(const [, arr] of getCurrentFloorTextNoteEntries()){
         if(!Array.isArray(arr)) continue;
-        const found = arr.find(n=>n.local_text_id === localTextId);
+        const found = arr.find(n=>isSameTextNote(n, key));
         if(found) return found;
       }
       return null;
+    }
+
+    function getTextNoteByLocalId(localTextId){
+      return findTextNoteByKey(localTextId);
     }
 
     function positionTextNoteEditor(note){
@@ -8966,64 +9037,131 @@
 
     function closeTextNoteEditor(){
       textNoteEditorState = null;
+      editingTextNoteKey = null;
       if(textNoteEditor) textNoteEditor.style.display = "none";
     }
 
-    function selectTextNote(localTextId){
-      selectedTextNoteId = localTextId || null;
+    function selectTextNote(keyOrNote){
+      selectedTextNoteId = getTextNoteKey(keyOrNote) || null;
       redrawTextNotes();
     }
 
-    function openTextNoteEditModal(localTextId, options = {}){
-      const note = typeof localTextId === "object"
-        ? localTextId
-        : getTextNoteByLocalId(localTextId);
-      if(!note) return;
+    function openTextNoteEditModal(keyOrNote, options = {}){
+      const key = typeof keyOrNote === "string"
+        ? keyOrNote
+        : getTextNoteKey(keyOrNote);
+      const note = findTextNoteByKey(key);
+      if(!note){
+        console.warn("[text note edit] note not found", {
+          key,
+          notes: getCurrentFloorTextNoteEntries().flatMap(([, arr])=>
+            (Array.isArray(arr) ? arr : []).map(n=>({
+              id: n.id,
+              local_text_id: n.local_text_id,
+              localTextId: n.localTextId,
+            }))
+          ),
+        });
+        return;
+      }
+      ensureTextNoteLocalId(note);
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note edit open]", {
+          key,
+          noteId: note.id,
+          local_text_id: note.local_text_id,
+          content: getTextNoteContent(note),
+        });
+      }
       openTextNoteEditor(note, options);
     }
 
-    function saveTextNoteFromEditor(note){
+    function saveTextNoteFromModal(event){
+      if(event){
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if(!editingTextNoteKey){
+        console.warn("[text note save modal] no editing key");
+        return;
+      }
+      const note = findTextNoteByKey(editingTextNoteKey);
+      if(!note){
+        console.warn("[text note save modal] note not found", editingTextNoteKey);
+        return;
+      }
+      const textarea =
+        document.querySelector("#textNoteContentInput") ||
+        document.querySelector("#textNoteEditorContent") ||
+        document.querySelector("#textNoteTextarea") ||
+        document.querySelector(".text-note-edit-modal textarea") ||
+        document.querySelector("textarea[name='textNoteContent']");
+      if(!textarea){
+        console.warn("[text note save modal] textarea not found");
+        return;
+      }
+      const value = textarea.value || "";
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note save modal]", {
+          editingTextNoteKey,
+          noteId: note.id,
+          local_text_id: note.local_text_id,
+          value,
+        });
+      }
+      saveTextNoteFromEditor(note, value);
+      closeTextNoteEditor();
+    }
+
+    function saveTextNoteFromEditor(note, contentOverride){
       if(!note) return;
       pushUndoSnapshot("テキスト編集");
-      const content = String($("textNoteEditorContent")?.value ?? "");
+      const textarea =
+        document.querySelector("#textNoteContentInput") ||
+        document.querySelector("#textNoteEditorContent") ||
+        document.querySelector("#textNoteTextarea") ||
+        document.querySelector(".text-note-edit-modal textarea") ||
+        document.querySelector("textarea[name='textNoteContent']");
+      const content = contentOverride != null
+        ? String(contentOverride)
+        : String(textarea?.value ?? "");
       const noteType = $("textNoteEditorType")?.value || "memo";
       const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
       const isBold = !!$("textNoteEditorBold")?.checked;
-      note.content = content;
-      note.text_content = content;
+      setTextNoteContent(note, content);
       note.note_type = noteType;
       note.font_size = clamp(Number.isFinite(fontSize) ? fontSize : 14, 10, 32);
       note.is_bold = isBold;
       note.font_weight = isBold ? "bold" : "normal";
-      note.updated_at = new Date().toISOString();
+      ensureTextNoteLocalId(note);
       saveStore();
       dirty = true;
       updateSaveStatus("dirty");
       redrawOverlay();
       redrawList();
-      console.log("[text note] saved", note.local_text_id, content);
-      autoSaveToCloud("text note save").catch(error=>{
-        console.error("[text note save] failed", {
-          code: error?.code || error?.error?.code || null,
-          message: error?.message || error?.error?.message || String(error),
-          details: error?.details || error?.error?.details || null,
-          hint: error?.hint || error?.error?.hint || null,
-        });
-      });
+      redrawTextNotes();
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note] saved", note.local_text_id, content);
+      }
+      scheduleTextNoteCloudSave("text note save");
     }
 
     function openTextNoteEditor(note, options = {}){
       if(!note || !textNoteEditor) return;
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
+      ensureTextNoteLocalId(note);
       const isNew = !!options.isNew;
-      selectedTextNoteId = note.local_text_id;
+      const noteKey = getTextNoteKey(note);
+      selectedTextNoteId = noteKey;
+      editingTextNoteKey = noteKey;
       textNoteEditorState = {
         local_text_id: note.local_text_id,
+        localTextId: note.localTextId,
         isNew,
       };
       textNoteEditorOutsideCloseGuardUntil = Date.now() + 450;
       const contentEl = $("textNoteEditorContent");
-      contentEl.value = String(note.content ?? note.text_content ?? "");
+      contentEl.value = getTextNoteContent(note);
       contentEl.disabled = false;
       contentEl.readOnly = false;
       $("textNoteEditorType").value = note.note_type || "memo";
@@ -9032,7 +9170,9 @@
       textNoteEditor.style.display = "block";
       positionTextNoteEditor(note);
       redrawTextNotes();
-      console.log("[text note] edit modal opened", note.local_text_id);
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note] edit modal opened", note.local_text_id);
+      }
       setTimeout(()=>{
         const textarea = $("textNoteEditorContent")
           || document.querySelector("#textNoteTextarea, .text-note-textarea, textarea[name='textNoteContent']");
@@ -9051,50 +9191,38 @@
       pushUndoSnapshot("テキストメモ削除");
       note.status = "deleted";
       note.updated_at = new Date().toISOString();
-      if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
+      if(isSameTextNote(note, selectedTextNoteId)) selectedTextNoteId = null;
       closeTextNoteEditor();
       saveStore();
       markDirty("text note deleted", { skipAutoSave: true });
       redrawOverlay();
       redrawList();
-      autoSaveToCloud("text note delete").catch(error=>{
-        console.error("[text note save] failed", {
-          code: error?.code || error?.error?.code || null,
-          message: error?.message || error?.error?.message || String(error),
-          details: error?.details || error?.error?.details || null,
-          hint: error?.hint || error?.error?.hint || null,
-        });
-      });
+      redrawTextNotes();
+      scheduleTextNoteCloudSave("text note delete");
     }
 
     const quickDeleteTextNoteInFlight = new Set();
     function quickDeleteTextNoteById(localTextId){
-      const key = String(localTextId || "");
+      const key = String(getTextNoteKey({ local_text_id: localTextId, localTextId: localTextId }) || localTextId || "");
       if(!key) return false;
       if(quickDeleteTextNoteInFlight.has(key)) return false;
-      const note = getTextNoteByLocalId(key);
+      const note = findTextNoteByKey(key);
       if(!note || note.status === "deleted") return false;
       quickDeleteTextNoteInFlight.add(key);
       try{
         pushUndoSnapshot("テキストメモ削除");
         note.status = "deleted";
         note.updated_at = new Date().toISOString();
-        if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
-        if(textNoteEditorState && textNoteEditorState.local_text_id === note.local_text_id){
+        if(isSameTextNote(note, selectedTextNoteId)) selectedTextNoteId = null;
+        if(textNoteEditorState && isSameTextNote(note, editingTextNoteKey || textNoteEditorState)){
           closeTextNoteEditor();
         }
         saveStore();
         markDirty("text note deleted", { skipAutoSave: true });
         redrawOverlay();
         redrawList();
-        autoSaveToCloud("text note quick delete").catch(error=>{
-          console.error("[text note save] failed", {
-            code: error?.code || error?.error?.code || null,
-            message: error?.message || error?.error?.message || String(error),
-            details: error?.details || error?.error?.details || null,
-            hint: error?.hint || error?.error?.hint || null,
-          });
-        });
+        redrawTextNotes();
+        scheduleTextNoteCloudSave("text note quick delete");
         return true;
       }finally{
         quickDeleteTextNoteInFlight.delete(key);
@@ -9123,6 +9251,7 @@
         created_at: now,
         updated_at: now,
       });
+      ensureTextNoteLocalId(note);
       const arr = textNotes();
       note.display_order = arr.length;
       arr.push(note);
@@ -9131,11 +9260,13 @@
       dirty = true;
       updateSaveStatus("dirty");
       redrawOverlay();
-      selectTextNote(note.local_text_id);
+      selectTextNote(note);
       setTimeout(()=>{
-        openTextNoteEditModal(note.local_text_id, { isNew: true });
+        openTextNoteEditModal(note, { isNew: true });
       }, 0);
-      console.log("[text note] created", note);
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note] created", note);
+      }
       return note;
     }
 
@@ -9160,8 +9291,8 @@
         const w = noteSize.width;
         const h = noteSize.height;
         const el = document.createElement("div");
-        el.className = "text-note-box note-" + note.note_type + (selectedTextNoteId === note.local_text_id ? " is-selected" : "");
-        el.dataset.localTextId = note.local_text_id;
+        el.className = "text-note-box note-" + note.note_type + (isSameTextNote(note, selectedTextNoteId) ? " is-selected" : "");
+        el.dataset.localTextId = getTextNoteKey(note);
         el.style.left = `${clamp(point.x, 0, Math.max(0, stageW - w))}px`;
         el.style.top = `${clamp(point.y, 0, Math.max(0, stageH - h))}px`;
         el.style.width = `${w}px`;
@@ -9172,7 +9303,8 @@
         el.style.backgroundColor = note.background_color || "#ffffff";
         el.style.borderColor = note.border_color || "#d7dce4";
         el.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
-        const text = String(note.content ?? note.text_content ?? "");
+        const noteKey = getTextNoteKey(note);
+        const text = getTextNoteContent(note);
         const textContent = document.createElement("div");
         textContent.className = "text-note-content";
         const isEmptyText = !text.trim();
@@ -9202,18 +9334,18 @@
           event.stopPropagation();
           if(delBtn.disabled) return;
           delBtn.disabled = true;
-          selectedTextNoteId = note.local_text_id;
-          const deleted = quickDeleteTextNoteById(note.local_text_id);
+          selectedTextNoteId = noteKey;
+          const deleted = quickDeleteTextNoteById(noteKey);
           if(!deleted) delBtn.disabled = false;
         });
         resizeHandle.addEventListener("pointerdown", (event)=>{
           if(event.button === 2) return;
           event.preventDefault();
           event.stopPropagation();
-          selectedTextNoteId = note.local_text_id;
+          selectedTextNoteId = noteKey;
           pushUndoSnapshot("テキストメモサイズ変更");
           textNoteResize = {
-            local_text_id: note.local_text_id,
+            local_text_id: noteKey,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
@@ -9225,11 +9357,11 @@
         });
         el.addEventListener("pointerdown", (e)=>{
           if(e.button === 2) return;
-          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id) return;
-          selectedTextNoteId = note.local_text_id;
+          if(textNoteResize && isSameTextNote(note, textNoteResize.local_text_id)) return;
+          selectedTextNoteId = noteKey;
           const base = imgRatioToCanvasPx(note.x, note.y);
           textNoteDrag = {
-            local_text_id: note.local_text_id,
+            local_text_id: noteKey,
             pointerId: e.pointerId,
             startX: e.clientX,
             startY: e.clientY,
@@ -9244,8 +9376,8 @@
           e.stopPropagation();
         });
         el.addEventListener("pointermove", (e)=>{
-          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id){
-            const target = getTextNoteByLocalId(textNoteResize.local_text_id);
+          if(textNoteResize && isSameTextNote(note, textNoteResize.local_text_id)){
+            const target = findTextNoteByKey(textNoteResize.local_text_id);
             if(!target) return;
             const nextW = clamp(textNoteResize.baseWidth + (e.clientX - textNoteResize.startX), TEXT_NOTE_MIN_W, TEXT_NOTE_MAX_W);
             const nextH = clamp(textNoteResize.baseHeight + (e.clientY - textNoteResize.startY), TEXT_NOTE_MIN_H, TEXT_NOTE_MAX_H);
@@ -9253,15 +9385,15 @@
             target.updated_at = new Date().toISOString();
             el.style.width = `${nextW}px`;
             el.style.height = `${nextH}px`;
-            if(textNoteEditorState && textNoteEditorState.local_text_id === target.local_text_id){
+            if(textNoteEditorState && isSameTextNote(target, editingTextNoteKey || textNoteEditorState)){
               positionTextNoteEditor(target);
             }
             e.preventDefault();
             e.stopPropagation();
             return;
           }
-          if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
-          const target = getTextNoteByLocalId(textNoteDrag.local_text_id);
+          if(!textNoteDrag || !isSameTextNote(note, textNoteDrag.local_text_id)) return;
+          const target = findTextNoteByKey(textNoteDrag.local_text_id);
           if(!target) return;
           const moveDistance = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY);
           if(moveDistance < 3){
@@ -9280,15 +9412,15 @@
           target.updated_at = new Date().toISOString();
           el.style.left = `${clamp(nx, 0, Math.max(0, stageW - w))}px`;
           el.style.top = `${clamp(ny, 0, Math.max(0, stageH - h))}px`;
-          if(textNoteEditorState && textNoteEditorState.local_text_id === target.local_text_id){
+          if(textNoteEditorState && isSameTextNote(target, editingTextNoteKey || textNoteEditorState)){
             positionTextNoteEditor(target);
           }
           e.preventDefault();
           e.stopPropagation();
         });
         el.addEventListener("pointerup", (e)=>{
-          if(textNoteResize && textNoteResize.local_text_id === note.local_text_id){
-            const target = getTextNoteByLocalId(textNoteResize.local_text_id);
+          if(textNoteResize && isSameTextNote(note, textNoteResize.local_text_id)){
+            const target = findTextNoteByKey(textNoteResize.local_text_id);
             try{ resizeHandle.releasePointerCapture(e.pointerId); }catch(_){}
             textNoteResize = null;
             if(target){
@@ -9305,12 +9437,12 @@
             e.stopPropagation();
             return;
           }
-          if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
+          if(!textNoteDrag || !isSameTextNote(note, textNoteDrag.local_text_id)) return;
           const moved = !!textNoteDrag.moved;
           textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
           textNoteDrag = null;
           try{ el.releasePointerCapture(e.pointerId); }catch(_){}
-          const target = getTextNoteByLocalId(note.local_text_id);
+          const target = findTextNoteByKey(noteKey);
           if(target){
             if(moved){
               saveStore();
@@ -9319,7 +9451,7 @@
               redrawOverlay();
               scheduleTextNoteCloudSave("text note moved");
             }else{
-              selectedTextNoteId = target.local_text_id;
+              selectedTextNoteId = getTextNoteKey(target);
               redrawTextNotes();
             }
           }
@@ -9329,19 +9461,21 @@
         el.addEventListener("click", (e)=>{
           e.preventDefault();
           e.stopPropagation();
-          const target = getTextNoteByLocalId(note.local_text_id);
+          const target = findTextNoteByKey(noteKey);
           if(!target) return;
-          selectedTextNoteId = target.local_text_id;
+          selectedTextNoteId = getTextNoteKey(target);
           redrawTextNotes();
         });
         el.addEventListener("dblclick", (e)=>{
           e.preventDefault();
           e.stopPropagation();
-          const target = getTextNoteByLocalId(note.local_text_id);
+          const target = findTextNoteByKey(noteKey);
           if(!target) return;
-          selectTextNote(target.local_text_id);
-          console.log("[text note] double clicked", target.local_text_id);
-          openTextNoteEditModal(target.local_text_id, { isNew: false });
+          selectTextNote(target);
+          if(DEBUG_TEXT_NOTES){
+            console.log("[text note] double clicked", getTextNoteKey(target));
+          }
+          openTextNoteEditModal(target, { isNew: false });
         });
         textNotesLayer.appendChild(el);
       });
@@ -10388,7 +10522,7 @@
         textNoteEditorOutsideCloseGuardUntil = Date.now() + 450;
       }
     };
-    ["pointerdown", "click", "dblclick", "mousedown", "touchstart"].forEach(type=>{
+    ["pointerdown", "click", "dblclick", "mousedown", "touchstart", "input"].forEach(type=>{
       textNoteEditor.addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorContent").addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorSave").addEventListener(type, stopTextNoteEditorPropagation, true);
@@ -10398,20 +10532,20 @@
       $("textNoteEditorFontSize").addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorBold").addEventListener(type, stopTextNoteEditorPropagation, true);
     });
-    $("textNoteEditorSave").addEventListener("click", ()=>{
-      if(!textNoteEditorState) return;
-      const note = getTextNoteByLocalId(textNoteEditorState.local_text_id);
-      if(!note) return;
-      saveTextNoteFromEditor(note);
-      closeTextNoteEditor();
+    $("textNoteEditorSave").addEventListener("click", (event)=>{
+      saveTextNoteFromModal(event);
     });
-    $("textNoteEditorCancel").addEventListener("click", ()=>{
+    $("textNoteEditorCancel").addEventListener("click", (event)=>{
+      event.preventDefault();
+      event.stopPropagation();
       closeTextNoteEditor();
       redrawTextNotes();
     });
-    $("textNoteEditorDelete").addEventListener("click", ()=>{
-      if(!textNoteEditorState) return;
-      const note = getTextNoteByLocalId(textNoteEditorState.local_text_id);
+    $("textNoteEditorDelete").addEventListener("click", (event)=>{
+      event.preventDefault();
+      event.stopPropagation();
+      if(!editingTextNoteKey) return;
+      const note = findTextNoteByKey(editingTextNoteKey);
       if(!note) return;
       deleteTextNote(note);
     });
@@ -10629,7 +10763,7 @@
         octx.globalAlpha = 1;
         octx.fillStyle = note.text_color || "#111827";
         octx.font = `${note.font_weight === "bold" ? "bold " : ""}${Math.max(10, note.font_size * scale)}px system-ui,sans-serif`;
-        const text = String(note.content ?? note.text_content ?? "");
+        const text = getTextNoteContent(note);
         const lines = text.split(/\r?\n/);
         const maxLines = Math.max(1, Math.floor((nh - 10 * scale) / (note.font_size * scale * 1.35)));
         for(let i=0;i<Math.min(lines.length, maxLines);i++){
@@ -11005,7 +11139,7 @@
         noteEl.style.fontSize = `${Math.max(10, Math.round(Number(note.font_size || 14) * Math.min(xScaleToDrawing, yScaleToDrawing)))}px`;
         noteEl.style.lineHeight = "1.35";
         noteEl.style.fontWeight = note.font_weight === "bold" ? "700" : "400";
-        noteEl.textContent = String(note.content ?? note.text_content ?? "").trim() || "メモ未入力";
+        noteEl.textContent = getTextNoteContent(note).trim() || "メモ未入力";
         drawingPanel.appendChild(noteEl);
       });
       main.appendChild(drawingPanel);
@@ -12414,13 +12548,13 @@
           if(!restoredTextNotesByKey[key]) restoredTextNotesByKey[key] = [];
           restoredTextNotesByKey[key].push(normalizeTextNote({
             id: row.id || null,
-            local_text_id: row.local_text_id,
+            local_text_id: row.local_text_id || row.id,
             x: row.x,
             y: row.y,
             width: row.width,
             height: row.height,
-            content: row.content ?? row.text_content ?? "",
-            text_content: row.content ?? row.text_content ?? "",
+            content: row.content || "",
+            text_content: row.content || "",
             note_type: row.note_type,
             font_size: row.font_size,
             is_bold: row.is_bold ?? (row.font_weight === "bold"),
