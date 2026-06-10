@@ -582,6 +582,12 @@
       display:block;
       z-index:1;
     }
+    .pdf-background-layer{
+      position:absolute;
+      inset:0;
+      z-index:1;
+      pointer-events:none;
+    }
     svg#overlay,
     #overlay{
       position:absolute;
@@ -603,6 +609,7 @@
     .pin-bubble{
       position:absolute;
       z-index:70;
+      transform:none !important;
       writing-mode:horizontal-tb !important;
       text-orientation:mixed !important;
     }
@@ -639,6 +646,9 @@
       box-shadow:0 2px 8px rgba(15, 23, 42, 0.25);
       user-select:none;
       touch-action:none;
+      transform:none !important;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
     }
     .annotation-resize-handle{
       position:absolute;
@@ -654,6 +664,7 @@
       z-index:9999;
       box-shadow:0 2px 6px rgba(15, 23, 42, 0.25);
       touch-action:none;
+      transform:none !important;
     }
     .text-notes-layer{pointer-events:none}
     .text-note-box{
@@ -686,6 +697,23 @@
       pointer-events:none;
       writing-mode:horizontal-tb !important;
       text-orientation:mixed !important;
+    }
+    .text-note-box .text-note-content.is-empty{
+      color:#94a3b8;
+    }
+    .annotation-controls,
+    .annotation-control-layer{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+    }
+    .annotation-controls .annotation-delete-btn,
+    .annotation-controls .annotation-resize-handle,
+    .annotation-control-layer .annotation-delete-btn,
+    .annotation-control-layer .annotation-resize-handle,
+    .annotation-delete-btn,
+    .annotation-resize-handle{
+      pointer-events:auto;
     }
     .text-note-box:active{cursor:grabbing}
     .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
@@ -720,6 +748,9 @@
       box-shadow:0 10px 26px rgba(15,23,42,.18);
       padding:10px;
       touch-action:manipulation;
+      pointer-events:auto !important;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
     }
     #textNoteEditor .tn-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
     #textNoteEditor .tn-label{font-size:11px;color:#475569;font-weight:700}
@@ -732,7 +763,14 @@
       min-height:40px;
       background:#fff;
     }
-    #textNoteEditor textarea{min-height:84px;resize:vertical}
+    #textNoteEditor textarea{
+      min-height:84px;
+      resize:vertical;
+      pointer-events:auto !important;
+      user-select:text !important;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
+    }
     #textNoteEditor .tn-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px}
     #textNoteEditor .tn-actions .btn{padding:9px 13px;min-height:40px}
     #quickMarkerEditor{
@@ -781,6 +819,7 @@
     .text-edit-modal,
     .annotation-modal{
       z-index:200000 !important;
+      pointer-events:auto !important;
     }
     #quickMarkerEditor .qe-vendor-row{display:flex;gap:6px;align-items:stretch}
     #quickMarkerEditor .qe-vendor-row select{flex:1}
@@ -1154,7 +1193,9 @@
         <!-- 図面ステージ（横画面デフォルト） -->
         <div class="stageWrap" id="stageWrap" style="aspect-ratio:16/9;border-radius:0">
           <div id="stageRotateLayer" class="stage-rotate-layer stage-inner">
-            <canvas id="bg"></canvas>
+            <div id="pdfBackgroundLayer" class="pdf-background-layer">
+              <canvas id="bg"></canvas>
+            </div>
             <svg id="overlay"></svg>
             <div id="textNotesLayer" class="text-notes-layer"></div>
           </div>
@@ -6677,6 +6718,12 @@
       stageRotateLayer.style.transformOrigin = "center center";
       stageRotateLayer.style.transform = "none";
       stageRotateLayer.dataset.rotation = String(rot);
+      if(overlay){
+        overlay.style.transform = "none";
+      }
+      if(textNotesLayer){
+        textNotesLayer.style.transform = "none";
+      }
     }
     function syncRotationForActiveKey(){
       const key = activeKey();
@@ -7839,11 +7886,11 @@
     function saveTextNoteFromEditor(note){
       if(!note) return;
       pushUndoSnapshot("テキスト編集");
-      const content = $("textNoteEditorContent")?.value ?? "";
+      const content = String($("textNoteEditorContent")?.value ?? "");
       const noteType = $("textNoteEditorType")?.value || "memo";
       const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
       const isBold = !!$("textNoteEditorBold")?.checked;
-      note.text_content = String(content);
+      note.text_content = content;
       note.note_type = noteType;
       note.font_size = clamp(Number.isFinite(fontSize) ? fontSize : 14, 10, 32);
       note.font_weight = isBold ? "bold" : "normal";
@@ -7851,23 +7898,37 @@
       saveStore();
       markDirty("text note updated");
       redrawOverlay();
+      redrawList();
+      console.log("[text note] saved", note.local_text_id, content);
+      autoSaveToCloud("text note save").catch(error=>{
+        console.warn("[text note save] autosave failed", error);
+      });
     }
 
     function openTextNoteEditor(note, options = {}){
       if(!note || !textNoteEditor) return;
       closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
       const isNew = !!options.isNew;
+      selectedTextNoteId = note.local_text_id;
       textNoteEditorState = {
         local_text_id: note.local_text_id,
         isNew,
       };
-      $("textNoteEditorContent").value = (note.text_content ?? "");
+      const contentEl = $("textNoteEditorContent");
+      contentEl.value = (note.text_content ?? "");
+      contentEl.disabled = false;
+      contentEl.readOnly = false;
       $("textNoteEditorType").value = note.note_type || "memo";
       $("textNoteEditorFontSize").value = String(note.font_size || 14);
       $("textNoteEditorBold").checked = (note.font_weight || "normal") === "bold";
       textNoteEditor.style.display = "block";
       positionTextNoteEditor(note);
-      setTimeout(()=>{ try{ $("textNoteEditorContent").focus(); }catch(_){} }, 0);
+      redrawTextNotes();
+      console.log("[text note] edit modal opened", note.local_text_id);
+      setTimeout(()=>{
+        const textarea = $("textNoteEditorContent") || document.querySelector("#textNoteEditTextarea, .text-note-edit-textarea, #textNoteEditorContent");
+        if(textarea && typeof textarea.focus === "function") textarea.focus();
+      }, 0);
     }
 
     function deleteTextNote(note){
@@ -7915,6 +7976,7 @@
       markDirty("text note created");
       redrawOverlay();
       openTextNoteEditor(note, { isNew: true });
+      console.log("[text note] created", note);
       return note;
     }
 
@@ -7954,18 +8016,23 @@
         const text = String(note.text_content ?? "");
         const textContent = document.createElement("div");
         textContent.className = "text-note-content";
-        textContent.textContent = text.trim() ? text : " ";
+        const isEmptyText = !text.trim();
+        textContent.classList.toggle("is-empty", isEmptyText);
+        textContent.textContent = isEmptyText ? "メモ未入力" : text;
         el.appendChild(textContent);
+        const controlsWrap = document.createElement("div");
+        controlsWrap.className = "annotation-controls";
         const delBtn = document.createElement("button");
         delBtn.type = "button";
         delBtn.className = "annotation-delete-btn";
         delBtn.textContent = "×";
         delBtn.title = "削除";
-        el.appendChild(delBtn);
+        controlsWrap.appendChild(delBtn);
         const resizeHandle = document.createElement("div");
         resizeHandle.className = "annotation-resize-handle";
         resizeHandle.title = "サイズ変更";
-        el.appendChild(resizeHandle);
+        controlsWrap.appendChild(resizeHandle);
+        el.appendChild(controlsWrap);
         el.title = textNoteTypeLabel(note.note_type);
         delBtn.addEventListener("pointerdown", (event)=>{
           event.preventDefault();
@@ -8006,6 +8073,7 @@
             startY: e.clientY,
             baseX: base.x,
             baseY: base.y,
+            moved: false,
           };
           closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
           el.classList.add("is-selected");
@@ -8034,7 +8102,11 @@
           const target = getTextNoteByLocalId(textNoteDrag.local_text_id);
           if(!target) return;
           const moveDistance = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY);
-          if(moveDistance >= 3 && !textDragUndoPushed.has(String(textNoteDrag.local_text_id || ""))){
+          if(moveDistance < 3){
+            return;
+          }
+          textNoteDrag.moved = true;
+          if(!textDragUndoPushed.has(String(textNoteDrag.local_text_id || ""))){
             pushUndoSnapshot("テキスト移動");
             textDragUndoPushed.add(String(textNoteDrag.local_text_id || ""));
           }
@@ -8073,20 +8145,31 @@
             return;
           }
           if(!textNoteDrag || textNoteDrag.local_text_id !== note.local_text_id) return;
-          const moved = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY) >= 3;
+          const moved = !!textNoteDrag.moved;
           textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
           textNoteDrag = null;
           try{ el.releasePointerCapture(e.pointerId); }catch(_){}
           const target = getTextNoteByLocalId(note.local_text_id);
           if(target){
-            saveStore();
             if(moved){
+              saveStore();
               markDirty("text note moved");
+              redrawOverlay();
+            }else{
+              selectedTextNoteId = target.local_text_id;
+              redrawTextNotes();
             }
-            redrawOverlay();
           }
           e.preventDefault();
           e.stopPropagation();
+        });
+        el.addEventListener("click", (e)=>{
+          e.preventDefault();
+          e.stopPropagation();
+          const target = getTextNoteByLocalId(note.local_text_id);
+          if(!target) return;
+          selectedTextNoteId = target.local_text_id;
+          redrawTextNotes();
         });
         el.addEventListener("dblclick", (e)=>{
           e.preventDefault();
@@ -8094,6 +8177,7 @@
           const target = getTextNoteByLocalId(note.local_text_id);
           if(!target) return;
           selectedTextNoteId = target.local_text_id;
+          console.log("[text note] double clicked", target.local_text_id);
           openTextNoteEditor(target, { isNew: false });
         });
         textNotesLayer.appendChild(el);
@@ -8469,23 +8553,37 @@
         const bubbleG = svgEl("g", { transform: bubbleTransform, cursor:"grab" });
         bubbleG.setAttribute("data-role","bubble");
         bubbleG.setAttribute("class", `annotation-box${isSel ? " annotation-selected" : ""}`);
+        bubbleG.style.writingMode = "horizontal-tb";
+        bubbleG.style.textOrientation = "mixed";
 
         const bubble = svgEl("rect", { x:0,y:0,width:bubbleW,height:bubbleH, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
         bubble.setAttribute("data-role","bubble");
         bubbleG.appendChild(bubble);
 
-        const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
-        const t1 = svgEl("text", { x:10, y:18, "font-size":"12", "font-weight":"800", fill:"#111827", "data-role":"bubble" });
-        t1.textContent = title.length>20 ? title.slice(0,20)+"…" : title;
+        const issueType = String(m?.type || "種別未設定").trim() || "種別未設定";
+        const vendorName = String(getVendorDisplayName(m) || "業者未定").trim() || "業者未定";
+        const shortIssueType = issueType.length > 10 ? issueType.slice(0, 10) + "…" : issueType;
+        const shortVendorName = vendorName.length > 8 ? vendorName.slice(0, 8) + "…" : vendorName;
+        const t1 = svgEl("text", { x:10, y:22, "font-size":"16", "font-weight":"800", "data-role":"bubble" });
+        const issueTypeTspan = svgEl("tspan", { fill:"#dc2626" });
+        issueTypeTspan.textContent = `${idx+1}. ${shortIssueType}`;
+        const vendorNameTspan = svgEl("tspan", { fill:"#16a34a" });
+        vendorNameTspan.textContent = `（${shortVendorName}）`;
+        t1.appendChild(issueTypeTspan);
+        t1.appendChild(vendorNameTspan);
+        t1.style.writingMode = "horizontal-tb";
+        t1.style.textOrientation = "mixed";
         bubbleG.appendChild(t1);
 
         const statusLabel = getMarkerStatusLabel(m.status);
         const memo = (m.memo||"").trim();
         const photoTag = getMarkerPhotoBadgeText(m);
-        const t2 = svgEl("text", { x:10, y:34, "font-size":"11", fill:"#6b7280", "data-role":"bubble" });
+        const t2 = svgEl("text", { x:10, y:42, "font-size":"11", fill:"#6b7280", "data-role":"bubble" });
         const line2 = memo ? (memo.length>16? memo.slice(0,16)+"…" : memo) : "（メモなし）";
         const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
         t2.textContent = `${statusLine} / ${line2}`;
+        t2.style.writingMode = "horizontal-tb";
+        t2.style.textOrientation = "mixed";
         bubbleG.appendChild(t2);
 
         const deleteControl = svgEl("g", {
@@ -8710,8 +8808,8 @@
       const now = Date.now();
       if(now < suppressTapCreateUntil) return true;
       if((e?.type === "click" || e?.type === "touchstart") && now - lastPointerDownAt < 400) return true;
-      if(quickEditorState && quickMarkerEditor && quickMarkerEditor.contains(e.target)) return true;
-      if(textNoteEditorState && textNoteEditor && textNoteEditor.contains(e.target)) return true;
+      if(quickEditorState) return true;
+      if(textNoteEditorState) return true;
       return false;
     }
 
@@ -9121,6 +9219,16 @@
     });
     $("btnInputModePin").addEventListener("click", ()=>{ setInputMode("pin"); });
     $("btnInputModeText").addEventListener("click", ()=>{ setInputMode("text"); });
+    const stopTextNoteEditorPropagation = (event)=>{
+      event.stopPropagation();
+    };
+    ["pointerdown", "click", "dblclick"].forEach(type=>{
+      $("textNoteEditor").addEventListener(type, stopTextNoteEditorPropagation);
+      $("textNoteEditorContent").addEventListener(type, stopTextNoteEditorPropagation);
+      $("textNoteEditorSave").addEventListener(type, stopTextNoteEditorPropagation);
+      $("textNoteEditorCancel").addEventListener(type, stopTextNoteEditorPropagation);
+      $("textNoteEditorDelete").addEventListener(type, stopTextNoteEditorPropagation);
+    });
     $("textNoteEditorSave").addEventListener("click", ()=>{
       if(!textNoteEditorState) return;
       const note = getTextNoteByLocalId(textNoteEditorState.local_text_id);
