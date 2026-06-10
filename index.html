@@ -1645,6 +1645,30 @@
       return "marker-photos";
     }
 
+    function normalizePhotoStoragePath(path){
+      if(!path || typeof path !== "string") return "";
+
+      let p = path.trim();
+
+      if(p.startsWith("http://") || p.startsWith("https://")){
+        return p;
+      }
+
+      if(p.startsWith("blob:")){
+        return "";
+      }
+
+      const bucket = getPhotoBucketName();
+
+      if(p.startsWith(bucket + "/")){
+        p = p.slice(bucket.length + 1);
+      }
+
+      p = p.replace(/^\/+/, "");
+
+      return p;
+    }
+
     function sanitizeMarkerPhotoPublicUrl(publicUrl){
       let url = String(publicUrl || "").trim();
       if(url.startsWith("blob:")) url = "";
@@ -1652,12 +1676,13 @@
     }
 
     function getPhotoPublicUrlFromStoragePath(storagePath){
-      const path = String(storagePath || "").trim();
-      if(!path || !isSupabaseConfigured() || !isSupabaseSdkReady()) return "";
+      const path = normalizePhotoStoragePath(storagePath);
+      if(!path) return "";
+      if(path.startsWith("http://") || path.startsWith("https://")) return path;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return "";
       try{
         const sb = getSupabase();
-        const bucket = getPhotoBucketName();
-        const { data } = sb.storage.from(bucket).getPublicUrl(path);
+        const { data } = sb.storage.from(getPhotoBucketName()).getPublicUrl(path);
         return String(data?.publicUrl || "").trim();
       }catch(_){
         return "";
@@ -2967,10 +2992,13 @@
         if(!resolvePhotoUrl(next) && next.storage_path){
           try{
             const bucket = getPhotoBucketName();
-            const signed = await sb.storage.from(bucket).createSignedUrl(next.storage_path, 60 * 60);
-            const signedUrl = String(signed?.data?.signedUrl || "").trim();
-            if(/^https?:\/\//i.test(signedUrl)){
-              next.signed_url = signedUrl;
+            const normalizedPath = normalizePhotoStoragePath(next.storage_path);
+            if(normalizedPath && !normalizedPath.startsWith("http://") && !normalizedPath.startsWith("https://")){
+              const signed = await sb.storage.from(bucket).createSignedUrl(normalizedPath, 60 * 60);
+              const signedUrl = String(signed?.data?.signedUrl || "").trim();
+              if(/^https?:\/\//i.test(signedUrl)){
+                next.signed_url = signedUrl;
+              }
             }
           }catch(_){}
         }
@@ -5318,8 +5346,9 @@
     }
 
     function makeVendorPhotoSlotHtml(url, label, hasData, rawPhoto){
-      if(url){
-        return `<img class="vendor-photo-thumb" src="${escapeHtml(url)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(url)}" data-photo-label="${escapeHtml(label)}" />`;
+      const resolvedUrl = url || (rawPhoto ? resolvePhotoUrl(rawPhoto) : "");
+      if(resolvedUrl){
+        return `<img class="vendor-photo-thumb" src="${escapeHtml(resolvedUrl)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(resolvedUrl)}" data-photo-label="${escapeHtml(label)}" />`;
       }
       if(hasData){
         console.warn("[photo] failed to resolve url", rawPhoto);
@@ -6784,49 +6813,126 @@
       );
     }
 
+    function logPhotoResolved(photo, url){
+      if(typeof photo === "object" && photo){
+        console.log("[photo] resolved", {
+          id: photo.id,
+          kind: photo.kind,
+          photo_type: photo.photo_type,
+          storage_path: photo.storage_path,
+          public_url: photo.public_url,
+          resolvedUrl: url
+        });
+      }else{
+        console.log("[photo] resolved", { resolvedUrl: url });
+      }
+    }
+
     function resolvePhotoUrl(photo){
       if(!photo) return "";
+
       if(typeof photo === "string"){
-        const raw = String(photo).trim();
-        if(!raw) return "";
-        if(raw.startsWith("blob:") || /^data:image\//i.test(raw)) return raw;
-        if(/^https?:\/\//i.test(raw)) return raw;
-        if(isUuidLikeToken(raw)) return "";
-        if(raw.includes("/")) return getPhotoPublicUrlFromStoragePath(raw);
+        const d = String(photo).trim();
+        if(!d) return "";
+        if(d.startsWith("http://") || d.startsWith("https://")){
+          logPhotoResolved(photo, d);
+          return d;
+        }
+        if(d.startsWith("blob:")){
+          console.warn("[photo] ignored blob url", d);
+          return "";
+        }
+        if(isUuidLikeToken(d)) return "";
+        const normalized = normalizePhotoStoragePath(d);
+        if(!normalized) return "";
+        if(normalized.startsWith("http://") || normalized.startsWith("https://")){
+          logPhotoResolved(photo, normalized);
+          return normalized;
+        }
+        const fromPath = getPhotoPublicUrlFromStoragePath(normalized);
+        if(fromPath){
+          logPhotoResolved(photo, fromPath);
+          return fromPath;
+        }
         return "";
       }
+
       if(typeof photo !== "object") return "";
 
-      const direct = String(
+      const direct =
         photo.public_url ||
         photo.publicUrl ||
         photo.signed_url ||
         photo.signedUrl ||
-        photo.url ||
-        photo.previewUrl ||
-        photo.local_preview_url ||
-        ""
-      ).trim();
-      if(direct){
-        if(direct.startsWith("blob:") || /^data:image\//i.test(direct)) return direct;
-        if(/^https?:\/\//i.test(direct)) return direct;
-        if(isUuidLikeToken(direct)) return "";
+        photo.url;
+
+      if(direct && typeof direct === "string"){
+        const d = direct.trim();
+
+        if(d.startsWith("http://") || d.startsWith("https://")){
+          logPhotoResolved(photo, d);
+          return d;
+        }
+
+        if(d.startsWith("blob:")){
+          console.warn("[photo] ignored blob url", d);
+        }else if(isUuidLikeToken(d)){
+          // UUIDのみはURLとして使わない
+        }
       }
 
-      const path = String(photo.storage_path || photo.storagePath || photo.path || "").trim();
-      if(path){
-        const bucket = String(photo.bucket || getPhotoBucketName() || MARKER_PHOTO_BUCKET);
-        let pubUrl = "";
-        if(isSupabaseConfigured() && isSupabaseSdkReady()){
-          try{
-            const sb = getSupabase();
-            const pub = sb.storage.from(bucket).getPublicUrl(path);
-            pubUrl = String(pub?.data?.publicUrl || "").trim();
-          }catch(_){}
+      const rawPath =
+        photo.storage_path ||
+        photo.storagePath ||
+        photo.path;
+
+      const path = normalizePhotoStoragePath(rawPath);
+
+      if(!path){
+        const localPreview = String(photo.local_preview_url || "").trim();
+        if(/^data:image\//i.test(localPreview)){
+          return "";
         }
-        if(!pubUrl) pubUrl = getPhotoPublicUrlFromStoragePath(path);
-        if(/^https?:\/\//i.test(pubUrl)) return pubUrl;
+        console.warn("[photo] failed to resolve url: no storage_path", photo);
+        return "";
       }
+
+      if(path.startsWith("http://") || path.startsWith("https://")){
+        logPhotoResolved(photo, path);
+        return path;
+      }
+
+      if(isSupabaseConfigured() && isSupabaseSdkReady()){
+        try{
+          const sb = getSupabase();
+          const { data } = sb.storage
+            .from(getPhotoBucketName())
+            .getPublicUrl(path);
+
+          if(data && data.publicUrl){
+            logPhotoResolved(photo, data.publicUrl);
+            return data.publicUrl;
+          }
+        }catch(error){
+          console.warn("[photo] getPublicUrl failed", error, photo);
+        }
+      }
+
+      const fallback = getPhotoPublicUrlFromStoragePath(path);
+      if(fallback){
+        logPhotoResolved(photo, fallback);
+        return fallback;
+      }
+
+      console.warn("[photo] failed to resolve url", {
+        id: photo.id,
+        kind: photo.kind,
+        photo_type: photo.photo_type,
+        rawPath,
+        normalizedPath: path,
+        public_url: photo.public_url
+      });
+
       return "";
     }
 
@@ -8031,16 +8137,19 @@
 
     const brokenPhotoPreviewUrls = new Set();
 
+    function getLocalPhotoPreviewDataUrl(photo){
+      if(!photo || typeof photo !== "object") return "";
+      const localPreview = String(photo.local_preview_url || "").trim();
+      if(/^data:image\//i.test(localPreview)) return localPreview;
+      return "";
+    }
+
     function getSafePhotoPreviewUrl(photo){
-      let raw = "";
-      if(photo && typeof photo === "object"){
-        const localPreview = String(photo.local_preview_url || "").trim();
-        if(/^data:image\//i.test(localPreview)) raw = localPreview;
-      }
-      if(!raw) raw = String(resolvePhotoUrl(photo) || "").trim();
-      if(!raw) return "";
-      if(brokenPhotoPreviewUrls.has(raw)) return "";
-      if(/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) return raw;
+      let url = resolvePhotoUrl(photo);
+      if(!url) url = getLocalPhotoPreviewDataUrl(photo);
+      if(!url) return "";
+      if(brokenPhotoPreviewUrls.has(url)) return "";
+      if(/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url;
       return "";
     }
 
@@ -8060,7 +8169,8 @@
 
     function setQuickPhotoPreviewElement(el, photo, kind){
       if(!el) return;
-      const url = getSafePhotoPreviewUrl(photo);
+      let url = resolvePhotoUrl(photo);
+      if(!url) url = getLocalPhotoPreviewDataUrl(photo);
       el.innerHTML = "";
       const alt = `${photoKindLabel(kind)}写真`;
       el.classList.toggle("is-empty", !url);
@@ -8080,7 +8190,7 @@
         }, { once: true });
         el.appendChild(img);
       }else{
-        if(hasPhotoData(photo)){
+        if(hasPhotoData(photo) && !getLocalPhotoPreviewDataUrl(photo)){
           console.warn("[photo] failed to resolve url", photo);
           el.textContent = "写真を読み込めません";
         }else{
@@ -10606,7 +10716,7 @@
         const raw = String(photo).trim();
         if(/^data:image\//i.test(raw)) return raw;
       }
-      if(hasPhotoData(photo)){
+      if(hasPhotoData(photo) && !getLocalPhotoPreviewDataUrl(photo)){
         console.warn("[photo] failed to resolve url", photo);
       }
       return "";
