@@ -2765,11 +2765,21 @@
       return payload;
     }
 
-    async function saveSingleTextNoteToCloud(note, context = {}){
-      if(!shouldSaveTextNote(note)){
+    async function saveSingleTextNoteToCloud(note, context = {}, options = {}){
+      const noteKey = getTextNoteKey(note);
+      let storeNote = findTextNoteByKey(noteKey) || note;
+      if(!storeNote){
+        console.warn("[text note save] note not found in store", { noteKey });
+        return;
+      }
+      if(options.contentOverride != null){
+        setTextNoteContent(storeNote, options.contentOverride);
+      }
+      storeNote = findTextNoteByKey(noteKey) || storeNote;
+      if(!shouldSaveTextNote(storeNote)){
         console.warn("[text note save] skipped", {
-          key: getTextNoteKey(note),
-          status: note?.status,
+          key: getTextNoteKey(storeNote),
+          status: storeNote?.status,
         });
         return;
       }
@@ -2780,11 +2790,11 @@
         inspectionId = await ensureCurrentInspection();
       }
       const saveCtx = {
-        ...findTextNoteSaveContext(note),
+        ...findTextNoteSaveContext(storeNote),
         ...context,
         inspectionId,
       };
-      const payload = buildTextNotePayload(note, saveCtx);
+      const payload = buildTextNotePayload(storeNote, saveCtx);
       console.log("[text note payload]", payload);
       const { data, error } = await sb.from("drawing_text_notes")
         .upsert(payload, { onConflict: "local_text_id" })
@@ -9078,6 +9088,17 @@
       return note.local_text_id;
     }
 
+    function getTextNoteEditorTextarea(){
+      return (
+        $("textNoteEditorContent") ||
+        document.querySelector("#textNoteContentInput") ||
+        document.querySelector("#textNoteTextarea") ||
+        document.querySelector(".text-note-edit-modal textarea") ||
+        document.querySelector(".text-note-modal textarea") ||
+        document.querySelector("textarea[name='textNoteContent']")
+      );
+    }
+
     function getTextNoteContent(note){
       return String(
         note?.content ??
@@ -9199,24 +9220,22 @@
               id: n.id,
               local_text_id: n.local_text_id,
               localTextId: n.localTextId,
+              content: n.content,
+              text_content: n.text_content,
               status: n.status,
             }))
           ),
         });
         return;
       }
-      const textarea =
-        document.querySelector("#textNoteContentInput") ||
-        document.querySelector("#textNoteEditorContent") ||
-        document.querySelector("#textNoteTextarea") ||
-        document.querySelector(".text-note-edit-modal textarea") ||
-        document.querySelector("textarea[name='textNoteContent']");
+      const textarea = getTextNoteEditorTextarea();
       if(!textarea){
         console.warn("[text note modal save] textarea not found");
         return;
       }
+      const value = textarea.value || "";
       pushUndoSnapshot("テキスト編集");
-      setTextNoteContent(note, textarea.value || "");
+      setTextNoteContent(note, value);
       const noteType = $("textNoteEditorType")?.value || "memo";
       const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
       const isBold = !!$("textNoteEditorBold")?.checked;
@@ -9224,17 +9243,23 @@
       note.font_size = clamp(Number.isFinite(fontSize) ? fontSize : 14, 10, 32);
       note.is_bold = isBold;
       note.font_weight = isBold ? "bold" : "normal";
-      note.status = note.status === "deleted" || note.status === "trash"
-        ? "active"
-        : (note.status || "active");
+      note.status = "active";
+      note.updated_at = new Date().toISOString();
       ensureTextNoteLocalId(note);
+      console.log("[text note modal save]", {
+        editingTextNoteKey,
+        noteId: note.id,
+        local_text_id: note.local_text_id,
+        textareaValue: value,
+        contentAfterSet: getTextNoteContent(note),
+      });
       saveStore();
       dirty = true;
       updateSaveStatus("dirty");
       redrawOverlay();
       redrawList();
       redrawTextNotes();
-      saveSingleTextNoteToCloud(note).catch(error=>{
+      saveSingleTextNoteToCloud(note, {}, { contentOverride: value }).catch(error=>{
         console.error("[text note modal save] cloud save failed", error);
       });
       closeTextNoteEditModal();
@@ -9254,10 +9279,13 @@
         isNew,
       };
       textNoteEditorOutsideCloseGuardUntil = Date.now() + 450;
-      const contentEl = $("textNoteEditorContent");
-      contentEl.value = getTextNoteContent(note);
-      contentEl.disabled = false;
-      contentEl.readOnly = false;
+      const textarea = getTextNoteEditorTextarea();
+      const currentValue = getTextNoteContent(note);
+      if(textarea){
+        textarea.value = currentValue;
+        textarea.disabled = false;
+        textarea.readOnly = false;
+      }
       $("textNoteEditorType").value = note.note_type || "memo";
       $("textNoteEditorFontSize").value = String(note.font_size || 14);
       $("textNoteEditorBold").checked = !!(note.is_bold || note.font_weight === "bold");
@@ -9268,12 +9296,11 @@
         console.log("[text note] edit modal opened", note.local_text_id);
       }
       setTimeout(()=>{
-        const textarea = $("textNoteEditorContent")
-          || document.querySelector("#textNoteTextarea, .text-note-textarea, textarea[name='textNoteContent']");
-        if(textarea){
-          textarea.disabled = false;
-          textarea.readOnly = false;
-          if(typeof textarea.focus === "function") textarea.focus();
+        const focusTextarea = getTextNoteEditorTextarea();
+        if(focusTextarea){
+          focusTextarea.disabled = false;
+          focusTextarea.readOnly = false;
+          if(typeof focusTextarea.focus === "function") focusTextarea.focus();
         }
       }, 0);
     }
@@ -10620,9 +10647,19 @@
         textNoteEditorOutsideCloseGuardUntil = Date.now() + 450;
       }
     };
+    const textNoteEditorTextarea = getTextNoteEditorTextarea();
+    if(textNoteEditor){
+      textNoteEditor.addEventListener("pointerdown", stopTextNoteEditorPropagation);
+      textNoteEditor.addEventListener("click", stopTextNoteEditorPropagation);
+    }
+    if(textNoteEditorTextarea){
+      textNoteEditorTextarea.addEventListener("pointerdown", stopTextNoteEditorPropagation);
+      textNoteEditorTextarea.addEventListener("click", stopTextNoteEditorPropagation);
+      textNoteEditorTextarea.addEventListener("input", stopTextNoteEditorPropagation);
+    }
     ["pointerdown", "click", "dblclick", "mousedown", "touchstart", "input"].forEach(type=>{
       textNoteEditor.addEventListener(type, stopTextNoteEditorPropagation, true);
-      $("textNoteEditorContent").addEventListener(type, stopTextNoteEditorPropagation, true);
+      if(textNoteEditorTextarea) textNoteEditorTextarea.addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorSave").addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorCancel").addEventListener(type, stopTextNoteEditorPropagation, true);
       $("textNoteEditorDelete").addEventListener(type, stopTextNoteEditorPropagation, true);
@@ -10631,6 +10668,8 @@
       $("textNoteEditorBold").addEventListener(type, stopTextNoteEditorPropagation, true);
     });
     $("textNoteEditorSave").addEventListener("click", (event)=>{
+      event.preventDefault();
+      event.stopPropagation();
       saveTextNoteFromModal(event);
     });
     $("textNoteEditorCancel").addEventListener("click", (event)=>{
