@@ -221,6 +221,9 @@
     .vendor-row{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
     .vendor-row:last-child{border-bottom:none}
     .vendor-row.sel{border-left:4px solid #2563eb;background:#eff6ff}
+    .vendor-row.inline-marker-card{cursor:pointer;transition:background-color 0.15s ease,box-shadow 0.15s ease}
+    .vendor-row.inline-marker-card:hover:not(.sel){background:#f8fafc;box-shadow:inset 4px 0 0 #2563eb}
+    .vendor-row.inline-marker-card.sel:hover{background:#eff6ff}
     .vendor-row-main{flex:1;min-width:0}
     .vendor-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
     .vendor-photo-thumbs{display:flex;gap:12px;margin-top:10px;flex-wrap:wrap}
@@ -5494,7 +5497,9 @@
         const markerStatus = normalizeMarkerStatus(marker);
         const isSelected = String(selectedId || "") === String(marker.id || "");
         const displayNo = getMarkerDisplayNo(marker, idx);
-        row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "") + (isSelected ? " sel" : "");
+        row.className = "vendor-row inline-marker-card" + (markerStatus === "completed" ? " completed" : "") + (isSelected ? " sel" : "");
+        row.dataset.markerId = String(marker.id || "");
+        row.dataset.markerKey = markerKey;
         const statusText = getMarkerStatusLabel(markerStatus);
         const vendorName = getVendorDisplayName(marker) || marker.vendor_name || marker.vendor || "業者未定";
         const memoText = (marker.memo || "").trim() || "なし";
@@ -12452,11 +12457,15 @@
     $("vendorWorkList").addEventListener("click", async (e)=>{
       const photoBtn = e.target.closest('[data-act="open-photo-preview"]');
       if(photoBtn){
+        e.preventDefault();
+        e.stopPropagation();
         openPhotoPreview(photoBtn.dataset.photoUrl || "", photoBtn.dataset.photoLabel || "写真");
         return;
       }
       const completedBtn = e.target.closest('button[data-act="mark-completed"]');
       if(completedBtn){
+        e.preventDefault();
+        e.stopPropagation();
         const markerId = completedBtn.dataset.markerId || "";
         const all = getCurrentFloorMarkerEntries().flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
         const marker = all.find(m=>String(m.id) === String(markerId));
@@ -12472,6 +12481,8 @@
       }
       const openBtn = e.target.closest('button[data-act="mark-open"]');
       if(openBtn){
+        e.preventDefault();
+        e.stopPropagation();
         const markerId = openBtn.dataset.markerId || "";
         const all = getCurrentFloorMarkerEntries().flatMap(([, arr])=>Array.isArray(arr) ? arr : []);
         const marker = all.find(m=>String(m.id) === String(markerId));
@@ -12487,6 +12498,8 @@
       }
       const deleteBtn = e.target.closest('button[data-act="delete-marker"]');
       if(deleteBtn){
+        e.preventDefault();
+        e.stopPropagation();
         const markerId = deleteBtn.dataset.markerId || "";
         const ok = confirm("この指摘を削除しますか？");
         if(!ok) return;
@@ -12499,12 +12512,22 @@
       }
       const editBtn = e.target.closest('button[data-act="edit-marker"]');
       if(editBtn){
+        e.preventDefault();
+        e.stopPropagation();
         await focusMarkerFromInlineList(editBtn.dataset.markerId || "", editBtn.dataset.markerKey || "", { openEditor: true });
         return;
       }
       const gotoBtn = e.target.closest('button[data-act="goto-marker"]');
-      if(!gotoBtn) return;
-      await focusMarkerFromInlineList(gotoBtn.dataset.markerId || "", gotoBtn.dataset.markerKey || "");
+      if(gotoBtn){
+        e.preventDefault();
+        e.stopPropagation();
+        await focusMarkerFromInlineList(gotoBtn.dataset.markerId || "", gotoBtn.dataset.markerKey || "");
+        return;
+      }
+      const row = e.target.closest(".vendor-row[data-marker-id]");
+      if(row && !e.target.closest("button") && !e.target.closest('[data-act="open-photo-preview"]')){
+        await focusMarkerFromInlineList(row.dataset.markerId || "", row.dataset.markerKey || "", { openEditor: true });
+      }
     });
     $("btnToggleIssuePanel").addEventListener("click", ()=>{
       scrollToInlineVendorSection();
