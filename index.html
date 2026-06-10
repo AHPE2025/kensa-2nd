@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>建物検査システム</title>
+  <link rel="icon" href="data:,">
   <style>
     :root{
       --bg:#f3f4f6; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
@@ -1707,6 +1708,9 @@
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
     const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
     const AUTO_SAVE_DELAY_MS = 1500;
+    const DEBUG_MARKERS = false;
+    const DEBUG_FULLSCREEN = false;
+    const DEBUG_PHOTOS = false;
     let dirty = false;
     let autoSaveTimer = null;
     let autoSaveInFlight = false;
@@ -2958,22 +2962,32 @@
     }
 
     async function loadMarkerPhotosFromCloud(markerRows){
-      if(!currentInspectionId || !currentFloorId) return [];
+      if(!currentFloorId){
+        console.warn("[photos restore] skipped: currentFloorId is empty");
+        return [];
+      }
       const markerList = Array.isArray(markerRows) ? markerRows : [];
       const sb = getSupabase();
-      let query = sb.from("marker_photos")
-        .select("id,marker_id,local_marker_id,floor_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,signed_url,file_name,mime_type,file_size,caption,display_order,status,created_at,updated_at")
-        .eq("inspection_id", currentInspectionId)
+      const { data, error } = await sb
+        .from("marker_photos")
+        .select("*")
         .eq("floor_id", currentFloorId)
-        .neq("status", "deleted")
-        .neq("status", "trash")
         .order("updated_at", { ascending: false });
-      const { data, error } = await query;
       if(error){
-        toast("【エラー】写真のクラウド読み込みに失敗しました。");
-        throw error;
+        console.error("[photos restore] failed", {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          currentFloorId,
+          currentDrawingId
+        });
+        showCloudError("写真情報の復元", error);
+        return [];
       }
-      const rows = Array.isArray(data) ? data : [];
+      const rows = (data || []).filter((p) => {
+        return !["trash", "deleted"].includes(String(p.status || "active"));
+      });
       const preferredDrawingIds = new Set(
         markerList.map(marker=>String(marker?.drawing_id || marker?.marker_data?.drawing_id || marker?.marker_data?.drawingId || "")).filter(Boolean)
       );
@@ -3007,7 +3021,9 @@
         }
         hydrated.push(next);
       }
-      console.log("[photos] loaded", hydrated.length);
+      if(DEBUG_PHOTOS){
+        console.log("[photos] loaded", hydrated.length);
+      }
       return hydrated;
     }
 
@@ -3093,8 +3109,10 @@
           failedPhotos.push(row);
         }
       });
-      console.log("[photos] attached to markers", attachedCount);
-      console.log("[photos] failed to attach", failedPhotos);
+      if(DEBUG_PHOTOS){
+        console.log("[photos] attached to markers", attachedCount);
+        console.log("[photos] failed to attach", failedPhotos);
+      }
       return { attachedCount, failedPhotos };
     }
 
@@ -3187,7 +3205,7 @@
           if(typeof renderInlineVendorList === "function") renderInlineVendorList();
           if(typeof renderFloorSummary === "function") renderFloorSummary();
         }catch(e){
-          showCloudError("写真情報の復元", e);
+          console.error("[photos restore] unexpected error", e);
         }
 
         if(drawingRow?.id){
@@ -6819,9 +6837,6 @@
       );
     }
 
-    const DEBUG_PHOTOS = false;
-    const DEBUG_MARKERS = false;
-
     function hasRealPhotoData(photo){
       if(!photo) return false;
 
@@ -7105,10 +7120,12 @@
           fixedCount += 1;
         });
       });
-      console.log("[markers] display numbers checked", {
-        markerCount,
-        fixedCount
-      });
+      if(DEBUG_MARKERS){
+        console.log("[markers] display numbers checked", {
+          markerCount,
+          fixedCount
+        });
+      }
       return { markerCount, fixedCount };
     }
 
@@ -7651,25 +7668,27 @@
         sc: fit.scale,
         rot: normalizeQuarterTurn(rotation),
       };
-      console.debug("[pdf fit]", {
-        rotation,
-        containerWidth,
-        containerHeight,
-        imgWidth,
-        imgHeight,
-        fit,
-      });
-      console.log("[fullscreen/pdf fit]", {
-        containerWidth,
-        containerHeight,
-        imgWidth,
-        imgHeight,
-        rotation,
-        displayWidth: fit.displayWidth,
-        displayHeight: fit.displayHeight,
-        visualWidth: fit.visualWidth,
-        visualHeight: fit.visualHeight
-      });
+      if(DEBUG_FULLSCREEN){
+        console.debug("[pdf fit]", {
+          rotation,
+          containerWidth,
+          containerHeight,
+          imgWidth,
+          imgHeight,
+          fit,
+        });
+        console.log("[fullscreen/pdf fit]", {
+          containerWidth,
+          containerHeight,
+          imgWidth,
+          imgHeight,
+          rotation,
+          displayWidth: fit.displayWidth,
+          displayHeight: fit.displayHeight,
+          visualWidth: fit.visualWidth,
+          visualHeight: fit.visualHeight
+        });
+      }
       if(!options.skipRedraw){
         redrawBackground();
         redrawOverlay();
