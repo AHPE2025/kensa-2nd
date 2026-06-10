@@ -35,7 +35,7 @@
     .hint{font-size:12px;color:var(--muted);line-height:1.5}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .divider{height:1px;background:var(--line);margin:12px 0}
-    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:visible;aspect-ratio:16/9;z-index:0;}
+    .stageWrap{position:relative;width:100%;background:#fff;border-radius:14px;border:1px dashed #d1d5db;overflow:visible;aspect-ratio:16/9;z-index:0;min-height:calc(100vh - 220px);}
     .stage-rotate-layer{
       position:absolute;
       inset:0;
@@ -329,7 +329,7 @@
     #floorInspectionView .cloud-panel{display:none !important}
     .floor-cloud-admin-hidden{display:none}
     #floorInspectionView .main-col > .card{margin-bottom:0}
-    #floorInspectionView #stageWrap{aspect-ratio:4 / 3}
+    #floorInspectionView #stageWrap{aspect-ratio:4 / 3;min-height:calc(100vh - 220px)}
     .issue-panel{
       position:fixed;
       top:0;
@@ -528,6 +528,7 @@
     #stageWrap{
       position:relative;
       overflow:visible;
+      min-height:calc(100vh - 220px);
     }
     #bg,
     #bg canvas,
@@ -2285,7 +2286,7 @@
         silent: true,
         rethrowOnError: true,
       });
-      redrawBackground();
+      fitPdfToStage();
       removeMarkerForceLayer();
       redrawOverlay();
       redrawList();
@@ -6309,18 +6310,13 @@
       rotationByKey[key] = normalizeQuarterTurn(rotation);
     }
     function getNormalRotationVisualScale(rotation = normalRotation){
-      const rot = normalizeQuarterTurn(rotation);
-      if(rot !== 90 && rot !== 270) return 1;
-      if(!Number(stageW) || !Number(stageH)) return 1;
-      const scale = Math.min(stageW / stageH, stageH / stageW);
-      return Number.isFinite(scale) && scale > 0 ? scale : 1;
+      return 1;
     }
     function applyNormalRotationToStage(rotation = normalRotation){
       if(!stageRotateLayer) return;
       const rot = normalizeQuarterTurn(rotation);
-      const scale = getNormalRotationVisualScale(rot);
       stageRotateLayer.style.transformOrigin = "center center";
-      stageRotateLayer.style.transform = `rotate(${rot}deg) scale(${scale})`;
+      stageRotateLayer.style.transform = "none";
       stageRotateLayer.dataset.rotation = String(rot);
     }
     function syncRotationForActiveKey(){
@@ -6336,10 +6332,18 @@
       normalRotation = next;
       setRotationForKey(key, next);
       applyNormalRotationToStage(next);
+      if(typeof fitPdfToStage === "function"){
+        fitPdfToStage();
+      }else if(typeof redrawBackground === "function"){
+        redrawBackground();
+      }
       if(typeof redrawOverlay === "function") redrawOverlay();
       if(typeof redrawList === "function") redrawList();
       if(typeof redrawTextNotes === "function") redrawTextNotes();
       saveStore();
+      autoSaveToCloud("rotation autosave").catch(error=>{
+        console.warn("[rotation autosave] failed", error);
+      });
     }
     function markers(){
       const key = activeKey();
@@ -6556,7 +6560,19 @@
       redrawBackground();
       redrawOverlay();
     }
-    window.addEventListener("resize", resizeStage);
+    function debounce(fn, wait = 150){
+      let timer = null;
+      return (...args)=>{
+        if(timer) clearTimeout(timer);
+        timer = setTimeout(()=>fn(...args), wait);
+      };
+    }
+    const onWindowResizeFit = debounce(()=>{
+      resizeStage();
+      fitPdfToStage({ skipRedraw: true });
+      redrawOverlay();
+    }, 150);
+    window.addEventListener("resize", onWindowResizeFit);
 
     function clearBackground(){
       // PDFなし時はデフォルトのアスペクト比に戻す
@@ -6580,15 +6596,81 @@
     // 通常モードの画像回転（0/90/180/270）
     let normalRotation = 0;
 
+    function calculatePdfFitSize(imgWidth, imgHeight, containerWidth, containerHeight, rotation){
+      const safeImgWidth = Math.max(1, Number(imgWidth) || 1);
+      const safeImgHeight = Math.max(1, Number(imgHeight) || 1);
+      const safeContainerWidth = Math.max(1, Number(containerWidth) || 1);
+      const safeContainerHeight = Math.max(1, Number(containerHeight) || 1);
+      const normalizedRotation = normalizeQuarterTurn(rotation);
+      const isQuarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
+      const visualWidth = isQuarterTurn ? safeImgHeight : safeImgWidth;
+      const visualHeight = isQuarterTurn ? safeImgWidth : safeImgHeight;
+      const scale = Math.min(
+        safeContainerWidth / visualWidth,
+        safeContainerHeight / visualHeight
+      );
+      const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+      return {
+        scale: safeScale,
+        displayWidth: safeImgWidth * safeScale,
+        displayHeight: safeImgHeight * safeScale,
+        visualWidth: visualWidth * safeScale,
+        visualHeight: visualHeight * safeScale,
+        isQuarterTurn,
+      };
+    }
+
+    function fitPdfToStage(options = {}){
+      if(!stageWrap) return null;
+      stageWrap.style.minHeight = "calc(100vh - 220px)";
+      const bg = store?.activeBg || { kind: "none" };
+      const container = document.getElementById("stageWrap") || document.getElementById("drawingArea") || stageWrap;
+      const rect = container.getBoundingClientRect();
+      const containerWidth = Math.max(1, Number(rect.width) || Number(stageW) || 1);
+      const containerHeight = Math.max(
+        1,
+        Number(rect.height) || Number(stageH) || 1,
+        window.innerHeight - 240
+      );
+      if(bg.kind !== "pdf"){
+        if(!options.skipRedraw){
+          redrawBackground();
+          redrawOverlay();
+        }
+        return null;
+      }
+      const imgWidth = Number(lastLoadedBgImage?.naturalWidth || lastLoadedBgImage?.width || imgRect?.iw || store.activeBgWidth || 1);
+      const imgHeight = Number(lastLoadedBgImage?.naturalHeight || lastLoadedBgImage?.height || imgRect?.ih || store.activeBgHeight || 1);
+      const rotation = isFullscreen ? 0 : getRotationForKey(activeKey());
+      const fit = calculatePdfFitSize(imgWidth, imgHeight, containerWidth, containerHeight, rotation);
+      imgRect = {
+        iw: imgWidth,
+        ih: imgHeight,
+        sc: fit.scale,
+        rot: normalizeQuarterTurn(rotation),
+      };
+      console.debug("[pdf fit]", {
+        rotation,
+        containerWidth,
+        containerHeight,
+        imgWidth,
+        imgHeight,
+        fit,
+      });
+      if(!options.skipRedraw){
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+      }
+      return fit;
+    }
+
     function drawImageFit(img){
-      // 回転はCSS transformで扱うため、canvas描画自体は常に非回転
-      const rot = 0;
+      const rot = isFullscreen ? 0 : normalizeQuarterTurn(normalRotation);
       const iw = img.width, ih = img.height;
       const cw = stageW, ch = stageH;
-
-      // 回転後にcanvasにフィットするスケールを計算
-      const swapped = (rot === 90 || rot === 270);
-      const sc = Math.min(cw / (swapped ? ih : iw), ch / (swapped ? iw : ih));
+      const fit = calculatePdfFitSize(iw, ih, cw, ch, rot);
+      const sc = fit.scale;
 
       // imgRect に元画像サイズ・スケール・回転を保存
       imgRect = { iw, ih, sc, rot };
@@ -6602,7 +6684,7 @@
       ctx.imageSmoothingQuality = "high";
 
       if(rot === 0){
-        const dw = iw*sc, dh = ih*sc;
+        const dw = fit.displayWidth, dh = fit.displayHeight;
         ctx.drawImage(img, 0,0, iw,ih, (cw-dw)/2,(ch-dh)/2, dw,dh);
       } else {
         ctx.save();
@@ -7970,10 +8052,8 @@
 
     // -------------------- Interactions --------------------
     function svgPointFromEvent(e){
-      // フルスクリーン/通常ともにCSS回転を逆変換して論理座標へ戻す
-      const rot = isFullscreen
-        ? normalizeQuarterTurn(fsRotation)
-        : normalizeQuarterTurn(normalRotation);
+      // 通常モードはcanvas側で回転済み。フルスクリーンのみCSS回転を逆変換する。
+      const rot = isFullscreen ? normalizeQuarterTurn(fsRotation) : 0;
 
       if(rot === 0){
         const rect = overlay.getBoundingClientRect();
@@ -9794,7 +9874,7 @@
         store.activeBg.pageCount = pageCount;
         store.activeBg.pageCache[`${cacheIdentity}:${page}`] = dataURL;
         saveStore();
-        redrawBackground();
+        fitPdfToStage();
         updatePageInfo();
         if(!opts.silent){
           toast("PDF読み込み完了。図面をクリックしてマーカーを追加できます。");
@@ -10648,7 +10728,7 @@
       saveStore();
 
       await ensurePageRendered(p);
-      redrawBackground();
+      fitPdfToStage();
 
       selectedId = null;
       selectedTextNoteId = null;
@@ -11027,7 +11107,7 @@
         bgCanvas.width  = stageW;
         bgCanvas.height = stageH;
         overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
-        redrawBackground();
+        fitPdfToStage();
         redrawOverlay();
         // 回転後もパネルは中央下に戻す
         panelPos = null;
@@ -11099,6 +11179,7 @@
       applyFullscreenClass(true);
       setTimeout(()=>{
         resizeStage();
+        fitPdfToStage({ skipRedraw: true });
         setPanelDefault();
       }, 200);
     }
@@ -11119,7 +11200,10 @@
       _panel.style.transform = "";
       panelPos = null;
       applyFullscreenClass(false);
-      setTimeout(resizeStage, 50);
+      setTimeout(()=>{
+        resizeStage();
+        fitPdfToStage({ skipRedraw: true });
+      }, 50);
     }
 
     function enterPseudoFullscreen() {
@@ -11273,8 +11357,12 @@
       applyRotationClass();
       setRotationForKey(activeKey(), fsRotation);
       saveStore();
+      fitPdfToStage({ skipRedraw: true });
       redrawOverlay();
       redrawList();
+      autoSaveToCloud("rotation autosave").catch(error=>{
+        console.warn("[rotation autosave] failed", error);
+      });
       markDirty("drawing rotated");
     });
     $("fsBtnRotR").addEventListener("click", ()=>{
@@ -11282,8 +11370,12 @@
       applyRotationClass();
       setRotationForKey(activeKey(), fsRotation);
       saveStore();
+      fitPdfToStage({ skipRedraw: true });
       redrawOverlay();
       redrawList();
+      autoSaveToCloud("rotation autosave").catch(error=>{
+        console.warn("[rotation autosave] failed", error);
+      });
       markDirty("drawing rotated");
     });
 
