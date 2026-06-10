@@ -2701,7 +2701,7 @@
           ensureTextNoteLocalId(note);
           noteRaw.local_text_id = note.local_text_id;
           noteRaw.localTextId = note.localTextId;
-          const localTextId = note.local_text_id;
+          const localTextId = note.local_text_id || note.localTextId;
           const content = getTextNoteContent(note);
           const normalizedContent = String(content) === "メモ未入力" ? "" : String(content ?? "");
           const payload = {
@@ -2712,21 +2712,22 @@
             drawing_id: drawing_id || null,
             page_number: page_number > 0 ? page_number : 1,
             content: normalizedContent,
-            x: Number(note.x),
-            y: Number(note.y),
+            x: Number(note.x ?? 0),
+            y: Number(note.y ?? 0),
             width: Number(note.width),
             height: Number(note.height),
             font_size: Number(note.font_size || note.fontSize || 14),
             is_bold: !!(note.is_bold || note.isBold || note.font_weight === "bold"),
             note_type: note.note_type || note.noteType || "memo",
-            rotation: 0,
+            rotation: note.rotation || 0,
             display_order: Number.isFinite(Number(note.display_order ?? note.displayOrder)) ? Number(note.display_order ?? note.displayOrder) : idx,
             status: note.status === "deleted" ? "deleted" : "active",
             updated_at: new Date().toISOString(),
           };
-          if(note.id && /^[0-9a-f-]{36}$/i.test(String(note.id))){
+          if(isUuid(note.id)){
             payload.id = note.id;
           }
+          console.log("[text note payload]", payload);
           rows.push(payload);
         });
       }
@@ -2737,37 +2738,40 @@
       const sb = getSupabase();
       const rows = buildTextNoteRowsForCloud(inspectionId);
       if(rows.length === 0) return { textNoteCount: 0 };
-      const { data, error } = await sb.from("drawing_text_notes")
-        .upsert(rows, { onConflict: "local_text_id" })
-        .select("id, local_text_id");
-      if(error){
-        console.error("[text note save] failed", {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-        });
-        throw error;
-      }
-      (data || []).forEach(row=>{
-        if(!row?.local_text_id) return;
-        const note = findTextNoteByKey(row.local_text_id);
-        if(note){
-          note.id = row.id;
-          note.local_text_id = row.local_text_id;
-          note.localTextId = row.local_text_id;
+      let savedCount = 0;
+      for(const rowPayload of rows){
+        const payload = { ...rowPayload };
+        if(!isUuid(payload.id)){
+          delete payload.id;
         }
-      });
-      if(DEBUG_TEXT_NOTES){
-        console.log("[text note save] success", {
-          count: (data || []).length,
-          samples: (data || []).slice(0, 3).map(r=>({
-            id: r?.id,
-            local_text_id: r?.local_text_id,
-          })),
-        });
+        const { data, error } = await sb.from("drawing_text_notes")
+          .upsert(payload, { onConflict: "local_text_id" })
+          .select("id, local_text_id")
+          .single();
+        if(error){
+          console.error("[text note save] failed", {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            payload,
+          });
+          throw error;
+        }
+        if(data){
+          const savedNote = findTextNoteByKey(data.local_text_id);
+          if(savedNote){
+            savedNote.id = data.id;
+            savedNote.local_text_id = data.local_text_id;
+            savedNote.localTextId = data.local_text_id;
+          }
+        }
+        savedCount += 1;
       }
-      return { textNoteCount: rows.length };
+      if(DEBUG_TEXT_NOTES){
+        console.log("[text note save] success", { count: savedCount });
+      }
+      return { textNoteCount: savedCount };
     }
 
     async function loadTextNotesFromCloud(inspectionId, floorId, drawingId = null){
@@ -8414,8 +8418,7 @@
       const rawContent = getTextNoteContent(src);
       const content = String(rawContent) === "メモ未入力" ? "" : String(rawContent);
       const isBold = !!(src.is_bold || src.isBold || String(src.font_weight || src.fontWeight || "normal") === "bold");
-      return {
-        id: src.id || null,
+      const normalized = {
         local_text_id: localTextId,
         localTextId: localTextId,
         x: clamp(Number.isFinite(Number(src.x)) ? Number(src.x) : 0.5, 0, 1),
@@ -8438,6 +8441,10 @@
         created_at: createdAt,
         updated_at: updatedAt,
       };
+      if(isUuid(src.id)){
+        normalized.id = src.id;
+      }
+      return normalized;
     }
 
     function normalizeTextNotesByKey(mbk){
@@ -8974,6 +8981,11 @@
         ? keyOrNote
         : getTextNoteKey(keyOrNote);
       return getTextNoteKey(note) === key;
+    }
+
+    function isUuid(value){
+      return typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
     }
 
     function ensureTextNoteLocalId(note){
