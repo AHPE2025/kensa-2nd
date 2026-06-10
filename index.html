@@ -622,6 +622,46 @@
       writing-mode:horizontal-tb !important;
       text-orientation:mixed !important;
     }
+    .marker-bubble-content{
+      box-sizing:border-box;
+      width:100%;
+      height:100%;
+      display:flex;
+      flex-direction:column;
+      justify-content:flex-start;
+      align-items:stretch;
+      overflow:hidden;
+      white-space:normal;
+      word-break:keep-all;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic",Meiryo,sans-serif;
+    }
+    .bubble-title{
+      display:flex;
+      flex-wrap:wrap;
+      align-items:baseline;
+      gap:0.25em 0.45em;
+      line-height:1.25;
+    }
+    .bubble-no,
+    .bubble-category,
+    .bubble-vendor{
+      white-space:nowrap;
+      word-break:keep-all;
+      overflow-wrap:normal;
+    }
+    .bubble-vendor{
+      max-width:100%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .bubble-meta{
+      margin-top:6px;
+      color:#64748b;
+      line-height:1.25;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
     .annotation-selected{
       outline:3px solid #2563eb;
       outline-offset:2px;
@@ -1521,12 +1561,17 @@
     const MIN_BUBBLE_OFFSET_DIST = 0.03;
     const PIN_VIS_R = 7;
     const PIN_CLEAR_MARGIN = 5;
-    const BUBBLE_DEFAULT_W = 220;
-    const BUBBLE_DEFAULT_H = 70;
-    const BUBBLE_MIN_W = 120;
-    const BUBBLE_MIN_H = 56;
-    const BUBBLE_MAX_W = 500;
-    const BUBBLE_MAX_H = 300;
+    const BUBBLE_DEFAULT_W = 200;
+    const BUBBLE_DEFAULT_H = 76;
+    const BUBBLE_MIN_W = 180;
+    const BUBBLE_MIN_H = 76;
+    const BUBBLE_MAX_W = 420;
+    const BUBBLE_MAX_H = 260;
+    const BUBBLE_PAD_X_DEFAULT = 16;
+    const BUBBLE_PAD_Y_DEFAULT = 12;
+    const BUBBLE_FONT_BASE = 16;
+    const BUBBLE_FONT_MIN = 13;
+    const BUBBLE_FONT_MAX = 24;
     const TEXT_NOTE_DEFAULT_W_PX = 260;
     const TEXT_NOTE_DEFAULT_H_PX = 90;
     const TEXT_NOTE_MIN_W = 120;
@@ -1956,6 +2001,8 @@
           bubbleMoved: !!m.bubbleMoved,
           bubbleWidth: getMarkerBubbleSize(m).width,
           bubbleHeight: getMarkerBubbleSize(m).height,
+          bubbleManualSize: isMarkerBubbleManualSize(m),
+          bubbleFontSize: getMarkerBubbleFontSize(m),
           cloud_marker_id: m.cloud_marker_id || null,
           supabase_marker_id: m.supabase_marker_id || m.cloud_marker_id || null,
           beforePhoto: clonePhotoInfo(m.beforePhoto),
@@ -2212,6 +2259,8 @@
               is_vendor_unassigned: !!m.is_vendor_unassigned,
               bubbleWidth: getMarkerBubbleSize(m).width,
               bubbleHeight: getMarkerBubbleSize(m).height,
+              bubbleManualSize: isMarkerBubbleManualSize(m),
+              bubbleFontSize: getMarkerBubbleFontSize(m),
               cloud_marker_id: m.cloud_marker_id || null,
               beforePhoto: clonePhotoInfo(m.beforePhoto),
               afterPhoto: clonePhotoInfo(m.afterPhoto),
@@ -2272,6 +2321,8 @@
             bubbleMoved: !!row.bubble_moved,
             bubbleWidth: clamp(Number(row.bubble_width || md.bubbleWidth || BUBBLE_DEFAULT_W), BUBBLE_MIN_W, BUBBLE_MAX_W),
             bubbleHeight: clamp(Number(row.bubble_height || md.bubbleHeight || BUBBLE_DEFAULT_H), BUBBLE_MIN_H, BUBBLE_MAX_H),
+            bubbleManualSize: !!(row.bubble_manual_size || md.bubbleManualSize),
+            bubbleFontSize: clamp(Number(md.bubbleFontSize || BUBBLE_FONT_BASE), BUBBLE_FONT_MIN, BUBBLE_FONT_MAX),
             cloud_marker_id: row.id || md.cloud_marker_id || null,
             supabase_marker_id: row.id || md.cloud_marker_id || null,
             sync_status: "synced",
@@ -7853,7 +7904,8 @@
     }
 
     function bubbleOverlapsPin(m, dx, dy){
-      const bubbleSize = getMarkerBubbleSize(m);
+      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
+      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
       const rect = getCurrentImageRect();
       if(!rect) return false;
       if(!canUseCanvasOffsetCheck()) return false;
@@ -7871,7 +7923,8 @@
     }
 
     function bubbleMostlyOnStage(m, dx, dy){
-      const bubbleSize = getMarkerBubbleSize(m);
+      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
+      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
       if(!canUseCanvasOffsetCheck()) return true;
       const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
       const margin = 8;
@@ -7883,6 +7936,108 @@
       );
     }
 
+    let bubbleMeasureCtx = null;
+    function getBubbleMeasureCtx(){
+      if(!bubbleMeasureCtx){
+        const canvas = document.createElement("canvas");
+        bubbleMeasureCtx = canvas.getContext("2d");
+      }
+      return bubbleMeasureCtx;
+    }
+
+    function measureBubbleText(text, fontSize, fontWeight = 400){
+      const ctx = getBubbleMeasureCtx();
+      const weight = Number(fontWeight) >= 700 ? "bold " : "";
+      ctx.font = `${weight}${fontSize}px system-ui,-apple-system,"Noto Sans JP",sans-serif`;
+      return ctx.measureText(String(text || "")).width;
+    }
+
+    function isMarkerBubbleManualSize(marker){
+      return !!(marker?.bubbleManualSize || marker?.marker_data?.bubbleManualSize);
+    }
+
+    function getBubbleFontSize(width, height){
+      const base = BUBBLE_FONT_BASE;
+      const scale = Math.min(1.35, Math.max(0.85, Number(width || BUBBLE_DEFAULT_W) / 240));
+      return clamp(Math.round(base * scale), BUBBLE_FONT_MIN, BUBBLE_FONT_MAX);
+    }
+
+    function getMarkerBubbleFontSize(marker, width, height){
+      const stored = Number(marker?.bubbleFontSize ?? marker?.marker_data?.bubbleFontSize);
+      const computed = getBubbleFontSize(width, height);
+      if(!Number.isFinite(stored)) return computed;
+      return clamp(Math.round(stored), BUBBLE_FONT_MIN, BUBBLE_FONT_MAX);
+    }
+
+    function getBubblePadding(fontSize){
+      return {
+        x: clamp(Math.round(fontSize * 0.9), 12, 20),
+        y: clamp(Math.round(fontSize * 0.65), 8, 16),
+      };
+    }
+
+    function formatBubbleVendorLabel(vendorName){
+      const v = String(vendorName || "").trim();
+      if(!v) return "";
+      if(v === "全業者" || v === "業者未定") return `（${v}）`;
+      return v.startsWith("（") ? v : `（${v}）`;
+    }
+
+    function getBubbleTitleParts(marker, displayNo){
+      const issueType = String(marker?.type || "種別未設定").trim() || "種別未設定";
+      const vendorName = String(getVendorDisplayName(marker) || "業者未定").trim() || "業者未定";
+      return {
+        no: `${displayNo}.`,
+        category: issueType,
+        vendor: formatBubbleVendorLabel(vendorName),
+      };
+    }
+
+    function getBubbleMetaText(marker){
+      const statusLabel = getMarkerStatusLabel(marker?.status);
+      const memo = String(marker?.memo || "").trim();
+      const photoTag = getMarkerPhotoBadgeText(marker);
+      const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
+      const memoLine = memo || "（メモなし）";
+      return `${statusLine} / ${memoLine}`;
+    }
+
+    function estimateBubbleTitleLineCount(parts, innerW, titleFontSize){
+      const gap = Math.round(titleFontSize * 0.45);
+      const noCatW = measureBubbleText(`${parts.no} ${parts.category}`, titleFontSize, 800);
+      const vendorW = measureBubbleText(parts.vendor, titleFontSize, 800);
+      if(noCatW + gap + vendorW <= innerW) return 1;
+      return 2;
+    }
+
+    function estimateBubbleNaturalWidth(marker, displayNo, fontSize){
+      const parts = getBubbleTitleParts(marker, displayNo);
+      const titleFontSize = fontSize + 1;
+      const padding = getBubblePadding(fontSize);
+      const gap = Math.round(titleFontSize * 0.45);
+      const noCatW = measureBubbleText(`${parts.no} ${parts.category}`, titleFontSize, 800);
+      const vendorW = measureBubbleText(parts.vendor, titleFontSize, 800);
+      const titleOneLineW = noCatW + gap + vendorW + padding.x * 2;
+      const titleTwoLineW = Math.max(noCatW + padding.x * 2, vendorW + padding.x * 2);
+      const metaFontSize = Math.max(12, fontSize - 3);
+      const metaW = measureBubbleText(getBubbleMetaText(marker), metaFontSize, 400) + padding.x * 2;
+      const naturalW = Math.max(titleOneLineW, titleTwoLineW, metaW, BUBBLE_MIN_W);
+      return clamp(Math.ceil(naturalW), BUBBLE_MIN_W, BUBBLE_MAX_W);
+    }
+
+    function estimateBubbleNaturalHeight(marker, displayNo, width, fontSize){
+      const padding = getBubblePadding(fontSize);
+      const parts = getBubbleTitleParts(marker, displayNo);
+      const titleFontSize = fontSize + 1;
+      const titleLineH = Math.round(titleFontSize * 1.25);
+      const innerW = Math.max(40, width - padding.x * 2);
+      const titleLines = estimateBubbleTitleLineCount(parts, innerW, titleFontSize);
+      const metaFontSize = Math.max(12, fontSize - 3);
+      const metaLineH = Math.round(metaFontSize * 1.25);
+      const naturalHeight = padding.y * 2 + titleLines * titleLineH + 6 + metaLineH;
+      return clamp(Math.ceil(naturalHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+    }
+
     function getMarkerBubbleSize(marker){
       const widthRaw = Number(marker?.bubbleWidth ?? marker?.marker_data?.bubbleWidth ?? BUBBLE_DEFAULT_W);
       const heightRaw = Number(marker?.bubbleHeight ?? marker?.marker_data?.bubbleHeight ?? BUBBLE_DEFAULT_H);
@@ -7892,7 +8047,44 @@
       };
     }
 
-    function setMarkerBubbleSize(marker, width, height){
+    function resolveMarkerBubbleDisplaySize(marker, displayNo, options = {}){
+      const stored = getMarkerBubbleSize(marker);
+      const manual = isMarkerBubbleManualSize(marker);
+      let fontSize = getBubbleFontSize(stored.width, stored.height);
+      let naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
+      fontSize = getBubbleFontSize(naturalWidth, BUBBLE_MIN_H);
+      naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
+      let naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, naturalWidth, fontSize);
+
+      let width = naturalWidth;
+      let height = naturalHeight;
+
+      if(manual){
+        width = stored.width;
+        fontSize = getMarkerBubbleFontSize(marker, width, stored.height);
+        naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, width, fontSize);
+        const hasMemo = !!String(marker?.memo || "").trim();
+        const maxExtra = hasMemo ? 80 : 32;
+        const maxHeight = naturalHeight + maxExtra;
+        if(options.skipHeightCap){
+          height = stored.height;
+        }else{
+          height = clamp(Math.min(stored.height, maxHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+        }
+      }
+
+      return {
+        width,
+        height,
+        fontSize,
+        padding: getBubblePadding(fontSize),
+        titleFontSize: fontSize + 1,
+        metaFontSize: Math.max(12, fontSize - 3),
+        manual,
+      };
+    }
+
+    function setMarkerBubbleSize(marker, width, height, options = {}){
       if(!marker || typeof marker !== "object") return;
       const next = {
         width: clamp(Number(width || BUBBLE_DEFAULT_W), BUBBLE_MIN_W, BUBBLE_MAX_W),
@@ -7900,11 +8092,146 @@
       };
       marker.bubbleWidth = next.width;
       marker.bubbleHeight = next.height;
+      const manual = options.manual !== false;
+      marker.bubbleManualSize = manual;
+      const fontSize = getBubbleFontSize(next.width, next.height);
+      marker.bubbleFontSize = fontSize;
       if(!marker.marker_data || typeof marker.marker_data !== "object"){
         marker.marker_data = {};
       }
       marker.marker_data.bubbleWidth = next.width;
       marker.marker_data.bubbleHeight = next.height;
+      marker.marker_data.bubbleManualSize = manual;
+      marker.marker_data.bubbleFontSize = fontSize;
+    }
+
+    function createBubbleHtmlElement(tag){
+      return document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+    }
+
+    function createBubbleContentNode(marker, displayNo, layout){
+      const parts = getBubbleTitleParts(marker, displayNo);
+      const metaText = getBubbleMetaText(marker);
+      const { fontSize, titleFontSize, metaFontSize, padding } = layout;
+
+      const root = createBubbleHtmlElement("div");
+      root.className = "marker-bubble-content";
+      root.style.boxSizing = "border-box";
+      root.style.width = "100%";
+      root.style.height = "100%";
+      root.style.padding = `${padding.y}px ${padding.x}px`;
+
+      const title = createBubbleHtmlElement("div");
+      title.className = "bubble-title";
+
+      const noSpan = createBubbleHtmlElement("span");
+      noSpan.className = "bubble-no";
+      noSpan.textContent = parts.no;
+      noSpan.style.fontSize = `${titleFontSize}px`;
+      noSpan.style.fontWeight = "800";
+      noSpan.style.color = "#111827";
+
+      const categorySpan = createBubbleHtmlElement("span");
+      categorySpan.className = "bubble-category";
+      categorySpan.textContent = parts.category;
+      categorySpan.style.fontSize = `${titleFontSize}px`;
+      categorySpan.style.fontWeight = "800";
+      categorySpan.style.color = "#dc2626";
+
+      const vendorSpan = createBubbleHtmlElement("span");
+      vendorSpan.className = "bubble-vendor";
+      vendorSpan.textContent = parts.vendor;
+      vendorSpan.style.fontSize = `${titleFontSize}px`;
+      vendorSpan.style.fontWeight = "800";
+      vendorSpan.style.color = "#16a34a";
+
+      title.appendChild(noSpan);
+      title.appendChild(categorySpan);
+      title.appendChild(vendorSpan);
+
+      const meta = createBubbleHtmlElement("div");
+      meta.className = "bubble-meta";
+      meta.textContent = metaText;
+      meta.style.fontSize = `${metaFontSize}px`;
+
+      root.appendChild(title);
+      root.appendChild(meta);
+      return root;
+    }
+
+    function appendBubbleForeignObject(bubbleG, marker, displayNo, bubbleW, bubbleH, layout){
+      const fo = svgEl("foreignObject", {
+        x: 0,
+        y: 0,
+        width: bubbleW,
+        height: bubbleH,
+        "data-role": "bubble",
+      });
+      fo.style.pointerEvents = "none";
+      fo.appendChild(createBubbleContentNode(marker, displayNo, layout));
+      bubbleG.appendChild(fo);
+    }
+
+    function paintMarkerBubbleOnCanvas(ctx, marker, displayNo, bx, by, bubbleW, bubbleH, layout, scale, isSel){
+      const { fontSize, titleFontSize, metaFontSize, padding } = layout;
+      const parts = getBubbleTitleParts(marker, displayNo);
+      const metaText = getBubbleMetaText(marker);
+      const padX = padding.x * scale;
+      const padY = padding.y * scale;
+      const innerX = bx + padX;
+      const innerY = by + padY;
+      const innerW = bubbleW - padX * 2;
+      const titleLineH = Math.round(titleFontSize * 1.25 * scale);
+      const metaLineH = Math.round(metaFontSize * 1.25 * scale);
+      const gap = Math.round(titleFontSize * 0.45 * scale);
+
+      const r = 14 * scale;
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.lineTo(bx + bubbleW - r, by);
+      ctx.arcTo(bx + bubbleW, by, bx + bubbleW, by + r, r);
+      ctx.lineTo(bx + bubbleW, by + bubbleH - r);
+      ctx.arcTo(bx + bubbleW, by + bubbleH, bx + bubbleW - r, by + bubbleH, r);
+      ctx.lineTo(bx + r, by + bubbleH);
+      ctx.arcTo(bx, by + bubbleH, bx, by + bubbleH - r, r);
+      ctx.lineTo(bx, by + r);
+      ctx.arcTo(bx, by, bx + r, by, r);
+      ctx.closePath();
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.strokeStyle = isSel ? "#2563eb" : "#e5e7eb";
+      ctx.lineWidth = (isSel ? 2.5 : 1.5) * scale;
+      ctx.stroke();
+
+      const noCatText = `${parts.no} ${parts.category}`;
+      ctx.font = `800 ${titleFontSize * scale}px system-ui,-apple-system,"Noto Sans JP",sans-serif`;
+      const noCatW = ctx.measureText(noCatText).width;
+      const vendorW = ctx.measureText(parts.vendor).width;
+      const titleBaseY = innerY + titleFontSize * scale * 0.9;
+      const titleLineCount = (noCatW + gap + vendorW <= innerW) ? 1 : 2;
+
+      if(titleLineCount === 1){
+        ctx.fillStyle = "#111827";
+        ctx.fillText(parts.no, innerX, titleBaseY);
+        const noW = ctx.measureText(parts.no).width;
+        ctx.fillStyle = "#dc2626";
+        ctx.fillText(` ${parts.category}`, innerX + noW, titleBaseY);
+        ctx.fillStyle = "#16a34a";
+        ctx.fillText(parts.vendor, innerX + noCatW + gap, titleBaseY, Math.max(0, innerW - noCatW - gap));
+      }else{
+        ctx.fillStyle = "#111827";
+        ctx.fillText(parts.no, innerX, titleBaseY);
+        const noW = ctx.measureText(parts.no).width;
+        ctx.fillStyle = "#dc2626";
+        ctx.fillText(` ${parts.category}`, innerX + noW, titleBaseY);
+        ctx.fillStyle = "#16a34a";
+        ctx.fillText(parts.vendor, innerX, titleBaseY + titleLineH, innerW);
+      }
+
+      const metaY = innerY + titleLineCount * titleLineH + 6 * scale + metaFontSize * scale * 0.85;
+      ctx.fillStyle = "#64748b";
+      ctx.font = `${metaFontSize * scale}px system-ui,-apple-system,"Noto Sans JP",sans-serif`;
+      ctx.fillText(metaText, innerX, metaY, innerW);
     }
 
     function getTextNoteSizePx(note){
@@ -9034,6 +9361,8 @@
         bubbleMoved: false,
         bubbleWidth: BUBBLE_DEFAULT_W,
         bubbleHeight: BUBBLE_DEFAULT_H,
+        bubbleManualSize: false,
+        bubbleFontSize: BUBBLE_FONT_BASE,
         cloud_marker_id: null,
         supabase_marker_id: null,
         sync_status: "pending",
@@ -9307,9 +9636,10 @@
       arr.forEach((m, idx)=>{
         const displayNo = getMarkerDisplayNo(m, idx);
         const isSel = m.id === selectedId;
-        const bubbleSize = getMarkerBubbleSize(m);
-        const bubbleW = bubbleSize.width;
-        const bubbleH = bubbleSize.height;
+        const resizingNow = markerBubbleResize && markerBubbleResize.id === m.id;
+        const bubbleLayout = resolveMarkerBubbleDisplaySize(m, displayNo, { skipHeightCap: resizingNow });
+        const bubbleW = bubbleLayout.width;
+        const bubbleH = bubbleLayout.height;
         const mx = clamp(Number.isFinite(Number(m.x)) ? Number(m.x) : 0.5, 0, 1);
         const my = clamp(Number.isFinite(Number(m.y)) ? Number(m.y) : 0.5, 0, 1);
         const mdx = Number.isFinite(Number(m.dx)) ? Number(m.dx) : DEFAULT_BUBBLE_DX;
@@ -9353,35 +9683,10 @@
         bubbleG.style.writingMode = "horizontal-tb";
         bubbleG.style.textOrientation = "mixed";
 
-        const bubble = svgEl("rect", { x:0,y:0,width:bubbleW,height:bubbleH, rx:12, ry:12, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
+        const bubble = svgEl("rect", { x:0,y:0,width:bubbleW,height:bubbleH, rx:14, ry:14, fill:"#ffffff", stroke: isSel? "#2563eb":"#e5e7eb", "stroke-width": isSel? 2.5:1.5 });
         bubble.setAttribute("data-role","bubble");
         bubbleG.appendChild(bubble);
-
-        const issueType = String(m?.type || "種別未設定").trim() || "種別未設定";
-        const vendorName = String(getVendorDisplayName(m) || "業者未定").trim() || "業者未定";
-        const shortIssueType = issueType.length > 10 ? issueType.slice(0, 10) + "…" : issueType;
-        const shortVendorName = vendorName.length > 8 ? vendorName.slice(0, 8) + "…" : vendorName;
-        const t1 = svgEl("text", { x:10, y:22, "font-size":"16", "font-weight":"800", "data-role":"bubble" });
-        const issueTypeTspan = svgEl("tspan", { fill:"#dc2626" });
-        issueTypeTspan.textContent = `${displayNo}. ${shortIssueType}`;
-        const vendorNameTspan = svgEl("tspan", { fill:"#16a34a" });
-        vendorNameTspan.textContent = `（${shortVendorName}）`;
-        t1.appendChild(issueTypeTspan);
-        t1.appendChild(vendorNameTspan);
-        t1.style.writingMode = "horizontal-tb";
-        t1.style.textOrientation = "mixed";
-        bubbleG.appendChild(t1);
-
-        const statusLabel = getMarkerStatusLabel(m.status);
-        const memo = (m.memo||"").trim();
-        const photoTag = getMarkerPhotoBadgeText(m);
-        const t2 = svgEl("text", { x:10, y:42, "font-size":"11", fill:"#6b7280", "data-role":"bubble" });
-        const line2 = memo ? (memo.length>16? memo.slice(0,16)+"…" : memo) : "（メモなし）";
-        const statusLine = photoTag ? `${statusLabel} / ${photoTag}` : statusLabel;
-        t2.textContent = `${statusLine} / ${line2}`;
-        t2.style.writingMode = "horizontal-tb";
-        t2.style.textOrientation = "mixed";
-        bubbleG.appendChild(t2);
+        appendBubbleForeignObject(bubbleG, m, displayNo, bubbleW, bubbleH, bubbleLayout);
 
         const deleteControl = svgEl("g", {
           "data-role":"bubble-delete",
@@ -9697,15 +10002,21 @@
               return;
             }
             if(role === "bubble-resize"){
+              const markerArr = markers();
+              const markerIdx = markerArr.findIndex(mm=>mm.id === id);
+              const resizeDisplayNo = getMarkerDisplayNo(m, markerIdx >= 0 ? markerIdx : 0);
+              const layout = resolveMarkerBubbleDisplaySize(m, resizeDisplayNo);
               const size = getMarkerBubbleSize(m);
+              const baseWidth = isMarkerBubbleManualSize(m) ? size.width : layout.width;
+              const baseHeight = isMarkerBubbleManualSize(m) ? size.height : layout.height;
               pushUndoSnapshot("吹き出しサイズ変更");
               markerBubbleResize = {
                 id,
                 pointerId: e.pointerId,
                 startX: e.clientX,
                 startY: e.clientY,
-                baseWidth: size.width,
-                baseHeight: size.height,
+                baseWidth,
+                baseHeight,
               };
               overlay.setPointerCapture(e.pointerId);
               e.preventDefault();
@@ -9744,7 +10055,7 @@
         if(!marker) return;
         const nextW = clamp(markerBubbleResize.baseWidth + (e.clientX - markerBubbleResize.startX), BUBBLE_MIN_W, BUBBLE_MAX_W);
         const nextH = clamp(markerBubbleResize.baseHeight + (e.clientY - markerBubbleResize.startY), BUBBLE_MIN_H, BUBBLE_MAX_H);
-        setMarkerBubbleSize(marker, nextW, nextH);
+        setMarkerBubbleSize(marker, nextW, nextH, { manual: true });
         saveStore();
         redrawOverlay();
         redrawList();
@@ -10209,9 +10520,9 @@
       arr.forEach((m, idx) => {
         const displayNo = getMarkerDisplayNo(m, idx);
         safeNormalizeMarkerOffset(m);
-        const bubbleSize = getMarkerBubbleSize(m);
-        const bw = bubbleSize.width * scale;
-        const bh = bubbleSize.height * scale;
+        const bubbleLayout = resolveMarkerBubbleDisplaySize(m, displayNo);
+        const bw = bubbleLayout.width * scale;
+        const bh = bubbleLayout.height * scale;
         const _a = imgRatioToCanvasPx(m.x, m.y);
         const ax = _a.x * scale, ay = _a.y * scale;
         const _b = imgRatioToCanvasPx(m.x + m.dx, m.y + m.dy);
@@ -10228,41 +10539,7 @@
         octx.lineWidth = (isSel ? 2.5 : 2) * scale;
         octx.stroke();
 
-        // 吹き出し背景（ピンより先に描画）
-        const r = 12 * scale;
-        octx.beginPath();
-        octx.moveTo(bx + r, by);
-        octx.lineTo(bx + bw - r, by);
-        octx.arcTo(bx + bw, by, bx + bw, by + r, r);
-        octx.lineTo(bx + bw, by + bh - r);
-        octx.arcTo(bx + bw, by + bh, bx + bw - r, by + bh, r);
-        octx.lineTo(bx + r, by + bh);
-        octx.arcTo(bx, by + bh, bx, by + bh - r, r);
-        octx.lineTo(bx, by + r);
-        octx.arcTo(bx, by, bx + r, by, r);
-        octx.closePath();
-        octx.fillStyle = "#ffffff";
-        octx.fill();
-        octx.strokeStyle = isSel ? "#2563eb" : "#e5e7eb";
-        octx.lineWidth = (isSel ? 2.5 : 1.5) * scale;
-        octx.stroke();
-
-        // タイトル
-        const title = `${displayNo}. ${getVendorDisplayName(m)} / ${m.type}`;
-        octx.fillStyle = "#111827";
-        octx.font = `bold ${12 * scale}px system-ui,sans-serif`;
-        octx.fillText(
-          title.length > 20 ? title.slice(0,20)+"…" : title,
-          bx + 10 * scale, by + 18 * scale
-        );
-
-        // メモ
-        const memo = (m.memo || "").trim();
-        const statusText = getMarkerStatusLabel(m.status);
-        const memoText = memo ? (memo.length > 14 ? memo.slice(0,14)+"…" : memo) : "（メモなし）";
-        octx.fillStyle = "#6b7280";
-        octx.font = `${11 * scale}px system-ui,sans-serif`;
-        octx.fillText(`${statusText} / ${memoText}`, bx + 10 * scale, by + 34 * scale);
+        paintMarkerBubbleOnCanvas(octx, m, displayNo, bx, by, bw, bh, bubbleLayout, scale, isSel);
 
         // アンカー円（吹き出しの上に描画してピンが隠れないようにする）
         octx.beginPath();
@@ -10707,17 +10984,24 @@
           issue.style.width = `${notesW - 18}px`;
           issue.style.lineHeight = "1.25";
           issue.style.wordBreak = "break-word";
+          const parts = getBubbleTitleParts(marker, number);
           const mainText = document.createElement("div");
-          mainText.textContent = getMarkerIssueTitleForPdf(marker, number);
+          mainText.textContent = `${parts.no} ${parts.category}`;
           mainText.style.color = "#dc2626";
           mainText.style.fontSize = "15px";
           mainText.style.fontWeight = "700";
+          mainText.style.whiteSpace = "nowrap";
+          mainText.style.wordBreak = "keep-all";
           const vendorText = document.createElement("div");
-          vendorText.textContent = `（${getVendorDisplayName(marker) || "業者未設定"}）`;
+          vendorText.textContent = parts.vendor;
           vendorText.style.color = "#15803d";
           vendorText.style.fontSize = "13px";
           vendorText.style.fontWeight = "700";
           vendorText.style.marginTop = "2px";
+          vendorText.style.whiteSpace = "nowrap";
+          vendorText.style.wordBreak = "keep-all";
+          vendorText.style.overflow = "hidden";
+          vendorText.style.textOverflow = "ellipsis";
           issue.appendChild(mainText);
           issue.appendChild(vendorText);
           notePane.appendChild(issue);
