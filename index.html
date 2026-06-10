@@ -2989,7 +2989,7 @@
       for(const row of rows){
         const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
         next.signed_url = sanitizeMarkerPhotoPublicUrl(next.signed_url);
-        if(!resolvePhotoUrl(next, { warn: false }) && next.storage_path){
+        if(!resolvePhotoUrl(next, { warn: false }) && hasRealPhotoData(next)){
           try{
             const bucket = getPhotoBucketName();
             const normalizedPath = normalizePhotoStoragePath(next.storage_path);
@@ -3002,7 +3002,7 @@
             }
           }catch(_){}
         }
-        if(!resolvePhotoUrl(next, { warn: false }) && next.storage_path){
+        if(!resolvePhotoUrl(next, { warn: false }) && hasRealPhotoData(next)){
           console.warn("[photo] failed to resolve url", next);
         }
         hydrated.push(next);
@@ -3069,8 +3069,8 @@
         marker.afterPhoto = afterPhoto;
         const beforeUrl = resolvePhotoUrl(beforePhoto, { warn: false });
         const afterUrl = resolvePhotoUrl(afterPhoto, { warn: false });
-        if(beforePhoto?.storage_path && !beforeUrl) console.warn("[photo] failed to resolve url", beforePhoto);
-        if(afterPhoto?.storage_path && !afterUrl) console.warn("[photo] failed to resolve url", afterPhoto);
+        if(hasRealPhotoData(beforePhoto) && !beforeUrl) console.warn("[photo] failed to resolve url", beforePhoto);
+        if(hasRealPhotoData(afterPhoto) && !afterUrl) console.warn("[photo] failed to resolve url", afterPhoto);
         marker.photos = marker.photos && typeof marker.photos === "object" ? marker.photos : {};
         marker.photos.before = beforeUrl || "";
         marker.photos.after = afterUrl || "";
@@ -5355,8 +5355,7 @@
       if(resolvedUrl){
         return `<img class="vendor-photo-thumb" src="${escapeHtml(resolvedUrl)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(resolvedUrl)}" data-photo-label="${escapeHtml(label)}" />`;
       }
-      if(hasData || photoHasStoragePath(rawPhoto)){
-        console.warn("[photo] failed to resolve url", rawPhoto);
+      if(hasRealPhotoData(rawPhoto)){
         return `<div class="vendor-photo-empty vendor-photo-error">写真を読み込めません</div>`;
       }
       return `<div class="vendor-photo-empty">写真なし</div>`;
@@ -5482,10 +5481,12 @@
         const vendorName = getVendorDisplayName(marker) || marker.vendor_name || marker.vendor || "業者未定";
         const memoText = (marker.memo || "").trim() || "なし";
         const photos = getMarkerPhotosForVendorView(marker);
-        console.log("[inline list] marker no", {
-          markerId: marker.id,
-          displayNo: getMarkerDisplayNo(marker, idx)
-        });
+        if(DEBUG_MARKERS){
+          console.log("[inline list] marker no", {
+            markerId: marker.id,
+            displayNo: getMarkerDisplayNo(marker, idx)
+          });
+        }
         row.innerHTML = `
           <div class="vendor-row-main">
             <div class="inline-vendor-row-title">
@@ -6818,7 +6819,48 @@
       );
     }
 
+    const DEBUG_PHOTOS = false;
+    const DEBUG_MARKERS = false;
+
+    function hasRealPhotoData(photo){
+      if(!photo) return false;
+
+      const values = [
+        photo.storage_path,
+        photo.storagePath,
+        photo.path,
+        photo.public_url,
+        photo.publicUrl,
+        photo.signed_url,
+        photo.signedUrl,
+        photo.url,
+        photo.previewUrl,
+        photo.local_preview_url,
+        photo.localPreviewUrl,
+        photo.preview_data_url,
+        photo.previewDataUrl
+      ];
+
+      return values.some((v)=>{
+        if(!v || typeof v !== "string") return false;
+        const s = v.trim();
+        if(!s) return false;
+        return (
+          s.startsWith("http://") ||
+          s.startsWith("https://") ||
+          s.startsWith("data:image") ||
+          s.startsWith("blob:") ||
+          s.includes("/") ||
+          s.includes(".jpg") ||
+          s.includes(".jpeg") ||
+          s.includes(".png") ||
+          s.includes(".webp")
+        );
+      });
+    }
+
     function logPhotoResolved(photo, url){
+      if(!DEBUG_PHOTOS) return;
       if(typeof photo === "object" && photo){
         console.log("[photo] resolved", {
           id: photo.id,
@@ -6943,28 +6985,8 @@
         }
       }
 
-      const hasAnyPhotoSignal =
-        photo.id ||
-        photo.marker_id ||
-        photo.local_marker_id ||
-        photo.file_name ||
-        photo.fileName ||
-        photo.storage_path ||
-        photo.storagePath ||
-        photo.public_url ||
-        photo.publicUrl ||
-        photo.signed_url ||
-        photo.signedUrl;
-
-      if(hasAnyPhotoSignal && options.warn !== false){
-        console.warn("[photo] failed to resolve url", {
-          id: photo.id,
-          kind: photo.kind,
-          photo_type: photo.photo_type,
-          storage_path: photo.storage_path,
-          public_url: photo.public_url,
-          file_name: photo.file_name
-        });
+      if(hasRealPhotoData(photo) && options.warn !== false){
+        console.warn("[photo] failed to resolve url", photo);
       }
 
       return "";
@@ -8222,8 +8244,7 @@
         }, { once: true });
         el.appendChild(img);
       }else{
-        if(photoHasStoragePath(photo)){
-          console.warn("[photo] failed to resolve url", photo);
+        if(hasRealPhotoData(photo)){
           el.textContent = "写真を読み込めません";
         }else{
           el.textContent = "写真なし";
@@ -9297,12 +9318,14 @@
         });
         bubbleG.appendChild(resizeControl);
         bubbleGroup.appendChild(bubbleG);
-        console.log("[render marker bubble]", {
-          markerId: m.id,
-          pdfRotation: rot,
-          bubbleTransform: bubbleG.getAttribute("transform") || bubbleG.style.transform || "",
-          writingMode: getComputedStyle(bubbleG).writingMode
-        });
+        if(DEBUG_MARKERS){
+          console.log("[render marker bubble]", {
+            markerId: m.id,
+            pdfRotation: rot,
+            bubbleTransform: bubbleG.getAttribute("transform") || bubbleG.style.transform || "",
+            writingMode: getComputedStyle(bubbleG).writingMode
+          });
+        }
 
         // anchor point（ピン本体）
         const anchor = svgEl("circle", {
@@ -10741,9 +10764,6 @@
       if(typeof photo === "object"){
         const fallback = String(photo.data_url || photo.dataUrl || photo.base64 || "").trim();
         if(/^data:image\//i.test(fallback)) return fallback;
-      }
-      if(photoHasStoragePath(photo)){
-        console.warn("[photo] failed to resolve url", photo);
       }
       return "";
     }
