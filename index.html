@@ -1591,6 +1591,10 @@
       [0.12, -0.06],
       [-0.18, -0.06],
     ];
+    const DEBUG_BUBBLE_SIZE = false;
+    let bubbleMeasureCanvas = null;
+    let bubbleMeasureCtx = null;
+    let warnedNormalizeOffset = false;
 
     // -------------------- Persistent Storage --------------------
     const STORAGE_KEY = "inspection_system_v3_plainjs";
@@ -7903,53 +7907,30 @@
       );
     }
 
-    function bubbleOverlapsPin(m, dx, dy){
-      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
-      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
-      const rect = getCurrentImageRect();
-      if(!rect) return false;
-      if(!canUseCanvasOffsetCheck()) return false;
-      const _a = imgRatioToCanvasPx(m.x, m.y);
-      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
-      const ax = _a.x, ay = _a.y;
-      const bx = _b.x, by = _b.y;
-      const pad = PIN_VIS_R + PIN_CLEAR_MARGIN;
-      return (
-        ax + pad > bx &&
-        ax - pad < bx + bubbleSize.width &&
-        ay + pad > by &&
-        ay - pad < by + bubbleSize.height
-      );
-    }
-
-    function bubbleMostlyOnStage(m, dx, dy){
-      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
-      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
-      if(!canUseCanvasOffsetCheck()) return true;
-      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
-      const margin = 8;
-      return (
-        _b.x >= -margin &&
-        _b.y >= -margin &&
-        _b.x + bubbleSize.width <= stageW + margin &&
-        _b.y + bubbleSize.height <= stageH + margin
-      );
-    }
-
-    let bubbleMeasureCtx = null;
     function getBubbleMeasureCtx(){
-      if(!bubbleMeasureCtx){
-        const canvas = document.createElement("canvas");
-        bubbleMeasureCtx = canvas.getContext("2d");
+      try{
+        if(!bubbleMeasureCanvas){
+          bubbleMeasureCanvas = document.createElement("canvas");
+        }
+        if(!bubbleMeasureCtx){
+          bubbleMeasureCtx = bubbleMeasureCanvas.getContext("2d");
+        }
+        return bubbleMeasureCtx;
+      }catch(error){
+        console.warn("[bubble measure] canvas context failed", error);
+        return null;
       }
-      return bubbleMeasureCtx;
     }
 
     function measureBubbleText(text, fontSize, fontWeight = 400){
+      const safeText = String(text || "");
       const ctx = getBubbleMeasureCtx();
+      if(!ctx){
+        return safeText.length * fontSize * 0.7;
+      }
       const weight = Number(fontWeight) >= 700 ? "bold " : "";
       ctx.font = `${weight}${fontSize}px system-ui,-apple-system,"Noto Sans JP",sans-serif`;
-      return ctx.measureText(String(text || "")).width;
+      return ctx.measureText(safeText).width;
     }
 
     function isMarkerBubbleManualSize(marker){
@@ -8011,31 +7992,41 @@
     }
 
     function estimateBubbleNaturalWidth(marker, displayNo, fontSize){
-      const parts = getBubbleTitleParts(marker, displayNo);
-      const titleFontSize = fontSize + 1;
-      const padding = getBubblePadding(fontSize);
-      const gap = Math.round(titleFontSize * 0.45);
-      const noCatW = measureBubbleText(`${parts.no} ${parts.category}`, titleFontSize, 800);
-      const vendorW = measureBubbleText(parts.vendor, titleFontSize, 800);
-      const titleOneLineW = noCatW + gap + vendorW + padding.x * 2;
-      const titleTwoLineW = Math.max(noCatW + padding.x * 2, vendorW + padding.x * 2);
-      const metaFontSize = Math.max(12, fontSize - 3);
-      const metaW = measureBubbleText(getBubbleMetaText(marker), metaFontSize, 400) + padding.x * 2;
-      const naturalW = Math.max(titleOneLineW, titleTwoLineW, metaW, BUBBLE_MIN_W);
-      return clamp(Math.ceil(naturalW), BUBBLE_MIN_W, BUBBLE_MAX_W);
+      try{
+        const parts = getBubbleTitleParts(marker, displayNo);
+        const titleFontSize = fontSize + 1;
+        const padding = getBubblePadding(fontSize);
+        const gap = Math.round(titleFontSize * 0.45);
+        const noCatW = measureBubbleText(`${parts.no} ${parts.category}`, titleFontSize, 800);
+        const vendorW = measureBubbleText(parts.vendor, titleFontSize, 800);
+        const titleOneLineW = noCatW + gap + vendorW + padding.x * 2;
+        const titleTwoLineW = Math.max(noCatW + padding.x * 2, vendorW + padding.x * 2);
+        const metaFontSize = Math.max(12, fontSize - 3);
+        const metaW = measureBubbleText(getBubbleMetaText(marker), metaFontSize, 400) + padding.x * 2;
+        const naturalW = Math.max(titleOneLineW, titleTwoLineW, metaW, BUBBLE_MIN_W);
+        return clamp(Math.ceil(naturalW), BUBBLE_MIN_W, BUBBLE_MAX_W);
+      }catch(error){
+        console.warn("[bubble measure] estimate width failed", error);
+        return 220;
+      }
     }
 
     function estimateBubbleNaturalHeight(marker, displayNo, width, fontSize){
-      const padding = getBubblePadding(fontSize);
-      const parts = getBubbleTitleParts(marker, displayNo);
-      const titleFontSize = fontSize + 1;
-      const titleLineH = Math.round(titleFontSize * 1.25);
-      const innerW = Math.max(40, width - padding.x * 2);
-      const titleLines = estimateBubbleTitleLineCount(parts, innerW, titleFontSize);
-      const metaFontSize = Math.max(12, fontSize - 3);
-      const metaLineH = Math.round(metaFontSize * 1.25);
-      const naturalHeight = padding.y * 2 + titleLines * titleLineH + 6 + metaLineH;
-      return clamp(Math.ceil(naturalHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+      try{
+        const padding = getBubblePadding(fontSize);
+        const parts = getBubbleTitleParts(marker, displayNo);
+        const titleFontSize = fontSize + 1;
+        const titleLineH = Math.round(titleFontSize * 1.25);
+        const innerW = Math.max(40, width - padding.x * 2);
+        const titleLines = estimateBubbleTitleLineCount(parts, innerW, titleFontSize);
+        const metaFontSize = Math.max(12, fontSize - 3);
+        const metaLineH = Math.round(metaFontSize * 1.25);
+        const naturalHeight = padding.y * 2 + titleLines * titleLineH + 6 + metaLineH;
+        return clamp(Math.ceil(naturalHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+      }catch(error){
+        console.warn("[bubble measure] estimate height failed", error);
+        return 76;
+      }
     }
 
     function getMarkerBubbleSize(marker){
@@ -8048,40 +8039,90 @@
     }
 
     function resolveMarkerBubbleDisplaySize(marker, displayNo, options = {}){
-      const stored = getMarkerBubbleSize(marker);
-      const manual = isMarkerBubbleManualSize(marker);
-      let fontSize = getBubbleFontSize(stored.width, stored.height);
-      let naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
-      fontSize = getBubbleFontSize(naturalWidth, BUBBLE_MIN_H);
-      naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
-      let naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, naturalWidth, fontSize);
+      try{
+        const stored = getMarkerBubbleSize(marker);
+        const manual = isMarkerBubbleManualSize(marker);
+        let fontSize = getBubbleFontSize(stored.width, stored.height);
+        let naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
+        fontSize = getBubbleFontSize(naturalWidth, BUBBLE_MIN_H);
+        naturalWidth = estimateBubbleNaturalWidth(marker, displayNo, fontSize);
+        let naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, naturalWidth, fontSize);
 
-      let width = naturalWidth;
-      let height = naturalHeight;
+        let width = naturalWidth;
+        let height = naturalHeight;
 
-      if(manual){
-        width = stored.width;
-        fontSize = getMarkerBubbleFontSize(marker, width, stored.height);
-        naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, width, fontSize);
-        const hasMemo = !!String(marker?.memo || "").trim();
-        const maxExtra = hasMemo ? 80 : 32;
-        const maxHeight = naturalHeight + maxExtra;
-        if(options.skipHeightCap){
-          height = stored.height;
-        }else{
-          height = clamp(Math.min(stored.height, maxHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+        if(manual){
+          width = stored.width;
+          fontSize = getMarkerBubbleFontSize(marker, width, stored.height);
+          naturalHeight = estimateBubbleNaturalHeight(marker, displayNo, width, fontSize);
+          const hasMemo = !!String(marker?.memo || "").trim();
+          const maxExtra = hasMemo ? 80 : 32;
+          const maxHeight = naturalHeight + maxExtra;
+          if(options.skipHeightCap){
+            height = stored.height;
+          }else{
+            height = clamp(Math.min(stored.height, maxHeight), BUBBLE_MIN_H, BUBBLE_MAX_H);
+          }
         }
-      }
 
-      return {
-        width,
-        height,
-        fontSize,
-        padding: getBubblePadding(fontSize),
-        titleFontSize: fontSize + 1,
-        metaFontSize: Math.max(12, fontSize - 3),
-        manual,
-      };
+        const result = {
+          width,
+          height,
+          fontSize,
+          padding: getBubblePadding(fontSize),
+          titleFontSize: fontSize + 1,
+          metaFontSize: Math.max(12, fontSize - 3),
+          manual,
+        };
+        if(DEBUG_BUBBLE_SIZE){
+          console.log("[bubble size]", { markerId: marker?.id, displayNo, ...result });
+        }
+        return result;
+      }catch(error){
+        console.warn("[bubble size] fallback", error);
+        return {
+          width: 220,
+          height: 76,
+          fontSize: 16,
+          padding: { x: BUBBLE_PAD_X_DEFAULT, y: BUBBLE_PAD_Y_DEFAULT },
+          titleFontSize: 17,
+          metaFontSize: 13,
+          manual: false,
+        };
+      }
+    }
+
+    function bubbleOverlapsPin(m, dx, dy){
+      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
+      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
+      const rect = getCurrentImageRect();
+      if(!rect) return false;
+      if(!canUseCanvasOffsetCheck()) return false;
+      const _a = imgRatioToCanvasPx(m.x, m.y);
+      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
+      const ax = _a.x, ay = _a.y;
+      const bx = _b.x, by = _b.y;
+      const pad = PIN_VIS_R + PIN_CLEAR_MARGIN;
+      return (
+        ax + pad > bx &&
+        ax - pad < bx + bubbleSize.width &&
+        ay + pad > by &&
+        ay - pad < by + bubbleSize.height
+      );
+    }
+
+    function bubbleMostlyOnStage(m, dx, dy){
+      const displayNo = Number(m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.no ?? 1);
+      const bubbleSize = resolveMarkerBubbleDisplaySize(m, displayNo);
+      if(!canUseCanvasOffsetCheck()) return true;
+      const _b = imgRatioToCanvasPx(m.x + dx, m.y + dy);
+      const margin = 8;
+      return (
+        _b.x >= -margin &&
+        _b.y >= -margin &&
+        _b.x + bubbleSize.width <= stageW + margin &&
+        _b.y + bubbleSize.height <= stageH + margin
+      );
     }
 
     function setMarkerBubbleSize(marker, width, height, options = {}){
@@ -8311,11 +8352,16 @@
     function safeNormalizeMarkerOffset(marker){
       try{
         return normalizeMarkerOffset(marker);
-      }catch(err){
-        console.error("[marker] safeNormalizeMarkerOffset failed", err);
-        marker.dx = Number.isFinite(Number(marker.dx)) ? Number(marker.dx) : DEFAULT_BUBBLE_DX;
-        marker.dy = Number.isFinite(Number(marker.dy)) ? Number(marker.dy) : DEFAULT_BUBBLE_DY;
-        return true;
+      }catch(error){
+        if(!warnedNormalizeOffset){
+          console.warn("[marker] safeNormalizeMarkerOffset failed", error);
+          warnedNormalizeOffset = true;
+        }
+        if(marker && typeof marker === "object"){
+          if(!Number.isFinite(Number(marker.dx))) marker.dx = DEFAULT_BUBBLE_DX;
+          if(!Number.isFinite(Number(marker.dy))) marker.dy = DEFAULT_BUBBLE_DY;
+        }
+        return false;
       }
     }
 
