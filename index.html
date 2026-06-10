@@ -5536,6 +5536,164 @@
       return out;
     }
 
+    const INVALID_PRIORITY_VENDOR_NAMES = new Set(["", "未設定", "業者未定", "null", "undefined"]);
+
+    function normalizePriorityVendorName(rawName){
+      const name = String(rawName ?? "").trim();
+      if(!name) return "";
+      if(INVALID_PRIORITY_VENDOR_NAMES.has(name)) return "";
+      const lowered = name.toLowerCase();
+      if(lowered === "null" || lowered === "undefined") return "";
+      return name;
+    }
+
+    function getAllActiveVendorNamesForSelect(){
+      return (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
+        .filter(v=>v.name !== "共通")
+        .sort(compareByDisplayOrder)
+        .map(v=>String(v.name || "").trim())
+        .filter(Boolean);
+    }
+
+    function getRoleLabel(role){
+      if(role === "main") return "メイン";
+      if(role === "sub1") return "サブ1";
+      if(role === "sub2") return "サブ2";
+      if(role === "sub3") return "サブ3";
+      if(role === "sub4") return "サブ4";
+      return "";
+    }
+
+    function pickCategoryVendorNameByAliases(source, aliases){
+      if(!source || typeof source !== "object") return "";
+      for(const key of aliases){
+        if(!(key in source)) continue;
+        const normalized = normalizePriorityVendorName(source[key]);
+        if(normalized) return normalized;
+      }
+      return "";
+    }
+
+    function getCategoryPriorityVendors(categoryName){
+      const map = categoryVendorMappingsByName[categoryName] || {};
+      const assignMap = categoryVendorAssignments[categoryName] || {};
+      const roleAliases = {
+        main: ["main_vendor_name", "mainVendor", "main_vendor", "primaryVendor", "primary_vendor", "vendor_main", "default_vendor_name"],
+        sub1: ["sub1_vendor_name", "subVendor1", "sub_vendor_1", "subMain1", "sub_main_1"],
+        sub2: ["sub2_vendor_name", "subVendor2", "sub_vendor_2", "subMain2", "sub_main_2"],
+        sub3: ["sub3_vendor_name", "subVendor3", "sub_vendor_3", "subMain3", "sub_main_3"],
+        sub4: ["sub4_vendor_name", "subVendor4", "sub_vendor_4", "subMain4", "sub_main_4"],
+      };
+      const arrayVendors = Array.isArray(map?.assignment?.vendors)
+        ? map.assignment.vendors
+        : (Array.isArray(map?.vendors) ? map.vendors : []);
+      const roleOrder = ["main", "sub1", "sub2", "sub3", "sub4"];
+      const list = [];
+      const seen = new Set();
+      roleOrder.forEach((role, idx)=>{
+        let name = pickCategoryVendorNameByAliases(map, roleAliases[role]);
+        if(!name){
+          name = normalizePriorityVendorName(assignMap?.[role]?.name || "");
+        }
+        if(!name){
+          const fromArray = arrayVendors[idx];
+          if(typeof fromArray === "string"){
+            name = normalizePriorityVendorName(fromArray);
+          }else{
+            name = normalizePriorityVendorName(fromArray?.name || fromArray?.vendor_name || "");
+          }
+        }
+        if(!name || seen.has(name)) return;
+        seen.add(name);
+        list.push({ name, role });
+      });
+      return list;
+    }
+
+    function buildVendorOptionsForCategory(categoryName, selectedVendor, opts = {}){
+      const includeUnselected = opts.includeUnselected !== false;
+      const includeRoleLabel = opts.includeRoleLabel !== false;
+      const includeSeparator = opts.includeSeparator !== false;
+      const selected = String(selectedVendor || "").trim();
+      const priorityVendors = getCategoryPriorityVendors(categoryName);
+      const allVendorNames = getAllActiveVendorNamesForSelect();
+      const used = new Set();
+      const options = [];
+      priorityVendors.forEach(entry=>{
+        if(!entry?.name || used.has(entry.name)) return;
+        used.add(entry.name);
+        const roleLabel = includeRoleLabel ? getRoleLabel(entry.role) : "";
+        options.push({
+          value: entry.name,
+          label: roleLabel ? `${entry.name}（${roleLabel}）` : entry.name,
+          disabled: false,
+          selected: selected === entry.name,
+        });
+      });
+      if(includeSeparator && options.length){
+        options.push({ value: "__SEP_PRIORITY__", label: "── その他の業者 ──", disabled: true, selected: false });
+      }
+      if(includeUnselected){
+        options.push({ value: "", label: "未選択", disabled: false, selected: selected === "" });
+      }
+      if(!used.has("全業者")){
+        used.add("全業者");
+        options.push({ value: "全業者", label: "全業者", disabled: false, selected: selected === "全業者" });
+      }
+      allVendorNames.forEach(name=>{
+        if(!name || name === "共通" || used.has(name)) return;
+        used.add(name);
+        options.push({ value: name, label: name, disabled: false, selected: selected === name });
+      });
+      if(selected && !used.has(selected)){
+        used.add(selected);
+        options.push({ value: selected, label: selected, disabled: false, selected: true });
+      }
+      const html = options.map(opt=>{
+        const valueAttr = opt.disabled ? "" : ` value="${escapeHtml(opt.value)}"`;
+        const disabledAttr = opt.disabled ? " disabled" : "";
+        const selectedAttr = opt.selected && !opt.disabled ? " selected" : "";
+        return `<option${valueAttr}${disabledAttr}${selectedAttr}>${escapeHtml(opt.label)}</option>`;
+      }).join("");
+      return { options, html };
+    }
+
+    function pickVendorSelectValue(categoryName, currentValue, options, fallbackToUnselected = false){
+      const values = (Array.isArray(options) ? options : [])
+        .filter(opt=>!opt.disabled)
+        .map(opt=>opt.value);
+      const current = String(currentValue || "").trim();
+      if(values.includes(current)) return current;
+      const primary = getPrimaryVendorForCategory(categoryName);
+      if(primary?.name && values.includes(primary.name)) return primary.name;
+      if(categoryName === "共通" && values.includes("全業者")) return "全業者";
+      if(fallbackToUnselected && values.includes("")) return "";
+      return values[0] ?? "";
+    }
+
+    function refreshMainVendorSelectByCategory(categoryName, preserveCurrent = false){
+      const targetCategory = categoryName || $("typeSelect").value || "共通";
+      const currentValue = preserveCurrent ? ($("vendorSelect").value || "") : "";
+      const built = buildVendorOptionsForCategory(targetCategory, currentValue, { includeUnselected: true, includeRoleLabel: true, includeSeparator: true });
+      $("vendorSelect").innerHTML = built.html;
+      $("fsVendorSelect").innerHTML = built.html;
+      const picked = pickVendorSelectValue(targetCategory, $("vendorSelect").value, built.options, true);
+      $("vendorSelect").value = picked;
+      $("fsVendorSelect").value = picked;
+    }
+
+    function refreshQuickVendorSelectByCategory(categoryName, selectedVendor){
+      const targetCategory = categoryName || quickEditorState?.draft?.type || $("typeSelect").value || "共通";
+      const currentValue = selectedVendor ?? $("quickMarkerVendor")?.value ?? "";
+      const quickVendor = $("quickMarkerVendor");
+      if(!quickVendor) return "";
+      const built = buildVendorOptionsForCategory(targetCategory, currentValue, { includeUnselected: true, includeRoleLabel: true, includeSeparator: true });
+      quickVendor.innerHTML = built.html;
+      const picked = pickVendorSelectValue(targetCategory, currentValue, built.options, true);
+      quickVendor.value = picked;
+      return picked;
+    }
+
     function renderCategorySelects(){
       const list = inspectionCategories.length ? inspectionCategories : FALLBACK_CATEGORIES;
       const html = list.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
@@ -5549,14 +5707,15 @@
       const activeVendors = (inspectionVendors.length ? inspectionVendors : FALLBACK_VENDORS)
         .filter(v=>v.name !== "共通")
         .sort(compareByDisplayOrder);
-      const vendorHtml = activeVendors.map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`).join("");
-      $("vendorSelect").innerHTML = vendorHtml;
-      $("fsVendorSelect").innerHTML = vendorHtml;
+      refreshMainVendorSelectByCategory($("typeSelect").value || "共通", true);
       const quickVendor = $("quickMarkerVendor");
       if(quickVendor){
-        quickVendor.innerHTML = [`<option value="">未選択</option>`]
-          .concat(activeVendors.filter(v=>v.name !== "業者未定").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
-          .join("");
+        const quickType = quickEditorState?.draft?.type || $("typeSelect").value || "共通";
+        const quickSelected = quickEditorState?.draft?.vendor_name ?? quickVendor.value ?? "";
+        const picked = refreshQuickVendorSelectByCategory(quickType, quickSelected);
+        if(quickEditorState?.draft){
+          quickEditorState.draft.vendor_name = picked;
+        }
       }
       const filterHtml = [`<option value="">全て</option>`, `<option value="全業者">全業者</option>`]
         .concat(activeVendors.filter(v=>v.name !== "全業者").map(v=>`<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</option>`))
@@ -5578,9 +5737,6 @@
       }
       const validFilterNames = new Set(["", "全業者", ...activeVendors.map(v=>v.name)]);
       if(!validFilterNames.has(filterVendor)) filterVendor = "";
-      if(!activeVendors.some(v=>v.name === $("vendorSelect").value)){
-        $("vendorSelect").value = activeVendors[0]?.name || "業者未定";
-      }
       syncInlineVendorFilterControls();
       syncFsSelects();
     }
@@ -6182,22 +6338,25 @@
     }
 
     function getVendorsForCategory(categoryName){
+      const map = categoryVendorMappingsByName[categoryName];
+      const assignMap = categoryVendorAssignments[categoryName] || {};
+      if(categoryName !== "共通" && map && map.auto_assign_enabled === false) return [];
+      const prioritized = getCategoryPriorityVendors(categoryName);
+      if(prioritized.length){
+        return prioritized.map(entry=>{
+          const resolved = getVendorRecordByName(entry.name);
+          const mappedId = map?.[`${entry.role}_vendor_id`] || assignMap?.[entry.role]?.id || null;
+          return {
+            id: resolved?.id || mappedId || null,
+            name: resolved?.name || entry.name,
+            role: entry.role,
+          };
+        });
+      }
       if(categoryName === "共通"){
         return [{ id: "ALL_VENDORS", name: "全業者", role: "main" }];
       }
-      const map = categoryVendorMappingsByName[categoryName];
-      if(!map || map.auto_assign_enabled === false) return [];
-      const list = CATEGORY_VENDOR_ROLES.map(role=>{
-        const name = map[`${role}_vendor_name`] || "";
-        if(!name) return null;
-        const vendor = getVendorRecordByName(name);
-        return {
-          id: map[`${role}_vendor_id`] || vendor?.id || null,
-          name: vendor?.name || name,
-          role,
-        };
-      }).filter(Boolean);
-      return dedupeVendorRecords(list);
+      return [];
     }
 
     function getPrimaryVendorForCategory(categoryName){
@@ -6229,6 +6388,7 @@
     function applyCategoryVendorAssignmentToMarker(categoryName, targetMarker, force = false){
       if(targetMarker && targetMarker.vendor_manual_override && !force) return false;
       const marker = targetMarker || null;
+      refreshMainVendorSelectByCategory(categoryName, false);
       if(categoryName === "共通"){
         if(marker){
           marker.type = "共通";
@@ -6253,6 +6413,10 @@
         }
         $("vendorSelect").value = "全業者";
         $("fsVendorSelect").value = "全業者";
+        if(quickEditorState?.draft === marker){
+          const picked = refreshQuickVendorSelectByCategory(categoryName, "全業者");
+          marker.vendor_name = picked;
+        }
         updateVendorStateLabel(marker);
         return true;
       }
@@ -6289,6 +6453,10 @@
         }
         $("vendorSelect").value = "業者未定";
         $("fsVendorSelect").value = "業者未定";
+        if(quickEditorState?.draft === marker){
+          const picked = refreshQuickVendorSelectByCategory(categoryName, "業者未定");
+          marker.vendor_name = picked;
+        }
         updateVendorStateLabel(marker);
         return true;
       }
@@ -6315,6 +6483,10 @@
       }
       $("vendorSelect").value = main.name;
       $("fsVendorSelect").value = main.name;
+      if(quickEditorState?.draft === marker){
+        const picked = refreshQuickVendorSelectByCategory(categoryName, main.name);
+        marker.vendor_name = picked;
+      }
       updateVendorStateLabel(marker);
       return true;
     }
@@ -7530,9 +7702,15 @@
       if(!quickEditorState) return;
       const d = quickEditorState.draft;
       $("quickMarkerType").value = d.type || "共通";
-      $("quickMarkerVendor").value = d.vendor_name || "";
+      const pickedVendor = refreshQuickVendorSelectByCategory(d.type || "共通", d.vendor_name || "");
+      d.vendor_name = pickedVendor || "";
       $("quickMarkerMemo").value = d.memo || "";
-      const related = Array.isArray(d.sub_vendor_names) && d.sub_vendor_names.length ? d.sub_vendor_names.join("、") : "なし";
+      const relatedCandidates = getCategoryPriorityVendors(d.type || "共通")
+        .map(v=>v.name)
+        .filter(name=>name && name !== d.vendor_name && name !== "全業者");
+      const fallbackSubs = Array.isArray(d.sub_vendor_names) ? d.sub_vendor_names : [];
+      const relatedList = relatedCandidates.length ? relatedCandidates : fallbackSubs;
+      const related = relatedList.length ? relatedList.join("、") : "なし";
       $("quickRelatedVendors").textContent = `関連業者：${related}`;
       renderQuickTypeChips(d.type || "共通");
       $("quickMarkerStatusControls").innerHTML = renderMarkerStatusControls(d);
@@ -7949,6 +8127,35 @@
       });
     }
 
+    const quickDeleteTextNoteInFlight = new Set();
+    function quickDeleteTextNoteById(localTextId){
+      const key = String(localTextId || "");
+      if(!key) return false;
+      if(quickDeleteTextNoteInFlight.has(key)) return false;
+      const note = getTextNoteByLocalId(key);
+      if(!note || note.status === "deleted") return false;
+      quickDeleteTextNoteInFlight.add(key);
+      try{
+        pushUndoSnapshot("テキストメモ削除");
+        note.status = "deleted";
+        note.updated_at = new Date().toISOString();
+        if(selectedTextNoteId === note.local_text_id) selectedTextNoteId = null;
+        if(textNoteEditorState && textNoteEditorState.local_text_id === note.local_text_id){
+          closeTextNoteEditor();
+        }
+        saveStore();
+        markDirty("text note deleted");
+        redrawOverlay();
+        redrawList();
+        autoSaveToCloud("text note quick delete").catch(error=>{
+          console.warn("[quick delete text note autosave] failed", error);
+        });
+        return true;
+      }finally{
+        quickDeleteTextNoteInFlight.delete(key);
+      }
+    }
+
     function createTextNoteAt(x, y){
       pushUndoSnapshot("テキスト追加");
       const ratio = canvasPxToImgRatio(x, y);
@@ -8041,8 +8248,11 @@
         delBtn.addEventListener("click", (event)=>{
           event.preventDefault();
           event.stopPropagation();
+          if(delBtn.disabled) return;
+          delBtn.disabled = true;
           selectedTextNoteId = note.local_text_id;
-          deleteTextNote(note);
+          const deleted = quickDeleteTextNoteById(note.local_text_id);
+          if(!deleted) delBtn.disabled = false;
         });
         resizeHandle.addEventListener("pointerdown", (event)=>{
           if(event.button === 2) return;
@@ -8783,6 +8993,7 @@
     // Dragging state
     let drag = null;
     let markerBubbleResize = null;
+    const quickDeleteMarkerInFlight = new Set();
     const DRAG_THRESHOLD = 6; // ドラッグ開始までの最小移動距離(px)
     let pendingDrag = null;   // ドラッグ確定前の候補
     let suppressTapCreateUntil = 0;
@@ -8881,13 +9092,21 @@
             if(role === "bubble-delete"){
               e.preventDefault();
               e.stopPropagation();
-              const ok = confirm("この指摘を削除しますか？");
-              if(!ok) return;
-              pushUndoSnapshot("指摘削除");
-              deleteMarkerById(id, { skipUndo: true });
-              autoSaveToCloud("marker delete").catch(error=>{
-                console.warn("[annotation resize/delete autosave] failed", error);
-              });
+              if(quickDeleteMarkerInFlight.has(id)) return;
+              if(!getMarkerById(id)) return;
+              quickDeleteMarkerInFlight.add(id);
+              try{
+                pushUndoSnapshot("指摘削除");
+                deleteMarkerById(id, { skipUndo: true });
+                if(typeof renderFloorSummary === "function"){
+                  renderFloorSummary();
+                }
+                autoSaveToCloud("marker delete").catch(error=>{
+                  console.warn("[quick delete marker autosave] failed", error);
+                });
+              }finally{
+                quickDeleteMarkerInFlight.delete(id);
+              }
               return;
             }
             if(role === "bubble-resize"){
@@ -9362,12 +9581,14 @@
       const m = markers().find(mm=>mm.id===selectedId);
       if(m){
         if(m.type) $("typeSelect").value = m.type;
+        refreshMainVendorSelectByCategory($("typeSelect").value || "共通", true);
         const vn = getVendorDisplayName(m);
         if(vn) $("vendorSelect").value = vn;
         syncFsSelects();
         updateVendorStateLabel(m);
         return;
       }
+      refreshMainVendorSelectByCategory($("typeSelect").value || "共通", true);
       applyDefaultVendorByCategory($("typeSelect").value, null, true);
       syncFsSelects();
       updateVendorStateLabel();
