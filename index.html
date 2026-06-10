@@ -2689,89 +2689,169 @@
       };
     }
 
-    function buildTextNoteRowsForCloud(inspectionId){
-      const rows = [];
+    function shouldSaveTextNote(note){
+      if(!note) return false;
+      const status = String(note.status || "active");
+      if(status === "deleted") return false;
+      if(status === "trash") return false;
+      const key = getTextNoteKey(note);
+      if(!key) return false;
+      return true;
+    }
+
+    function findTextNoteSaveContext(note){
+      const noteKey = getTextNoteKey(note);
+      const byKey = store.textNotesByKey || {};
+      for(const [storeKey, arr] of Object.entries(byKey)){
+        if(!Array.isArray(arr)) continue;
+        if(arr.some(n=>isSameTextNote(n, noteKey))){
+          const parsed = parseTextNoteKey(storeKey);
+          return {
+            page_number: parsed.page_number > 0 ? parsed.page_number : 1,
+            drawing_id: parsed.drawing_id || null,
+          };
+        }
+      }
+      const bg = store.activeBg || {};
+      const pageInputVal = parseInt(String($("pageInput")?.value || "1"), 10);
+      const currentPage = Number.isFinite(pageInputVal) && pageInputVal > 0
+        ? pageInputVal
+        : Math.max(1, Number(bg.page || 1));
+      return {
+        page_number: currentPage,
+        drawing_id: bg.drawingId || currentDrawingId || null,
+      };
+    }
+
+    function buildTextNotePayload(note, context = {}){
+      ensureTextNoteLocalId(note);
+      const ctx = context || {};
+      const bg = store.activeBg || {};
+      const pageInputVal = parseInt(String($("pageInput")?.value || "1"), 10);
+      const currentPage = Number.isFinite(pageInputVal) && pageInputVal > 0
+        ? pageInputVal
+        : Math.max(1, Number(bg.page || 1));
+      const content = getTextNoteContent(note);
+      const normalizedContent = String(content) === "メモ未入力" ? "" : String(content ?? "");
+      const payload = {
+        local_text_id: note.local_text_id,
+        site_id: selectedSiteId || store.siteId || null,
+        inspection_id: ctx.inspectionId || currentInspectionId || store.inspectionId || null,
+        floor_id: selectedFloorId || currentFloorId || store.currentFloorId || null,
+        drawing_id: ctx.drawing_id ?? note.drawing_id ?? note.drawingId ?? (bg.drawingId || currentDrawingId || store.currentDrawingId || null),
+        page_number: Number(note.page_number || note.pageNumber || ctx.page_number || currentPage || 1),
+        content: normalizedContent,
+        x: Number(note.x ?? 0),
+        y: Number(note.y ?? 0),
+        width: Number(note.width ?? 0),
+        height: Number(note.height ?? 0),
+        font_size: Number(note.font_size || note.fontSize || 14),
+        is_bold: !!(note.is_bold || note.isBold || note.font_weight === "bold"),
+        note_type: note.note_type || note.noteType || "memo",
+        rotation: Number(note.rotation || 0),
+        display_order: Number(note.display_order || note.displayOrder || 0),
+        status: note.status || "active",
+        updated_at: new Date().toISOString(),
+      };
+      if(isUuid(note.id)){
+        payload.id = note.id;
+      }
+      if(payload.id === null || payload.id === undefined || payload.id === ""){
+        delete payload.id;
+      }
+      if(payload.id && String(payload.id).startsWith("txt_")){
+        delete payload.id;
+      }
+      return payload;
+    }
+
+    async function saveSingleTextNoteToCloud(note, context = {}){
+      if(!shouldSaveTextNote(note)){
+        console.warn("[text note save] skipped", {
+          key: getTextNoteKey(note),
+          status: note?.status,
+        });
+        return;
+      }
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      const sb = getSupabase();
+      let inspectionId = context.inspectionId || currentInspectionId;
+      if(!inspectionId){
+        inspectionId = await ensureCurrentInspection();
+      }
+      const saveCtx = {
+        ...findTextNoteSaveContext(note),
+        ...context,
+        inspectionId,
+      };
+      const payload = buildTextNotePayload(note, saveCtx);
+      console.log("[text note payload]", payload);
+      const { data, error } = await sb.from("drawing_text_notes")
+        .upsert(payload, { onConflict: "local_text_id" })
+        .select("id, local_text_id")
+        .single();
+      if(error){
+        console.error("[text note save] failed", {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          payload,
+        });
+        throw error;
+      }
+      if(data){
+        const saved = findTextNoteByKey(data.local_text_id);
+        if(saved){
+          saved.id = data.id;
+          saved.local_text_id = data.local_text_id;
+          saved.localTextId = data.local_text_id;
+        }
+        saveStore();
+      }
+    }
+
+    async function saveTextNotesToCloud(inspectionId){
+      const notesToSave = [];
       const byKey = store.textNotesByKey || {};
       for(const [key, arr] of Object.entries(byKey)){
         if(!keyMatchesFloor(key, currentFloorId)) continue;
         if(!Array.isArray(arr)) continue;
         const { page_number, drawing_id } = parseTextNoteKey(key);
-        arr.forEach((noteRaw, idx)=>{
-          const note = normalizeTextNote(noteRaw);
-          ensureTextNoteLocalId(note);
-          noteRaw.local_text_id = note.local_text_id;
-          noteRaw.localTextId = note.localTextId;
-          const localTextId = note.local_text_id || note.localTextId;
-          const content = getTextNoteContent(note);
-          const normalizedContent = String(content) === "メモ未入力" ? "" : String(content ?? "");
-          const payload = {
-            local_text_id: localTextId,
-            site_id: selectedSiteId || null,
-            inspection_id: inspectionId,
-            floor_id: selectedFloorId || null,
-            drawing_id: drawing_id || null,
+        arr.forEach(note=>{
+          if(!shouldSaveTextNote(note)) return;
+          notesToSave.push({
+            note,
             page_number: page_number > 0 ? page_number : 1,
-            content: normalizedContent,
-            x: Number(note.x ?? 0),
-            y: Number(note.y ?? 0),
-            width: Number(note.width),
-            height: Number(note.height),
-            font_size: Number(note.font_size || note.fontSize || 14),
-            is_bold: !!(note.is_bold || note.isBold || note.font_weight === "bold"),
-            note_type: note.note_type || note.noteType || "memo",
-            rotation: note.rotation || 0,
-            display_order: Number.isFinite(Number(note.display_order ?? note.displayOrder)) ? Number(note.display_order ?? note.displayOrder) : idx,
-            status: note.status === "deleted" ? "deleted" : "active",
-            updated_at: new Date().toISOString(),
-          };
-          if(isUuid(note.id)){
-            payload.id = note.id;
-          }
-          console.log("[text note payload]", payload);
-          rows.push(payload);
+            drawing_id: drawing_id || null,
+          });
         });
       }
-      return rows;
-    }
-
-    async function saveTextNotesToCloud(inspectionId){
-      const sb = getSupabase();
-      const rows = buildTextNoteRowsForCloud(inspectionId);
-      if(rows.length === 0) return { textNoteCount: 0 };
+      if(notesToSave.length === 0) return { textNoteCount: 0 };
       let savedCount = 0;
-      for(const rowPayload of rows){
-        const payload = { ...rowPayload };
-        if(!isUuid(payload.id)){
-          delete payload.id;
-        }
-        const { data, error } = await sb.from("drawing_text_notes")
-          .upsert(payload, { onConflict: "local_text_id" })
-          .select("id, local_text_id")
-          .single();
-        if(error){
-          console.error("[text note save] failed", {
-            code: error.code,
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            payload,
-          });
-          throw error;
-        }
-        if(data){
-          const savedNote = findTextNoteByKey(data.local_text_id);
-          if(savedNote){
-            savedNote.id = data.id;
-            savedNote.local_text_id = data.local_text_id;
-            savedNote.localTextId = data.local_text_id;
-          }
-        }
+      for(const { note, page_number, drawing_id } of notesToSave){
+        await saveSingleTextNoteToCloud(note, { inspectionId, page_number, drawing_id });
         savedCount += 1;
       }
       if(DEBUG_TEXT_NOTES){
         console.log("[text note save] success", { count: savedCount });
       }
       return { textNoteCount: savedCount };
+    }
+
+    async function deleteTextNoteFromCloud(note){
+      if(!note || !isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      const sb = getSupabase();
+      const now = new Date().toISOString();
+      if(isUuid(note.id)){
+        await sb.from("drawing_text_notes")
+          .update({ status: "trash", updated_at: now })
+          .eq("id", note.id);
+      }else if(note.local_text_id){
+        await sb.from("drawing_text_notes")
+          .update({ status: "trash", updated_at: now })
+          .eq("local_text_id", note.local_text_id);
+      }
     }
 
     async function loadTextNotesFromCloud(inspectionId, floorId, drawingId = null){
@@ -8966,11 +9046,9 @@
 
     function getTextNoteKey(note){
       if(!note) return "";
-      return (
+      return String(
         note.local_text_id ||
         note.localTextId ||
-        note.text_note_id ||
-        note.textNoteId ||
         note.id ||
         ""
       );
@@ -9001,7 +9079,7 @@
     }
 
     function getTextNoteContent(note){
-      return (
+      return String(
         note?.content ??
         note?.text_content ??
         note?.textContent ??
@@ -9053,6 +9131,25 @@
       if(textNoteEditor) textNoteEditor.style.display = "none";
     }
 
+    function closeTextNoteEditModal(){
+      closeTextNoteEditor();
+    }
+
+    function removeTextNoteFromStore(note){
+      const key = getTextNoteKey(note);
+      if(!key) return false;
+      const byKey = store.textNotesByKey || {};
+      for(const [, arr] of Object.entries(byKey)){
+        if(!Array.isArray(arr)) continue;
+        const idx = arr.findIndex(n=>isSameTextNote(n, key));
+        if(idx >= 0){
+          arr.splice(idx, 1);
+          return true;
+        }
+      }
+      return false;
+    }
+
     function selectTextNote(keyOrNote){
       selectedTextNoteId = getTextNoteKey(keyOrNote) || null;
       redrawTextNotes();
@@ -9093,13 +9190,19 @@
         event.preventDefault();
         event.stopPropagation();
       }
-      if(!editingTextNoteKey){
-        console.warn("[text note save modal] no editing key");
-        return;
-      }
       const note = findTextNoteByKey(editingTextNoteKey);
-      if(!note){
-        console.warn("[text note save modal] note not found", editingTextNoteKey);
+      if(!editingTextNoteKey || !note){
+        console.warn("[text note modal save] note not found", {
+          editingTextNoteKey,
+          notes: getCurrentFloorTextNoteEntries().flatMap(([, arr])=>
+            (Array.isArray(arr) ? arr : []).map(n=>({
+              id: n.id,
+              local_text_id: n.local_text_id,
+              localTextId: n.localTextId,
+              status: n.status,
+            }))
+          ),
+        });
         return;
       }
       const textarea =
@@ -9109,42 +9212,21 @@
         document.querySelector(".text-note-edit-modal textarea") ||
         document.querySelector("textarea[name='textNoteContent']");
       if(!textarea){
-        console.warn("[text note save modal] textarea not found");
+        console.warn("[text note modal save] textarea not found");
         return;
       }
-      const value = textarea.value || "";
-      if(DEBUG_TEXT_NOTES){
-        console.log("[text note save modal]", {
-          editingTextNoteKey,
-          noteId: note.id,
-          local_text_id: note.local_text_id,
-          value,
-        });
-      }
-      saveTextNoteFromEditor(note, value);
-      closeTextNoteEditor();
-    }
-
-    function saveTextNoteFromEditor(note, contentOverride){
-      if(!note) return;
       pushUndoSnapshot("テキスト編集");
-      const textarea =
-        document.querySelector("#textNoteContentInput") ||
-        document.querySelector("#textNoteEditorContent") ||
-        document.querySelector("#textNoteTextarea") ||
-        document.querySelector(".text-note-edit-modal textarea") ||
-        document.querySelector("textarea[name='textNoteContent']");
-      const content = contentOverride != null
-        ? String(contentOverride)
-        : String(textarea?.value ?? "");
+      setTextNoteContent(note, textarea.value || "");
       const noteType = $("textNoteEditorType")?.value || "memo";
       const fontSize = parseInt(String($("textNoteEditorFontSize")?.value || "14"), 10);
       const isBold = !!$("textNoteEditorBold")?.checked;
-      setTextNoteContent(note, content);
       note.note_type = noteType;
       note.font_size = clamp(Number.isFinite(fontSize) ? fontSize : 14, 10, 32);
       note.is_bold = isBold;
       note.font_weight = isBold ? "bold" : "normal";
+      note.status = note.status === "deleted" || note.status === "trash"
+        ? "active"
+        : (note.status || "active");
       ensureTextNoteLocalId(note);
       saveStore();
       dirty = true;
@@ -9152,10 +9234,10 @@
       redrawOverlay();
       redrawList();
       redrawTextNotes();
-      if(DEBUG_TEXT_NOTES){
-        console.log("[text note] saved", note.local_text_id, content);
-      }
-      scheduleTextNoteCloudSave("text note save");
+      saveSingleTextNoteToCloud(note).catch(error=>{
+        console.error("[text note modal save] cloud save failed", error);
+      });
+      closeTextNoteEditModal();
     }
 
     function openTextNoteEditor(note, options = {}){
@@ -9196,21 +9278,23 @@
       }, 0);
     }
 
-    function deleteTextNote(note){
+    async function deleteTextNote(note){
       if(!note) return;
       const ok = confirm("このテキストメモを削除しますか？");
       if(!ok) return;
       pushUndoSnapshot("テキストメモ削除");
-      note.status = "deleted";
-      note.updated_at = new Date().toISOString();
+      const cloudNote = { id: note.id, local_text_id: note.local_text_id };
       if(isSameTextNote(note, selectedTextNoteId)) selectedTextNoteId = null;
+      removeTextNoteFromStore(note);
       closeTextNoteEditor();
       saveStore();
       markDirty("text note deleted", { skipAutoSave: true });
       redrawOverlay();
       redrawList();
       redrawTextNotes();
-      scheduleTextNoteCloudSave("text note delete");
+      deleteTextNoteFromCloud(cloudNote).catch(error=>{
+        console.error("[text note delete] cloud update failed", error);
+      });
     }
 
     const quickDeleteTextNoteInFlight = new Set();
@@ -9219,22 +9303,24 @@
       if(!key) return false;
       if(quickDeleteTextNoteInFlight.has(key)) return false;
       const note = findTextNoteByKey(key);
-      if(!note || note.status === "deleted") return false;
+      if(!note || note.status === "deleted" || note.status === "trash") return false;
       quickDeleteTextNoteInFlight.add(key);
       try{
         pushUndoSnapshot("テキストメモ削除");
-        note.status = "deleted";
-        note.updated_at = new Date().toISOString();
+        const cloudNote = { id: note.id, local_text_id: note.local_text_id };
         if(isSameTextNote(note, selectedTextNoteId)) selectedTextNoteId = null;
         if(textNoteEditorState && isSameTextNote(note, editingTextNoteKey || textNoteEditorState)){
           closeTextNoteEditor();
         }
+        removeTextNoteFromStore(note);
         saveStore();
         markDirty("text note deleted", { skipAutoSave: true });
         redrawOverlay();
         redrawList();
         redrawTextNotes();
-        scheduleTextNoteCloudSave("text note quick delete");
+        deleteTextNoteFromCloud(cloudNote).catch(error=>{
+          console.error("[text note quick delete] cloud update failed", error);
+        });
         return true;
       }finally{
         quickDeleteTextNoteInFlight.delete(key);
