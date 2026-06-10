@@ -603,6 +603,13 @@
     .pin-bubble{
       position:absolute;
       z-index:70;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
+    }
+    .annotation-box,
+    .annotation-box text{
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
     }
     .annotation-selected{
       outline:3px solid #2563eb;
@@ -666,6 +673,9 @@
       word-break:break-word;
       overflow:hidden;
       z-index:90;
+      transform:none !important;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
     }
     .text-note-box .text-note-content{
       width:100%;
@@ -674,6 +684,8 @@
       word-break:break-word;
       overflow:hidden;
       pointer-events:none;
+      writing-mode:horizontal-tb !important;
+      text-orientation:mixed !important;
     }
     .text-note-box:active{cursor:grabbing}
     .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
@@ -699,7 +711,7 @@
     }
     #textNoteEditor{
       position:absolute;
-      z-index:9999;
+      z-index:200000 !important;
       display:none;
       width:min(320px, calc(100% - 12px));
       background:#fff;
@@ -725,7 +737,7 @@
     #textNoteEditor .tn-actions .btn{padding:9px 13px;min-height:40px}
     #quickMarkerEditor{
       position:absolute;
-      z-index:9999;
+      z-index:200000 !important;
       display:none;
       width:min(360px, calc(100% - 12px));
       background:#fff;
@@ -765,6 +777,11 @@
     }
     #quickMarkerEditor .qe-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
     #quickMarkerEditor .qe-actions .btn{padding:10px 14px;min-height:42px}
+    .marker-edit-modal,
+    .text-edit-modal,
+    .annotation-modal{
+      z-index:200000 !important;
+    }
     #quickMarkerEditor .qe-vendor-row{display:flex;gap:6px;align-items:stretch}
     #quickMarkerEditor .qe-vendor-row select{flex:1}
     #quickMarkerEditor .qe-photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -6868,18 +6885,10 @@
       // これにより高DPI(Retina)ディスプレイでもシャープに表示される
       const dpr = window.devicePixelRatio || 1;
 
-      const rot = (typeof fsRotation !== "undefined") ? fsRotation : 0;
-      const inFs = (typeof isFullscreen !== "undefined") && isFullscreen;
-
       let cssW, cssH;
-      if(inFs && (rot === 90 || rot === 270)){
-        cssW = window.innerHeight;
-        cssH = window.innerWidth;
-      } else {
-        const r = stageWrap.getBoundingClientRect();
-        cssW = Math.max(1, Math.round(r.width));
-        cssH = Math.max(1, Math.round(r.height));
-      }
+      const r = stageWrap.getBoundingClientRect();
+      cssW = Math.max(1, Math.round(r.width));
+      cssH = Math.max(1, Math.round(r.height));
 
       // stageW/Hは論理座標系（CSS px）で持つ
       stageW = cssW;
@@ -7268,8 +7277,29 @@
       }
     }
 
+    function stripLegacyAnnotationRotationFields(target){
+      if(!target || typeof target !== "object") return false;
+      let changed = false;
+      [
+        "bubbleRotation",
+        "textRotation",
+        "transformRotate",
+        "rotationForBubble",
+        "rotationForText",
+        "bubble_rotation",
+        "text_rotation"
+      ].forEach((key)=>{
+        if(Object.prototype.hasOwnProperty.call(target, key)){
+          delete target[key];
+          changed = true;
+        }
+      });
+      return changed;
+    }
+
     function normalizeTextNote(note){
       const src = (note && typeof note === "object") ? note : {};
+      stripLegacyAnnotationRotationFields(src);
       const createdAt = src.created_at || src.createdAt || new Date().toISOString();
       const updatedAt = src.updated_at || src.updatedAt || createdAt;
       const widthRatioMin = TEXT_NOTE_MIN_W / Math.max(1, stageW || 1);
@@ -7293,7 +7323,7 @@
         background_color: src.background_color || "#ffffff",
         border_color: src.border_color || "#d7dce4",
         opacity: clamp(Number.isFinite(Number(src.opacity)) ? Number(src.opacity) : 1, 0.2, 1),
-        rotation: Number.isFinite(Number(src.rotation)) ? Number(src.rotation) : 0,
+        rotation: 0,
         display_order: Number.isFinite(Number(src.display_order)) ? Number(src.display_order) : (Number.isFinite(Number(src.displayOrder)) ? Number(src.displayOrder) : 0),
         status: String(src.status || "active") === "deleted" ? "deleted" : "active",
         created_at: createdAt,
@@ -7326,6 +7356,7 @@
       for(const arr of Object.values(mbk)){
         if(!Array.isArray(arr)) continue;
         arr.forEach(m=>{
+          if(stripLegacyAnnotationRotationFields(m)) changed = true;
           const beforeStatus = String(m.status || "");
           const normalizedStatus = normalizeMarkerStatus(m);
           if(beforeStatus !== normalizedStatus) changed = true;
@@ -7377,18 +7408,9 @@
             applyPdfAspectRatio(img.width, img.height);
             requestAnimationFrame(()=>{
               const dpr2 = window.devicePixelRatio || 1;
-              const rot2 = (typeof fsRotation !== "undefined") ? fsRotation : 0;
-              const inFs2 = (typeof isFullscreen !== "undefined") && isFullscreen;
-              let cssW2, cssH2;
-              if(inFs2 && (rot2 === 90 || rot2 === 270)){
-                cssW2 = window.innerHeight; cssH2 = window.innerWidth;
-              } else if(!inFs2){
-                const r = stageWrap.getBoundingClientRect();
-                cssW2 = Math.max(1, Math.round(r.width));
-                cssH2 = Math.max(1, Math.round(r.height));
-              } else {
-                cssW2 = stageW; cssH2 = stageH;
-              }
+              const r = stageWrap.getBoundingClientRect();
+              const cssW2 = Math.max(1, Math.round(r.width));
+              const cssH2 = Math.max(1, Math.round(r.height));
               stageW = cssW2; stageH = cssH2;
               bgCanvas.width  = Math.round(cssW2 * dpr2);
               bgCanvas.height = Math.round(cssH2 * dpr2);
@@ -8443,10 +8465,7 @@
 
         // bubble（先に描画し、ピンを上に重ねて常に見えるようにする）
         const rot = getRotationForKey(activeKey());
-        const bcx = bubbleW / 2, bcy = bubbleH / 2;
-        const bubbleTransform = rot === 0
-          ? `translate(${bx},${by})`
-          : `translate(${bx},${by}) rotate(${-rot},${bcx},${bcy})`;
+        const bubbleTransform = `translate(${bx},${by})`;
         const bubbleG = svgEl("g", { transform: bubbleTransform, cursor:"grab" });
         bubbleG.setAttribute("data-role","bubble");
         bubbleG.setAttribute("class", `annotation-box${isSel ? " annotation-selected" : ""}`);
@@ -8520,6 +8539,12 @@
         });
         bubbleG.appendChild(resizeControl);
         bubbleGroup.appendChild(bubbleG);
+        console.log("[render marker bubble]", {
+          markerId: m.id,
+          pdfRotation: rot,
+          bubbleTransform: bubbleG.getAttribute("transform") || bubbleG.style.transform || "",
+          writingMode: getComputedStyle(bubbleG).writingMode
+        });
 
         // anchor point（ピン本体）
         const anchor = svgEl("circle", {
@@ -8896,6 +8921,7 @@
         e.stopPropagation();
         return;
       }
+      const clickedCandidate = pendingDrag ? { ...pendingDrag } : null;
       if(pendingDrag){
         // ドラッグなしで離した → キャプチャ解放のみ
         try{ overlay.releasePointerCapture(pendingDrag.pointerId); }catch(_){}
@@ -8908,6 +8934,21 @@
         suppressTapCreateUntil = Date.now() + 220;
         saveStore();
         markDirty("marker moved");
+      }
+      if(!drag && clickedCandidate){
+        const marker = markers().find(mm=>mm.id===clickedCandidate.id);
+        if(marker){
+          selectedId = marker.id;
+          selectedTextNoteId = null;
+          closeTextNoteEditor();
+          redrawOverlay();
+          redrawList();
+          syncButtons();
+          syncSelectorsFromSelectedMarker();
+          if(clickedCandidate.role === "bubble"){
+            openQuickMarkerEditor(marker, { isNew: false });
+          }
+        }
       }
       e.preventDefault();
       e.stopPropagation();
@@ -11764,21 +11805,10 @@
     let lastFullscreenTarget = null;
     let fsRotation = 0; // 0 | 90 | 180 | 270
 
-    const ROT_CLASSES = { 0:'', 90:'rot90', 180:'rot180', 270:'rot270' };
-
     function applyRotationClass(){
       stageWrap.classList.remove('rot90','rot180','rot270');
-      const cls = ROT_CLASSES[fsRotation];
-      if(cls) stageWrap.classList.add(cls);
-
       setTimeout(()=>{
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const isSwapped = (fsRotation === 90 || fsRotation === 270);
-        stageW = Math.max(1, isSwapped ? vh : vw);
-        stageH = Math.max(1, isSwapped ? vw : vh);
-        bgCanvas.width  = stageW;
-        bgCanvas.height = stageH;
-        overlay.setAttribute("viewBox", `0 0 ${stageW} ${stageH}`);
+        resizeStage();
         fitPdfToStage();
         redrawOverlay();
         // 回転後もパネルは中央下に戻す
