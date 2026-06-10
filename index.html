@@ -713,36 +713,43 @@
     .text-notes-layer{pointer-events:none}
     .text-note-box{
       position:absolute;
+      box-sizing:border-box;
       background:#ffffff;
       color:#111827;
-      border:1px solid #d7dce4;
-      border-radius:8px;
-      box-shadow:0 3px 10px rgba(15,23,42,.16);
-      padding:6px 8px;
+      border:2px solid #2563eb;
+      border-radius:12px;
+      padding:10px 12px;
       font-size:14px;
       line-height:1.35;
       pointer-events:auto;
-      cursor:grab;
-      user-select:none;
+      cursor:text;
+      min-width:120px;
+      min-height:44px;
       white-space:pre-wrap;
       word-break:break-word;
       overflow:hidden;
-      z-index:90;
+      z-index:50;
       transform:none !important;
       writing-mode:horizontal-tb !important;
       text-orientation:mixed !important;
     }
+    .text-note-box.is-editing{
+      box-shadow:0 0 0 3px rgba(37,99,235,.18);
+    }
     .text-note-box .text-note-content{
       width:100%;
-      height:100%;
+      min-height:24px;
+      outline:none;
       white-space:pre-wrap;
       word-break:break-word;
+      cursor:text;
       overflow:hidden;
-      pointer-events:none;
       writing-mode:horizontal-tb !important;
       text-orientation:mixed !important;
     }
-    .text-note-box .text-note-content.is-empty{
+    .text-note-content:empty::before,
+    .text-note-content.is-empty:not(:focus)::before{
+      content:"メモ入力";
       color:#94a3b8;
     }
     .annotation-controls,
@@ -759,7 +766,7 @@
     .annotation-resize-handle{
       pointer-events:auto;
     }
-    .text-note-box:active{cursor:grabbing}
+    .text-note-box.is-dragging{cursor:grabbing}
     .text-note-box.note-caution{border-color:#f59e0b;background:#fffbeb}
     .text-note-box.note-time{border-color:#60a5fa;background:#eff6ff}
     .text-note-box.note-other{border-color:#9ca3af;background:#f8fafc}
@@ -9116,6 +9123,72 @@
       note.updated_at = new Date().toISOString();
     }
 
+    let textNoteInlineSaveTimer = null;
+    let textNoteInlineSaveKey = null;
+
+    function isTextNoteContentFocused(){
+      const ae = document.activeElement;
+      return !!(ae && ae.classList && ae.classList.contains("text-note-content"));
+    }
+
+    function scheduleTextNoteSave(note){
+      const key = getTextNoteKey(note);
+      if(!key) return;
+      textNoteInlineSaveKey = key;
+      if(textNoteInlineSaveTimer){
+        clearTimeout(textNoteInlineSaveTimer);
+        textNoteInlineSaveTimer = null;
+      }
+      textNoteInlineSaveTimer = setTimeout(()=>{
+        textNoteInlineSaveTimer = null;
+        const target = findTextNoteByKey(textNoteInlineSaveKey);
+        if(target){
+          saveSingleTextNoteToCloud(target).catch(error=>{
+            console.error("[text note inline save] cloud save failed", error);
+          });
+        }
+      }, 800);
+    }
+
+    function focusTextNoteInlineEditor(note){
+      const key = getTextNoteKey(note);
+      const el = document.querySelector(`[data-text-note-key="${key}"] .text-note-content`);
+      if(!el) return;
+      const box = el.closest(".text-note-box");
+      el.focus();
+      if(box) box.classList.add("is-editing");
+      editingTextNoteKey = key;
+      selectedTextNoteId = key;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const selection = window.getSelection();
+      if(selection){
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+
+    function syncTextNoteEmptyState(el){
+      if(!el) return;
+      const text = String(el.innerText || "").replace(/\u00a0/g, "").trim();
+      el.classList.toggle("is-empty", !text);
+    }
+
+    function handleTextNoteInput(event, note){
+      event.stopPropagation();
+      const value = event.currentTarget.innerText || "";
+      const target = findTextNoteByKey(getTextNoteKey(note)) || note;
+      setTextNoteContent(target, value);
+      target.status = "active";
+      target.updated_at = new Date().toISOString();
+      syncTextNoteEmptyState(event.currentTarget);
+      saveStore();
+      dirty = true;
+      updateSaveStatus("dirty");
+      scheduleTextNoteSave(target);
+    }
+
     function findTextNoteByKey(keyOrNote){
       const key = typeof keyOrNote === "string"
         ? keyOrNote
@@ -9150,6 +9223,10 @@
       textNoteEditorState = null;
       editingTextNoteKey = null;
       if(textNoteEditor) textNoteEditor.style.display = "none";
+      const active = document.activeElement;
+      if(active && active.classList && active.classList.contains("text-note-content")){
+        active.blur();
+      }
     }
 
     function closeTextNoteEditModal(){
@@ -9387,7 +9464,7 @@
       redrawOverlay();
       selectTextNote(note);
       setTimeout(()=>{
-        openTextNoteEditModal(note, { isNew: true });
+        focusTextNoteInlineEditor(note);
       }, 0);
       if(DEBUG_TEXT_NOTES){
         console.log("[text note] created", note);
@@ -9416,8 +9493,11 @@
         const w = noteSize.width;
         const h = noteSize.height;
         const el = document.createElement("div");
+        const noteKey = getTextNoteKey(note);
         el.className = "text-note-box note-" + note.note_type + (isSameTextNote(note, selectedTextNoteId) ? " is-selected" : "");
-        el.dataset.localTextId = getTextNoteKey(note);
+        el.dataset.localTextId = noteKey;
+        el.dataset.textNoteKey = noteKey;
+        el.setAttribute("data-text-note-key", noteKey);
         el.style.left = `${clamp(point.x, 0, Math.max(0, stageW - w))}px`;
         el.style.top = `${clamp(point.y, 0, Math.max(0, stageH - h))}px`;
         el.style.width = `${w}px`;
@@ -9426,15 +9506,18 @@
         el.style.fontWeight = note.font_weight || "normal";
         el.style.color = note.text_color || "#111827";
         el.style.backgroundColor = note.background_color || "#ffffff";
-        el.style.borderColor = note.border_color || "#d7dce4";
         el.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
-        const noteKey = getTextNoteKey(note);
         const text = getTextNoteContent(note);
+        const displayText = String(text) === "メモ未入力" ? "" : String(text || "");
         const textContent = document.createElement("div");
         textContent.className = "text-note-content";
-        const isEmptyText = !text.trim();
-        textContent.classList.toggle("is-empty", isEmptyText);
-        textContent.textContent = isEmptyText ? "メモ未入力" : text;
+        textContent.contentEditable = "true";
+        textContent.spellcheck = false;
+        if(displayText) textContent.textContent = displayText;
+        syncTextNoteEmptyState(textContent);
+        if(note.is_bold || note.font_weight === "bold"){
+          textContent.style.fontWeight = "bold";
+        }
         el.appendChild(textContent);
         const controlsWrap = document.createElement("div");
         controlsWrap.className = "annotation-controls";
@@ -9450,6 +9533,47 @@
         controlsWrap.appendChild(resizeHandle);
         el.appendChild(controlsWrap);
         el.title = textNoteTypeLabel(note.note_type);
+        el.addEventListener("pointerdown", (event)=>{
+          event.stopPropagation();
+        }, true);
+        el.addEventListener("click", (event)=>{
+          event.stopPropagation();
+        }, true);
+        textContent.addEventListener("pointerdown", (event)=>{
+          event.stopPropagation();
+          selectedTextNoteId = noteKey;
+          el.classList.add("is-selected");
+        });
+        textContent.addEventListener("click", (event)=>{
+          event.stopPropagation();
+        });
+        textContent.addEventListener("keydown", (event)=>{
+          event.stopPropagation();
+        });
+        textContent.addEventListener("input", (event)=>{
+          handleTextNoteInput(event, note);
+        });
+        textContent.addEventListener("focus", ()=>{
+          el.classList.add("is-editing");
+          editingTextNoteKey = noteKey;
+          selectedTextNoteId = noteKey;
+        });
+        textContent.addEventListener("blur", ()=>{
+          el.classList.remove("is-editing");
+          if(editingTextNoteKey === noteKey) editingTextNoteKey = null;
+          const target = findTextNoteByKey(noteKey);
+          if(!target) return;
+          setTextNoteContent(target, textContent.innerText || "");
+          syncTextNoteEmptyState(textContent);
+          saveStore();
+          if(textNoteInlineSaveTimer){
+            clearTimeout(textNoteInlineSaveTimer);
+            textNoteInlineSaveTimer = null;
+          }
+          saveSingleTextNoteToCloud(target).catch(error=>{
+            console.error("[text note blur save] cloud save failed", error);
+          });
+        });
         delBtn.addEventListener("pointerdown", (event)=>{
           event.preventDefault();
           event.stopPropagation();
@@ -9483,6 +9607,9 @@
         el.addEventListener("pointerdown", (e)=>{
           if(e.button === 2) return;
           if(textNoteResize && isSameTextNote(note, textNoteResize.local_text_id)) return;
+          if(e.target.closest(".text-note-content")) return;
+          if(e.target.closest(".annotation-delete-btn") || e.target.closest(".annotation-resize-handle")) return;
+          e.stopPropagation();
           selectedTextNoteId = noteKey;
           const base = imgRatioToCanvasPx(note.x, note.y);
           textNoteDrag = {
@@ -9495,10 +9622,19 @@
             moved: false,
           };
           closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
-          el.classList.add("is-selected");
+          el.classList.add("is-selected", "is-dragging");
           try{ el.setPointerCapture(e.pointerId); }catch(_){}
           e.preventDefault();
-          e.stopPropagation();
+        });
+        el.addEventListener("click", (event)=>{
+          event.stopPropagation();
+          if(event.target.closest(".annotation-delete-btn") || event.target.closest(".annotation-resize-handle")) return;
+          const target = findTextNoteByKey(noteKey);
+          if(!target) return;
+          selectedTextNoteId = getTextNoteKey(target);
+          if(!event.target.closest(".text-note-content")){
+            focusTextNoteInlineEditor(target);
+          }
         });
         el.addEventListener("pointermove", (e)=>{
           if(textNoteResize && isSameTextNote(note, textNoteResize.local_text_id)){
@@ -9510,9 +9646,6 @@
             target.updated_at = new Date().toISOString();
             el.style.width = `${nextW}px`;
             el.style.height = `${nextH}px`;
-            if(textNoteEditorState && isSameTextNote(target, editingTextNoteKey || textNoteEditorState)){
-              positionTextNoteEditor(target);
-            }
             e.preventDefault();
             e.stopPropagation();
             return;
@@ -9537,9 +9670,6 @@
           target.updated_at = new Date().toISOString();
           el.style.left = `${clamp(nx, 0, Math.max(0, stageW - w))}px`;
           el.style.top = `${clamp(ny, 0, Math.max(0, stageH - h))}px`;
-          if(textNoteEditorState && isSameTextNote(target, editingTextNoteKey || textNoteEditorState)){
-            positionTextNoteEditor(target);
-          }
           e.preventDefault();
           e.stopPropagation();
         });
@@ -9566,6 +9696,7 @@
           const moved = !!textNoteDrag.moved;
           textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
           textNoteDrag = null;
+          el.classList.remove("is-dragging");
           try{ el.releasePointerCapture(e.pointerId); }catch(_){}
           const target = findTextNoteByKey(noteKey);
           if(target){
@@ -9577,30 +9708,11 @@
               scheduleTextNoteCloudSave("text note moved");
             }else{
               selectedTextNoteId = getTextNoteKey(target);
-              redrawTextNotes();
+              focusTextNoteInlineEditor(target);
             }
           }
           e.preventDefault();
           e.stopPropagation();
-        });
-        el.addEventListener("click", (e)=>{
-          e.preventDefault();
-          e.stopPropagation();
-          const target = findTextNoteByKey(noteKey);
-          if(!target) return;
-          selectedTextNoteId = getTextNoteKey(target);
-          redrawTextNotes();
-        });
-        el.addEventListener("dblclick", (e)=>{
-          e.preventDefault();
-          e.stopPropagation();
-          const target = findTextNoteByKey(noteKey);
-          if(!target) return;
-          selectTextNote(target);
-          if(DEBUG_TEXT_NOTES){
-            console.log("[text note] double clicked", getTextNoteKey(target));
-          }
-          openTextNoteEditModal(target, { isNew: false });
         });
         textNotesLayer.appendChild(el);
       });
@@ -10221,6 +10333,8 @@
       if((e?.type === "click" || e?.type === "touchstart") && now - lastPointerDownAt < 400) return true;
       if(quickEditorState) return true;
       if(textNoteEditorState) return true;
+      if(isTextNoteContentFocused()) return true;
+      if(editingTextNoteKey) return true;
       return false;
     }
 
@@ -10704,12 +10818,20 @@
       closeQuickMarkerEditor({ keepDraft: false });
     });
     document.addEventListener("pointerdown", (e)=>{
-      if(!textNoteEditorState) return;
-      if(Date.now() < textNoteEditorOutsideCloseGuardUntil) return;
-      if(textNoteEditor.contains(e.target)) return;
+      if(!textNoteEditorState && !editingTextNoteKey && !isTextNoteContentFocused()) return;
+      if(textNoteEditorState){
+        if(Date.now() < textNoteEditorOutsideCloseGuardUntil) return;
+        if(textNoteEditor.contains(e.target)) return;
+        if(e.target.closest(".text-note-box")) return;
+        closeTextNoteEditor();
+        redrawTextNotes();
+        return;
+      }
       if(e.target.closest(".text-note-box")) return;
-      closeTextNoteEditor();
-      redrawTextNotes();
+      const active = document.activeElement;
+      if(active && active.classList && active.classList.contains("text-note-content")){
+        active.blur();
+      }
     });
 
     // List interactions
