@@ -1640,6 +1640,41 @@
     let pendingConfirmResolver = null;
     const DRAWING_BUCKET = "inspection-drawings";
     const MARKER_PHOTO_BUCKET = "marker-photos";
+
+    function getPhotoBucketName(){
+      return "marker-photos";
+    }
+
+    function sanitizeMarkerPhotoPublicUrl(publicUrl){
+      let url = String(publicUrl || "").trim();
+      if(url.startsWith("blob:")) url = "";
+      return url;
+    }
+
+    function getPhotoPublicUrlFromStoragePath(storagePath){
+      const path = String(storagePath || "").trim();
+      if(!path || !isSupabaseConfigured() || !isSupabaseSdkReady()) return "";
+      try{
+        const sb = getSupabase();
+        const bucket = getPhotoBucketName();
+        const { data } = sb.storage.from(bucket).getPublicUrl(path);
+        return String(data?.publicUrl || "").trim();
+      }catch(_){
+        return "";
+      }
+    }
+
+    function hydrateMarkerPhotoRow(row){
+      const next = { ...(row || {}) };
+      next.public_url = sanitizeMarkerPhotoPublicUrl(next.public_url);
+      if(next.storage_path){
+        const generated = getPhotoPublicUrlFromStoragePath(next.storage_path);
+        if(generated && !/^https?:\/\//i.test(next.public_url)){
+          next.public_url = generated;
+        }
+      }
+      return next;
+    }
     const FLOOR_CONTEXT_STORAGE_KEY = "kensa:last-floor-context";
     const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
     const INSPECTION_SELECT_COLUMNS = "id, title, site_id, floor_id, floor_name, site_name, inspected_at, inspector_name, status, inspection_mode, settings, created_at, updated_at";
@@ -2050,6 +2085,7 @@
           const normalizedStatus = normalizeMarkerStatus(m);
           normalizeMarkerVendorState(m);
           ensureMarkerPhotoState(m);
+          const displayNo = getMarkerDisplayNo(m, idx);
           const assignedVendorNames = m.is_common
             ? ["全業者"]
             : (Array.isArray(m.assigned_vendor_names) ? [...m.assigned_vendor_names] : []);
@@ -2086,8 +2122,11 @@
             bubble_moved: !!m.bubbleMoved,
             sort_order: idx,
             marker_data: {
+              local_marker_id: m.local_marker_id || m.id || null,
               markerKey,
               drawingId: markerDrawingId,
+              display_no: displayNo,
+              marker_no: displayNo,
               site_id: selectedSiteId || null,
               floor_id: selectedFloorId || null,
               floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
@@ -2134,8 +2173,16 @@
           if(!mbk[key]) mbk[key] = [];
           const md = row.marker_data || {};
           const normalizedStatus = normalizeMarkerStatus(row.status || md.status || "open");
-          mbk[key].push({
+          const displayNoRaw =
+            row.display_no ??
+            row.marker_no ??
+            md.display_no ??
+            md.marker_no ??
+            md.no ??
+            null;
+          const nextMarker = {
             id: row.local_marker_id || md.id || newId(),
+            local_marker_id: row.local_marker_id || md.local_marker_id || md.id || null,
             x: Number(row.x),
             y: Number(row.y),
             dx: Number(row.dx),
@@ -2181,7 +2228,16 @@
             markerKey: key,
             page_number: Number(row.page_number || 1) || 1,
             drawing_id: row.drawing_id || null,
-          });
+            display_no: displayNoRaw,
+            marker_no: displayNoRaw,
+            no: displayNoRaw,
+            marker_data: {
+              ...(md && typeof md === "object" ? md : {}),
+              local_marker_id: row.local_marker_id || md.local_marker_id || null,
+            },
+          };
+          applyMarkerDisplayNo(nextMarker, Number(displayNoRaw));
+          mbk[key].push(nextMarker);
         });
         normalizeMarkersByKey(mbk);
         return mbk;
@@ -2689,7 +2745,8 @@
       const floorPart = context.floor_id || "unknown";
       const markerPart = markerId ? `marker_${markerId}` : `local_${String(localMarkerId).replace(/[^\w-]/g, "_")}`;
       const storagePath = `site_${sitePart}/floor_${floorPart}/inspection_${inspectionId}/${markerPart}/${kind}_${nowStamp()}_${safeName}`;
-      const uploadRes = await sb.storage.from(MARKER_PHOTO_BUCKET).upload(storagePath, file, {
+      const bucket = getPhotoBucketName();
+      const uploadRes = await sb.storage.from(bucket).upload(storagePath, file, {
         contentType: file.type || "image/jpeg",
         upsert: false,
       });
@@ -2697,10 +2754,10 @@
         toast(`【エラー】${photoKindLabel(kind)}写真アップロードに失敗しました。`);
         throw uploadRes.error;
       }
-      const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(storagePath);
+      const { data } = sb.storage.from(bucket).getPublicUrl(storagePath);
       return {
         storage_path: storagePath,
-        public_url: pub?.data?.publicUrl || "",
+        public_url: String(data?.publicUrl || "").trim(),
         file_name: file.name || safeName,
         mime_type: file.type || "image/jpeg",
         file_size: Number(file.size || 0) || 0,
@@ -2728,7 +2785,7 @@
         kind: context.kind,
         photo_type: context.kind,
         storage_path: photoInfo.storage_path,
-        public_url: photoInfo.public_url || "",
+        public_url: sanitizeMarkerPhotoPublicUrl(photoInfo.public_url) || getPhotoPublicUrlFromStoragePath(photoInfo.storage_path) || "",
         file_name: photoInfo.file_name || "",
         mime_type: photoInfo.mime_type || "image/jpeg",
         file_size: Number(photoInfo.file_size || 0) || 0,
@@ -2864,7 +2921,7 @@
       pendingPhotoStorageDeletes.clear();
       try{
         const sb = getSupabase();
-        const { error } = await sb.storage.from(MARKER_PHOTO_BUCKET).remove(paths);
+        const { error } = await sb.storage.from(getPhotoBucketName()).remove(paths);
         if(error){
           console.error("写真Storage削除失敗", error);
           toast("【エラー】写真ファイルの一部削除に失敗しました。");
@@ -2876,160 +2933,141 @@
     }
 
     async function loadMarkerPhotosFromCloud(markerRows){
-      if(!Array.isArray(markerRows) || markerRows.length === 0) return [];
       if(!currentInspectionId || !currentFloorId) return [];
+      const markerList = Array.isArray(markerRows) ? markerRows : [];
       const sb = getSupabase();
-      const markerIds = [...new Set(
-        markerRows
-          .map(m=>m?.cloud_marker_id || m?.supabase_marker_id || null)
-          .filter(Boolean)
-          .map(String)
-      )];
-      const localMarkerIds = [...new Set(
-        markerRows
-          .map(m=>m?.local_marker_id || m?.id || null)
-          .filter(Boolean)
-          .map(String)
-      )];
-      const rows = [];
-      if(markerIds.length > 0){
-        const { data, error } = await sb.from("marker_photos")
-          .select("id,marker_id,local_marker_id,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
-          .eq("inspection_id", currentInspectionId)
-          .eq("floor_id", currentFloorId)
-          .neq("status", "deleted")
-          .neq("status", "trash")
-          .in("marker_id", markerIds);
-        if(error){
-          toast("【エラー】写真のクラウド読み込みに失敗しました。");
-          throw error;
-        }
-        rows.push(...(data || []));
+      let query = sb.from("marker_photos")
+        .select("id,marker_id,local_marker_id,floor_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,signed_url,file_name,mime_type,file_size,caption,display_order,status,created_at,updated_at")
+        .eq("inspection_id", currentInspectionId)
+        .eq("floor_id", currentFloorId)
+        .neq("status", "deleted")
+        .neq("status", "trash")
+        .order("updated_at", { ascending: false });
+      const { data, error } = await query;
+      if(error){
+        toast("【エラー】写真のクラウド読み込みに失敗しました。");
+        throw error;
       }
-      if(localMarkerIds.length > 0){
-        const { data, error } = await sb.from("marker_photos")
-          .select("id,marker_id,local_marker_id,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
-          .eq("inspection_id", currentInspectionId)
-          .eq("floor_id", currentFloorId)
-          .neq("status", "deleted")
-          .neq("status", "trash")
-          .in("local_marker_id", localMarkerIds);
-        if(error){
-          toast("【エラー】写真のクラウド読み込みに失敗しました。");
-          throw error;
-        }
-        rows.push(...(data || []));
+      const rows = Array.isArray(data) ? data : [];
+      const preferredDrawingIds = new Set(
+        markerList.map(marker=>String(marker?.drawing_id || marker?.marker_data?.drawing_id || marker?.marker_data?.drawingId || "")).filter(Boolean)
+      );
+      if(preferredDrawingIds.size > 0){
+        rows.sort((a, b)=>{
+          const aHit = preferredDrawingIds.has(String(a?.drawing_id || ""));
+          const bHit = preferredDrawingIds.has(String(b?.drawing_id || ""));
+          if(aHit === bHit) return 0;
+          return aHit ? -1 : 1;
+        });
       }
-      const dedupMap = new Map();
-      rows.forEach(row=>{
-        const key = row?.id
-          ? `id:${row.id}`
-          : `${row?.marker_id || "no_marker"}:${row?.local_marker_id || "no_local"}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || ""}`;
-        if(!dedupMap.has(key)) dedupMap.set(key, row);
-      });
-      const uniqueRows = [...dedupMap.values()];
       const hydrated = [];
-      for(const row of uniqueRows){
-        const next = { ...row };
-        if(row.storage_path){
+      for(const row of rows){
+        const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
+        next.signed_url = sanitizeMarkerPhotoPublicUrl(next.signed_url);
+        if(!resolvePhotoUrl(next) && next.storage_path){
           try{
-            const dlRes = await sb.storage.from(MARKER_PHOTO_BUCKET).download(row.storage_path);
-            if(dlRes.error) throw dlRes.error;
-            const blob = dlRes.data;
-            if(blob){
-              next.public_url = URL.createObjectURL(blob);
+            const bucket = getPhotoBucketName();
+            const signed = await sb.storage.from(bucket).createSignedUrl(next.storage_path, 60 * 60);
+            const signedUrl = String(signed?.data?.signedUrl || "").trim();
+            if(/^https?:\/\//i.test(signedUrl)){
+              next.signed_url = signedUrl;
             }
-          }catch(e){
-            console.warn("写真Storage読込失敗", row.storage_path, e);
-          }
+          }catch(_){}
+        }
+        if(!resolvePhotoUrl(next) && hasPhotoData(next)){
+          console.warn("[photo] failed to resolve url", next);
         }
         hydrated.push(next);
       }
+      console.log("[photos] loaded", hydrated.length);
       return hydrated;
     }
 
     function attachLoadedPhotosToMarkers(photoRows, markerRows){
-      const markerMapByCloudId = new Map();
-      const markerMapByLocalId = new Map();
-      const markerMapByMarkerKey = new Map();
-      const markerMapByPageLocal = new Map();
-      (photoRows || []).forEach(row=>{
-        const markerId = String(row.marker_id || "");
-        const localMarkerId = String(row.local_marker_id || "");
-        const normalizedKind = String(row.kind || row.photo_type || "").toLowerCase();
-        const markerKey = String(row?.marker_data?.markerKey || row?.marker_key || "");
-        const pageNumber = Number(row.page_number || 0);
-        const info = {
-          storage_path: row.storage_path || null,
-          public_url: row.public_url || "",
-          file_name: row.file_name || "",
-          mime_type: row.mime_type || "",
-          file_size: Number(row.file_size || 0) || 0,
-          caption: row.caption || null,
-          kind: normalizedKind || null,
-          photo_type: normalizedKind || null,
-        };
-        if(markerId && !markerMapByCloudId.has(markerId)){
-          markerMapByCloudId.set(markerId, { beforePhoto: null, afterPhoto: null });
-        }
-        if(localMarkerId && !markerMapByLocalId.has(localMarkerId)){
-          markerMapByLocalId.set(localMarkerId, { beforePhoto: null, afterPhoto: null });
-        }
-        if(markerKey && !markerMapByMarkerKey.has(markerKey)){
-          markerMapByMarkerKey.set(markerKey, { beforePhoto: null, afterPhoto: null });
-        }
-        if(localMarkerId && pageNumber > 0){
-          const pageLocalKey = `${pageNumber}:${localMarkerId}`;
-          if(!markerMapByPageLocal.has(pageLocalKey)){
-            markerMapByPageLocal.set(pageLocalKey, { beforePhoto: null, afterPhoto: null });
+      const rows = Array.isArray(photoRows) ? photoRows : [];
+      const markerList = Array.isArray(markerRows) ? markerRows : [];
+      const usedRowKeys = new Set();
+      let attachedCount = 0;
+      const failedPhotos = [];
+      markerList.forEach(marker=>{
+        const cloudId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || marker?.marker_id || "").trim();
+        const localIds = [
+          marker?.local_marker_id,
+          marker?.localId,
+          marker?.id,
+          marker?.marker_data?.local_marker_id,
+        ].map(v=>String(v || "").trim()).filter(Boolean);
+        const candidates = [];
+        rows.forEach(row=>{
+          const rowCloudId = String(row?.marker_id || "").trim();
+          const rowLocalId = String(row?.local_marker_id || "").trim();
+          if(cloudId && rowCloudId && cloudId === rowCloudId){
+            candidates.push({ row, priority: 1 });
+            return;
           }
-        }
-        const writeTarget = normalizedKind === "after" ? "afterPhoto" : (normalizedKind === "before" ? "beforePhoto" : null);
-        if(!writeTarget) return;
-        if(markerId && markerMapByCloudId.has(markerId)){
-          markerMapByCloudId.get(markerId)[writeTarget] = info;
-        }
-        if(localMarkerId && markerMapByLocalId.has(localMarkerId)){
-          markerMapByLocalId.get(localMarkerId)[writeTarget] = info;
-        }
-        if(markerKey && markerMapByMarkerKey.has(markerKey)){
-          markerMapByMarkerKey.get(markerKey)[writeTarget] = info;
-        }
-        if(localMarkerId && pageNumber > 0){
-          const pageLocalKey = `${pageNumber}:${localMarkerId}`;
-          if(markerMapByPageLocal.has(pageLocalKey)){
-            markerMapByPageLocal.get(pageLocalKey)[writeTarget] = info;
+          if(localIds[0] && rowLocalId && localIds[0] === rowLocalId){
+            candidates.push({ row, priority: 2 });
+            return;
           }
-        }
-      });
-
-      (markerRows || []).forEach(marker=>{
-        const markerId = String(marker?.cloud_marker_id || marker?.supabase_marker_id || "");
-        const localMarkerId = String(marker?.local_marker_id || marker?.id || "");
-        const markerKey = String(marker?.markerKey || marker?.marker_data?.markerKey || "");
-        const pageNumber = Number(marker?.page_number || 0);
-        const localHit = markerMapByLocalId.get(localMarkerId);
-        const cloudHit = markerMapByCloudId.get(markerId);
-        const keyHit = markerMapByMarkerKey.get(markerKey);
-        const pageLocalHit = (localMarkerId && pageNumber > 0)
-          ? markerMapByPageLocal.get(`${pageNumber}:${localMarkerId}`)
-          : null;
-        marker.beforePhoto = clonePhotoInfo(cloudHit?.beforePhoto || localHit?.beforePhoto || keyHit?.beforePhoto || pageLocalHit?.beforePhoto);
-        marker.afterPhoto = clonePhotoInfo(cloudHit?.afterPhoto || localHit?.afterPhoto || keyHit?.afterPhoto || pageLocalHit?.afterPhoto);
-        marker.beforePhotoUrl = marker.beforePhoto?.public_url || marker.beforePhotoUrl || "";
-        marker.afterPhotoUrl = marker.afterPhoto?.public_url || marker.afterPhotoUrl || "";
-        marker.photos = {
-          ...(marker.photos && typeof marker.photos === "object" ? marker.photos : {}),
-          before: marker.beforePhoto?.public_url || marker.photos?.before || "",
-          after: marker.afterPhoto?.public_url || marker.photos?.after || "",
-        };
+          if(localIds[1] && rowLocalId && localIds[1] === rowLocalId){
+            candidates.push({ row, priority: 3 });
+            return;
+          }
+          if(localIds[2] && rowLocalId && localIds[2] === rowLocalId){
+            candidates.push({ row, priority: 4 });
+            return;
+          }
+          if(localIds[3] && rowLocalId && localIds[3] === rowLocalId){
+            candidates.push({ row, priority: 5 });
+          }
+        });
+        candidates.sort((a, b)=>a.priority - b.priority);
+        let beforePhoto = null;
+        let afterPhoto = null;
+        candidates.forEach(({ row })=>{
+          const rowKey = row?.id
+            ? `id:${row.id}`
+            : `${row?.marker_id || ""}:${row?.local_marker_id || ""}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || row?.public_url || ""}`;
+          const kind = String(row?.kind || row?.photo_type || "").toLowerCase();
+          if(kind === "before" && !beforePhoto){
+            beforePhoto = clonePhotoInfo(row) || row;
+            usedRowKeys.add(rowKey);
+          }else if(kind === "after" && !afterPhoto){
+            afterPhoto = clonePhotoInfo(row) || row;
+            usedRowKeys.add(rowKey);
+          }
+        });
+        marker.beforePhoto = beforePhoto;
+        marker.afterPhoto = afterPhoto;
+        const beforeUrl = resolvePhotoUrl(beforePhoto);
+        const afterUrl = resolvePhotoUrl(afterPhoto);
+        if(beforePhoto && !beforeUrl) console.warn("[photo] failed to resolve url", beforePhoto);
+        if(afterPhoto && !afterUrl) console.warn("[photo] failed to resolve url", afterPhoto);
+        marker.photos = marker.photos && typeof marker.photos === "object" ? marker.photos : {};
+        marker.photos.before = beforeUrl || "";
+        marker.photos.after = afterUrl || "";
+        marker.beforePhotoUrl = beforeUrl || "";
+        marker.afterPhotoUrl = afterUrl || "";
         marker.beforePhotoFile = null;
         marker.afterPhotoFile = null;
         marker.beforePhotoDelete = false;
         marker.afterPhotoDelete = false;
         marker.beforePhotoDeletePath = null;
         marker.afterPhotoDeletePath = null;
+        if(beforeUrl) attachedCount += 1;
+        if(afterUrl) attachedCount += 1;
       });
+      rows.forEach(row=>{
+        const rowKey = row?.id
+          ? `id:${row.id}`
+          : `${row?.marker_id || ""}:${row?.local_marker_id || ""}:${row?.kind || row?.photo_type || ""}:${row?.storage_path || row?.public_url || ""}`;
+        if(!usedRowKeys.has(rowKey)){
+          failedPhotos.push(row);
+        }
+      });
+      console.log("[photos] attached to markers", attachedCount);
+      console.log("[photos] failed to attach", failedPhotos);
+      return { attachedCount, failedPhotos };
     }
 
     async function loadInspectionWithDrawingAndMarkers(inspectionId, options = {}){
@@ -3108,9 +3146,18 @@
         try{
           const localMarkers = Object.entries(store.markersByKey || {})
             .filter(([key])=>keyMatchesFloor(key, currentFloorId))
-            .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>({ ...marker, markerKey: key })) : []);
+            .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>{
+              marker.markerKey = key;
+              return marker;
+            }) : []);
           const photoRows = await loadMarkerPhotosFromCloud(localMarkers);
           attachLoadedPhotosToMarkers(photoRows, localMarkers);
+          fixMissingDisplayNumbersForMarkers(localMarkers);
+          saveStore();
+          if(typeof redrawOverlay === "function") redrawOverlay();
+          if(typeof redrawList === "function") redrawList();
+          if(typeof renderInlineVendorList === "function") renderInlineVendorList();
+          if(typeof renderFloorSummary === "function") renderFloorSummary();
         }catch(e){
           showCloudError("写真情報の復元", e);
         }
@@ -5144,26 +5191,7 @@
     }
 
     function resolveMarkerPhotoUrlCandidate(value){
-      if(!value) return "";
-      if(typeof value === "string"){
-        return value.trim();
-      }
-      if(typeof value !== "object"){
-        return "";
-      }
-      const direct = String(value.public_url || value.publicUrl || value.url || "").trim();
-      if(direct) return direct;
-      const storagePath = String(value.storage_path || value.storagePath || "").trim();
-      if(storagePath && isSupabaseConfigured() && isSupabaseSdkReady()){
-        try{
-          const sb = getSupabase();
-          const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(storagePath);
-          return String(pub?.data?.publicUrl || "").trim();
-        }catch(_){
-          return "";
-        }
-      }
-      return "";
+      return resolvePhotoUrl(value);
     }
 
     function collectVendorPhotoRowsForMarker(marker){
@@ -5220,14 +5248,7 @@
             .neq("status", "trash")
             .order("display_order", { ascending: true });
           if(error) throw error;
-          vendorWorkPhotoRowsCache = (data || []).map(row=>{
-            const next = { ...row };
-            if(!next.public_url && next.storage_path){
-              const pub = sb.storage.from(MARKER_PHOTO_BUCKET).getPublicUrl(next.storage_path);
-              next.public_url = String(pub?.data?.publicUrl || "").trim();
-            }
-            return next;
-          });
+          vendorWorkPhotoRowsCache = (data || []).map(row=>hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() }));
           vendorWorkPhotoCacheKey = cacheKey;
           indexVendorWorkPhotoRows(vendorWorkPhotoRowsCache);
           return vendorWorkPhotoRowsCache;
@@ -5245,11 +5266,25 @@
     }
 
     function getMarkerPhotosForVendorView(marker){
-      const out = { before: null, after: null };
+      const out = {
+        before: null,
+        after: null,
+        beforeHasData: false,
+        afterHasData: false,
+        beforeRaw: null,
+        afterRaw: null,
+      };
       const setPhoto = (kind, value)=>{
+        if(out[`${kind}HasData`] || hasPhotoData(value)){
+          out[`${kind}HasData`] = true;
+          if(!out[`${kind}Raw`]) out[`${kind}Raw`] = value;
+        }
         if(out[kind]) return;
         const resolved = resolveMarkerPhotoUrlCandidate(value);
-        if(resolved) out[kind] = resolved;
+        if(resolved){
+          out[kind] = resolved;
+          if(!out[`${kind}Raw`]) out[`${kind}Raw`] = value;
+        }
       };
       setPhoto("before", marker?.beforePhoto);
       setPhoto("after", marker?.afterPhoto);
@@ -5273,22 +5308,22 @@
       photoRows.forEach(row=>{
         const kind = normalizeVendorPhotoKind(row?.kind || row?.photo_type);
         if(!kind) return;
-        if(kind === "before" && out.before) return;
-        if(kind === "after" && out.after) return;
-        const resolved = resolveMarkerPhotoUrlCandidate({
-          public_url: row?.public_url || "",
-          storage_path: row?.storage_path || null,
-        });
-        if(resolved){
-          out[kind] = resolved;
-        }
+        out[`${kind}HasData`] = true;
+        if(!out[`${kind}Raw`]) out[`${kind}Raw`] = row;
+        if((kind === "before" && out.before) || (kind === "after" && out.after)) return;
+        const resolved = resolveMarkerPhotoUrlCandidate(row);
+        if(resolved) out[kind] = resolved;
       });
       return out;
     }
 
-    function makeVendorPhotoSlotHtml(url, label){
+    function makeVendorPhotoSlotHtml(url, label, hasData, rawPhoto){
       if(url){
         return `<img class="vendor-photo-thumb" src="${escapeHtml(url)}" alt="${escapeHtml(label)}写真" loading="lazy" referrerpolicy="no-referrer" data-act="open-photo-preview" data-photo-url="${escapeHtml(url)}" data-photo-label="${escapeHtml(label)}" />`;
+      }
+      if(hasData){
+        console.warn("[photo] failed to resolve url", rawPhoto);
+        return `<div class="vendor-photo-empty vendor-photo-error">写真を読み込めません</div>`;
       }
       return `<div class="vendor-photo-empty">写真なし</div>`;
     }
@@ -5315,7 +5350,8 @@
     function openPhotoPreview(url, label){
       closePhotoPreview();
       const resolvedUrl = String(url || "").trim();
-      if(!resolvedUrl) return;
+      if(!resolvedUrl || resolvedUrl.startsWith("blob:")) return;
+      if(isUuidLikeToken(resolvedUrl)) return;
       const overlay = document.createElement("div");
       overlay.className = "photo-preview-overlay";
       overlay.innerHTML = `
@@ -5406,15 +5442,20 @@
         const row = document.createElement("div");
         const markerStatus = normalizeMarkerStatus(marker);
         const isSelected = String(selectedId || "") === String(marker.id || "");
+        const displayNo = getMarkerDisplayNo(marker, idx);
         row.className = "vendor-row" + (markerStatus === "completed" ? " completed" : "") + (isSelected ? " sel" : "");
         const statusText = getMarkerStatusLabel(markerStatus);
         const vendorName = getVendorDisplayName(marker) || marker.vendor_name || marker.vendor || "業者未定";
         const memoText = (marker.memo || "").trim() || "なし";
         const photos = getMarkerPhotosForVendorView(marker);
+        console.log("[inline list] marker no", {
+          markerId: marker.id,
+          displayNo: getMarkerDisplayNo(marker, idx)
+        });
         row.innerHTML = `
           <div class="vendor-row-main">
             <div class="inline-vendor-row-title">
-              <span class="inline-vendor-no">No.${idx + 1}</span>
+              <span class="inline-vendor-no">No.${displayNo}</span>
               <span>${escapeHtml(marker.type || "種別未設定")}</span>
               <span>${escapeHtml(vendorName)}</span>
               <span class="status-badge ${escapeHtml(markerStatus)}">${escapeHtml(statusText)}</span>
@@ -5423,11 +5464,11 @@
             <div class="vendor-photo-thumbs">
               <div class="vendor-photo-box">
                 <div class="vendor-photo-label">Before</div>
-                ${makeVendorPhotoSlotHtml(photos.before, "Before")}
+                ${makeVendorPhotoSlotHtml(photos.before, "Before", photos.beforeHasData, photos.beforeRaw)}
               </div>
               <div class="vendor-photo-box">
                 <div class="vendor-photo-label">After</div>
-                ${makeVendorPhotoSlotHtml(photos.after, "After")}
+                ${makeVendorPhotoSlotHtml(photos.after, "After", photos.afterHasData, photos.afterRaw)}
               </div>
             </div>
           </div>
@@ -6689,10 +6730,25 @@
     }
 
     function clonePhotoInfo(photo){
-      if(!photo || typeof photo !== "object") return null;
+      if(!photo) return null;
+      if(typeof photo === "string"){
+        const resolved = resolvePhotoUrl(photo);
+        return resolved ? { public_url: resolved } : null;
+      }
+      if(typeof photo !== "object") return null;
       return {
+        id: photo.id || null,
+        bucket: photo.bucket || getPhotoBucketName(),
         storage_path: photo.storage_path || null,
-        public_url: photo.public_url || "",
+        storagePath: photo.storagePath || null,
+        path: photo.path || null,
+        public_url: sanitizeMarkerPhotoPublicUrl(photo.public_url || photo.publicUrl),
+        publicUrl: sanitizeMarkerPhotoPublicUrl(photo.publicUrl || photo.public_url),
+        signed_url: sanitizeMarkerPhotoPublicUrl(photo.signed_url || photo.signedUrl),
+        signedUrl: sanitizeMarkerPhotoPublicUrl(photo.signedUrl || photo.signed_url),
+        local_preview_url: photo.local_preview_url || "",
+        url: String(photo.url || "").trim(),
+        previewUrl: String(photo.previewUrl || "").trim(),
         file_name: photo.file_name || "",
         mime_type: photo.mime_type || "",
         file_size: Number(photo.file_size || 0) || 0,
@@ -6700,6 +6756,198 @@
         kind: photo.kind || photo.photo_type || null,
         photo_type: photo.photo_type || photo.kind || null,
       };
+    }
+
+    function isUuidLikeToken(value){
+      const v = String(value || "").trim();
+      if(!v) return false;
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+    }
+
+    function hasPhotoData(photo){
+      if(!photo) return false;
+      if(typeof photo === "string"){
+        const raw = String(photo).trim();
+        if(!raw) return false;
+        if(isUuidLikeToken(raw)) return true;
+        if(/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw)) return true;
+        if(raw.includes("/")) return true;
+        return false;
+      }
+      if(typeof photo !== "object") return false;
+      return !!(
+        photo.local_preview_url ||
+        photo.public_url || photo.publicUrl ||
+        photo.signed_url || photo.signedUrl ||
+        photo.storage_path || photo.storagePath || photo.path ||
+        photo.file_name || photo.id
+      );
+    }
+
+    function resolvePhotoUrl(photo){
+      if(!photo) return "";
+      if(typeof photo === "string"){
+        const raw = String(photo).trim();
+        if(!raw) return "";
+        if(raw.startsWith("blob:") || /^data:image\//i.test(raw)) return raw;
+        if(/^https?:\/\//i.test(raw)) return raw;
+        if(isUuidLikeToken(raw)) return "";
+        if(raw.includes("/")) return getPhotoPublicUrlFromStoragePath(raw);
+        return "";
+      }
+      if(typeof photo !== "object") return "";
+
+      const direct = String(
+        photo.public_url ||
+        photo.publicUrl ||
+        photo.signed_url ||
+        photo.signedUrl ||
+        photo.url ||
+        photo.previewUrl ||
+        photo.local_preview_url ||
+        ""
+      ).trim();
+      if(direct){
+        if(direct.startsWith("blob:") || /^data:image\//i.test(direct)) return direct;
+        if(/^https?:\/\//i.test(direct)) return direct;
+        if(isUuidLikeToken(direct)) return "";
+      }
+
+      const path = String(photo.storage_path || photo.storagePath || photo.path || "").trim();
+      if(path){
+        const bucket = String(photo.bucket || getPhotoBucketName() || MARKER_PHOTO_BUCKET);
+        let pubUrl = "";
+        if(isSupabaseConfigured() && isSupabaseSdkReady()){
+          try{
+            const sb = getSupabase();
+            const pub = sb.storage.from(bucket).getPublicUrl(path);
+            pubUrl = String(pub?.data?.publicUrl || "").trim();
+          }catch(_){}
+        }
+        if(!pubUrl) pubUrl = getPhotoPublicUrlFromStoragePath(path);
+        if(/^https?:\/\//i.test(pubUrl)) return pubUrl;
+      }
+      return "";
+    }
+
+    function applyMarkerDisplayNo(marker, no){
+      if(!marker || typeof marker !== "object") return;
+      const n = Number(no);
+      if(!Number.isFinite(n) || n <= 0) return;
+      marker.display_no = n;
+      marker.displayNo = n;
+      marker.marker_no = n;
+      marker.markerNo = n;
+      marker.no = n;
+      marker.number = n;
+      marker.marker_data = (marker.marker_data && typeof marker.marker_data === "object") ? marker.marker_data : {};
+      marker.marker_data.display_no = n;
+      marker.marker_data.marker_no = n;
+      marker.marker_data.local_marker_id = marker.marker_data.local_marker_id || marker.local_marker_id || marker.id || null;
+    }
+
+    function getMarkerDisplayNo(marker, fallbackIndex){
+      const value =
+        marker?.display_no ??
+        marker?.displayNo ??
+        marker?.marker_no ??
+        marker?.markerNo ??
+        marker?.no ??
+        marker?.number ??
+        marker?.marker_data?.display_no ??
+        marker?.marker_data?.marker_no;
+
+      const n = Number(value);
+      if(Number.isFinite(n) && n > 0){
+        if(marker) applyMarkerDisplayNo(marker, n);
+        return n;
+      }
+      const fallbackNo = Number(fallbackIndex) + 1;
+      if(marker && Number.isFinite(fallbackNo) && fallbackNo > 0){
+        applyMarkerDisplayNo(marker, fallbackNo);
+      }
+      return fallbackNo;
+    }
+
+    function getNextMarkerDisplayNo(currentMarkers){
+      const arr = Array.isArray(currentMarkers) ? currentMarkers : [];
+      let maxNo = 0;
+      arr.forEach(marker=>{
+        const value =
+          marker?.display_no ??
+          marker?.displayNo ??
+          marker?.marker_no ??
+          marker?.markerNo ??
+          marker?.no ??
+          marker?.number ??
+          marker?.marker_data?.display_no ??
+          marker?.marker_data?.marker_no;
+        const no = Number(value);
+        if(Number.isFinite(no) && no > maxNo) maxNo = no;
+      });
+      return maxNo + 1;
+    }
+
+    function fixMissingDisplayNumbersForMarkers(markerRows){
+      const rows = Array.isArray(markerRows) ? markerRows : [];
+      let fixedCount = 0;
+      let markerCount = 0;
+      const groups = new Map();
+      rows.forEach(marker=>{
+        if(!marker || typeof marker !== "object") return;
+        markerCount += 1;
+        const floorId = marker.floor_id || marker.marker_data?.floor_id || currentFloorId || "no_floor";
+        const drawingId = marker.drawing_id || marker.marker_data?.drawing_id || marker.marker_data?.drawingId || "no_drawing";
+        const pageNumber = Number(marker.page_number || marker.marker_data?.page_number || 0) || 0;
+        const key = `${floorId}::${drawingId}::${pageNumber}`;
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(marker);
+      });
+      groups.forEach(group=>{
+        let maxNo = 0;
+        group.forEach((marker, idx)=>{
+          const value =
+            marker?.display_no ??
+            marker?.displayNo ??
+            marker?.marker_no ??
+            marker?.markerNo ??
+            marker?.no ??
+            marker?.number ??
+            marker?.marker_data?.display_no ??
+            marker?.marker_data?.marker_no;
+          const n = Number(value);
+          if(Number.isFinite(n) && n > 0){
+            if(n > maxNo) maxNo = n;
+            applyMarkerDisplayNo(marker, n);
+          }
+        });
+        const sorted = [...group].sort((a, b)=>{
+          const ta = Date.parse(a.created_at || a.createdAt || 0) || Number(a.createdAt || 0) || 0;
+          const tb = Date.parse(b.created_at || b.createdAt || 0) || Number(b.createdAt || 0) || 0;
+          return ta - tb;
+        });
+        sorted.forEach(marker=>{
+          const alreadyAssigned =
+            marker?.display_no ??
+            marker?.displayNo ??
+            marker?.marker_no ??
+            marker?.markerNo ??
+            marker?.no ??
+            marker?.number ??
+            marker?.marker_data?.display_no ??
+            marker?.marker_data?.marker_no;
+          const parsed = Number(alreadyAssigned);
+          if(Number.isFinite(parsed) && parsed > 0) return;
+          maxNo += 1;
+          applyMarkerDisplayNo(marker, maxNo);
+          fixedCount += 1;
+        });
+      });
+      console.log("[markers] display numbers checked", {
+        markerCount,
+        fixedCount
+      });
+      return { markerCount, fixedCount };
     }
 
     function ensureMarkerPhotoState(marker){
@@ -6722,6 +6970,28 @@
       marker.afterPhotoDeletePath = marker.afterPhotoDeletePath || null;
       marker.cloud_marker_id = marker.cloud_marker_id || null;
       marker.supabase_marker_id = marker.supabase_marker_id || marker.cloud_marker_id || null;
+      const beforeUrl = resolvePhotoUrl(marker.beforePhoto);
+      const afterUrl = resolvePhotoUrl(marker.afterPhoto);
+      marker.beforePhotoUrl = beforeUrl || "";
+      marker.afterPhotoUrl = afterUrl || "";
+      marker.photos = {
+        ...(marker.photos && typeof marker.photos === "object" ? marker.photos : {}),
+        before: beforeUrl || "",
+        after: afterUrl || "",
+      };
+      const existingNo = Number(
+        marker?.display_no ??
+        marker?.displayNo ??
+        marker?.marker_no ??
+        marker?.markerNo ??
+        marker?.no ??
+        marker?.number ??
+        marker?.marker_data?.display_no ??
+        marker?.marker_data?.marker_no
+      );
+      if(Number.isFinite(existingNo) && existingNo > 0){
+        applyMarkerDisplayNo(marker, existingNo);
+      }
       const after = JSON.stringify({
         beforePhoto: marker.beforePhoto || null,
         afterPhoto: marker.afterPhoto || null,
@@ -7574,7 +7844,7 @@
       let changed = false;
       for(const arr of Object.values(mbk)){
         if(!Array.isArray(arr)) continue;
-        arr.forEach(m=>{
+        arr.forEach((m, idx)=>{
           if(stripLegacyAnnotationRotationFields(m)) changed = true;
           const beforeStatus = String(m.status || "");
           const normalizedStatus = normalizeMarkerStatus(m);
@@ -7582,6 +7852,13 @@
           if(normalizeMarkerVendorState(m)) changed = true;
           if(ensureMarkerPhotoState(m)) changed = true;
           if(safeNormalizeMarkerOffset(m)) changed = true;
+          const beforeDisplayNo = Number(
+            m?.display_no ?? m?.displayNo ?? m?.marker_no ?? m?.markerNo ?? m?.no ?? m?.number ??
+            m?.marker_data?.display_no ?? m?.marker_data?.marker_no
+          );
+          if(Number.isFinite(beforeDisplayNo) && beforeDisplayNo > 0){
+            applyMarkerDisplayNo(m, beforeDisplayNo);
+          }
           const bubbleSize = getMarkerBubbleSize(m);
           if(Number(m.bubbleWidth) !== bubbleSize.width || Number(m.bubbleHeight) !== bubbleSize.height){
             setMarkerBubbleSize(m, bubbleSize.width, bubbleSize.height);
@@ -7597,6 +7874,10 @@
           }
         });
       }
+      const fixResult = fixMissingDisplayNumbersForMarkers(
+        Object.values(mbk).flatMap(arr=>Array.isArray(arr) ? arr : [])
+      );
+      if(fixResult.fixedCount > 0) changed = true;
       return changed;
     }
 
@@ -7751,17 +8032,21 @@
     const brokenPhotoPreviewUrls = new Set();
 
     function getSafePhotoPreviewUrl(photo){
-      const raw = String(photo?.public_url || "").trim();
+      let raw = "";
+      if(photo && typeof photo === "object"){
+        const localPreview = String(photo.local_preview_url || "").trim();
+        if(/^data:image\//i.test(localPreview)) raw = localPreview;
+      }
+      if(!raw) raw = String(resolvePhotoUrl(photo) || "").trim();
       if(!raw) return "";
       if(brokenPhotoPreviewUrls.has(raw)) return "";
-      if(/^blob:/i.test(raw) || /^data:image\//i.test(raw)) return raw;
-      if(/^https?:\/\//i.test(raw)) return raw;
+      if(/^https?:\/\//i.test(raw) || /^data:image\//i.test(raw) || /^blob:/i.test(raw)) return raw;
       return "";
     }
 
     function getMarkerPhotoBadgeText(marker){
-      const hasBefore = !!(marker?.beforePhoto?.public_url || marker?.beforePhotoFile);
-      const hasAfter = !!(marker?.afterPhoto?.public_url || marker?.afterPhotoFile);
+      const hasBefore = !!(marker?.beforePhotoFile || hasPhotoData(marker?.beforePhoto));
+      const hasAfter = !!(marker?.afterPhotoFile || hasPhotoData(marker?.afterPhoto));
       if(hasBefore && hasAfter) return "Before/Afterあり";
       if(hasBefore) return "Beforeあり";
       if(hasAfter) return "Afterあり";
@@ -7795,7 +8080,12 @@
         }, { once: true });
         el.appendChild(img);
       }else{
-        el.textContent = "写真なし";
+        if(hasPhotoData(photo)){
+          console.warn("[photo] failed to resolve url", photo);
+          el.textContent = "写真を読み込めません";
+        }else{
+          el.textContent = "写真なし";
+        }
       }
     }
 
@@ -7867,6 +8157,15 @@
       }
     }
 
+    function readFileAsDataUrl(file){
+      return new Promise((resolve, reject)=>{
+        const fr = new FileReader();
+        fr.onload = ()=>resolve(String(fr.result || ""));
+        fr.onerror = ()=>reject(new Error("ファイル読み込みに失敗しました。"));
+        fr.readAsDataURL(file);
+      });
+    }
+
     async function handleQuickPhotoSelected(kind, inputEl){
       if(!quickEditorState) return;
       const marker = quickEditorState.draft;
@@ -7898,11 +8197,13 @@
         marker[delPathKey] = marker[photoKey].storage_path;
       }
       const compressed = await compressImageFile(file);
+      const localPreviewUrl = await readFileAsDataUrl(compressed);
       marker[fileKey] = compressed;
       marker[delKey] = false;
       marker[photoKey] = {
         storage_path: null,
-        public_url: URL.createObjectURL(compressed),
+        public_url: "",
+        local_preview_url: localPreviewUrl,
         file_name: compressed.name || file.name,
         mime_type: compressed.type || file.type || "image/jpeg",
       };
@@ -8411,7 +8712,9 @@
         : 0;
       if(!store.markersByKey) store.markersByKey = {};
       if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
+      fixMissingDisplayNumbersForMarkers(store.markersByKey[key]);
       const markerId = newId();
+      const nextNo = getNextMarkerDisplayNo(store.markersByKey[key]);
       const m = {
         id: markerId,
         local_marker_id: markerId,
@@ -8463,7 +8766,11 @@
         afterPhotoDelete: false,
         beforePhotoDeletePath: null,
         afterPhotoDeletePath: null,
+        display_no: nextNo,
+        marker_no: nextNo,
+        no: nextNo,
       };
+      applyMarkerDisplayNo(m, nextNo);
       safeNormalizeMarkerOffset(m);
       applyDefaultVendorByCategory(m.type || "共通", m, true);
       store.markersByKey[key].push(m);
@@ -8719,6 +9026,7 @@
 
       const imgRectNow = getCurrentImageRect();
       arr.forEach((m, idx)=>{
+        const displayNo = getMarkerDisplayNo(m, idx);
         const isSel = m.id === selectedId;
         const bubbleSize = getMarkerBubbleSize(m);
         const bubbleW = bubbleSize.width;
@@ -8776,7 +9084,7 @@
         const shortVendorName = vendorName.length > 8 ? vendorName.slice(0, 8) + "…" : vendorName;
         const t1 = svgEl("text", { x:10, y:22, "font-size":"16", "font-weight":"800", "data-role":"bubble" });
         const issueTypeTspan = svgEl("tspan", { fill:"#dc2626" });
-        issueTypeTspan.textContent = `${idx+1}. ${shortIssueType}`;
+        issueTypeTspan.textContent = `${displayNo}. ${shortIssueType}`;
         const vendorNameTspan = svgEl("tspan", { fill:"#16a34a" });
         vendorNameTspan.textContent = `（${shortVendorName}）`;
         t1.appendChild(issueTypeTspan);
@@ -8876,7 +9184,7 @@
           fill:"#ffffff",
           "pointer-events":"none",
         });
-        pinNumber.textContent = String(idx + 1);
+        pinNumber.textContent = String(displayNo);
         anchorGroup.appendChild(pinNumber);
 
         bubbleLayer.appendChild(bubbleGroup);
@@ -8921,12 +9229,13 @@
       }
 
       view.forEach((m, idx)=>{
+        const displayNo = getMarkerDisplayNo(m, idx);
         const status = normalizeMarkerStatus(m);
         const statusLabel = getMarkerStatusLabel(status);
         const div = document.createElement("div");
         div.className = "item" + (m.id===selectedId ? " sel" : "") + (status === "completed" ? " status-completed" : "");
         div.dataset.id = m.id;
-        const title = `${idx+1}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
+        const title = `${displayNo}. ${getVendorDisplayName(m) || "未選択"} / ${m.type}`;
         const photoTag = getMarkerPhotoBadgeText(m) || "なし";
         const sub = `状態：${statusLabel} / メモ：${(m.memo||"").trim() ? (m.memo.length>26? m.memo.slice(0,26)+"…" : m.memo) : "なし"} / 写真：${photoTag} / 作成：${new Date(m.createdAt).toLocaleString()}`;
         div.innerHTML = `
@@ -9613,6 +9922,7 @@
       const sw = stageW * scale, sh = stageH * scale;
 
       arr.forEach((m, idx) => {
+        const displayNo = getMarkerDisplayNo(m, idx);
         safeNormalizeMarkerOffset(m);
         const bubbleSize = getMarkerBubbleSize(m);
         const bw = bubbleSize.width * scale;
@@ -9653,7 +9963,7 @@
         octx.stroke();
 
         // タイトル
-        const title = `${idx+1}. ${getVendorDisplayName(m)} / ${m.type}`;
+        const title = `${displayNo}. ${getVendorDisplayName(m)} / ${m.type}`;
         octx.fillStyle = "#111827";
         octx.font = `bold ${12 * scale}px system-ui,sans-serif`;
         octx.fillText(
@@ -9796,7 +10106,7 @@
         if(!markerMatchesStatusFilter(marker, statusFilter)) return false;
         return true;
       });
-      return filtered.map((marker, idx)=>({ marker, number: idx + 1 }));
+      return filtered.map((marker, idx)=>({ marker, number: getMarkerDisplayNo(marker, idx) }));
     }
 
     function getMarkerPhotoPair(marker){
@@ -10284,18 +10594,22 @@
 
     function getPhotoSource(photo){
       if(!photo) return "";
-      if(typeof photo === "string") return photo;
-      return String(
-        photo.public_url ||
-        photo.url ||
-        photo.src ||
-        photo.data_url ||
-        photo.dataUrl ||
-        photo.blob_url ||
-        photo.blobUrl ||
-        photo.base64 ||
-        ""
-      ).trim();
+      const resolved = resolvePhotoUrl(photo);
+      if(resolved) return resolved;
+      if(typeof photo === "object"){
+        const localPreview = String(photo.local_preview_url || "").trim();
+        if(/^data:image\//i.test(localPreview)) return localPreview;
+        const fallback = String(photo.data_url || photo.dataUrl || photo.base64 || "").trim();
+        if(/^data:image\//i.test(fallback)) return fallback;
+      }
+      if(typeof photo === "string"){
+        const raw = String(photo).trim();
+        if(/^data:image\//i.test(raw)) return raw;
+      }
+      if(hasPhotoData(photo)){
+        console.warn("[photo] failed to resolve url", photo);
+      }
+      return "";
     }
 
     function blobToDataUrl(blob){
@@ -11269,6 +11583,7 @@
           .select("id,marker_id,local_marker_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
           .eq("floor_id", scope.floorId)
           .neq("status", "deleted")
+          .neq("status", "trash")
           .in("marker_id", markerIds);
         if(scope.inspectionId) byCloudQuery = byCloudQuery.eq("inspection_id", scope.inspectionId);
         if(scope.siteId) byCloudQuery = byCloudQuery.eq("site_id", scope.siteId);
@@ -11281,10 +11596,23 @@
           .select("id,marker_id,local_marker_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
           .eq("floor_id", scope.floorId)
           .neq("status", "deleted")
+          .neq("status", "trash")
           .in("local_marker_id", localMarkerIds);
         if(scope.inspectionId) byLocalQuery = byLocalQuery.eq("inspection_id", scope.inspectionId);
         if(scope.siteId) byLocalQuery = byLocalQuery.eq("site_id", scope.siteId);
         const { data, error } = await byLocalQuery;
+        if(error) throw error;
+        rows.push(...(data || []));
+      }
+      if(rows.length === 0){
+        let byFloorQuery = sb.from("marker_photos")
+          .select("id,marker_id,local_marker_id,drawing_id,page_number,kind,photo_type,storage_path,public_url,file_name,mime_type,file_size,caption,display_order,status")
+          .eq("floor_id", scope.floorId)
+          .neq("status", "deleted")
+          .neq("status", "trash");
+        if(scope.inspectionId) byFloorQuery = byFloorQuery.eq("inspection_id", scope.inspectionId);
+        if(scope.siteId) byFloorQuery = byFloorQuery.eq("site_id", scope.siteId);
+        const { data, error } = await byFloorQuery;
         if(error) throw error;
         rows.push(...(data || []));
       }
@@ -11296,25 +11624,13 @@
         if(!dedupMap.has(key)) dedupMap.set(key, row);
       });
       const uniqueRows = [...dedupMap.values()];
-      const hydrated = [];
-      for(const row of uniqueRows){
-        const next = { ...row };
+      return uniqueRows.map(row=>{
+        const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
         if(next?.drawing_id == null && Number(next?.page_number || 0) > 0){
           next.drawing_id = scope.drawingId;
         }
-        if(next.storage_path){
-          try{
-            const dlRes = await sb.storage.from(MARKER_PHOTO_BUCKET).download(next.storage_path);
-            if(!dlRes.error && dlRes.data){
-              next.public_url = URL.createObjectURL(dlRes.data);
-            }
-          }catch(photoErr){
-            console.warn("[pdf restore] photo download skipped", photoErr);
-          }
-        }
-        hydrated.push(next);
-      }
-      return hydrated;
+        return next;
+      });
     }
 
     async function movePdfDrawingToTrash(drawingId, options = {}){
@@ -11522,8 +11838,12 @@
         }
         const localMarkers = Object.entries(store.markersByKey || {})
           .filter(([key])=>keyMatchesFloor(key, restoreScope.floorId))
-          .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>({ ...marker, markerKey: key })) : []);
+          .flatMap(([key, arr])=>Array.isArray(arr) ? arr.map(marker=>{
+            marker.markerKey = key;
+            return marker;
+          }) : []);
         attachLoadedPhotosToMarkers(photoRows, localMarkers);
+        fixMissingDisplayNumbersForMarkers(localMarkers);
         const currentKey = activeKey();
         if(!Array.isArray(store.markersByKey[currentKey])) store.markersByKey[currentKey] = [];
         if(!Array.isArray(store.textNotesByKey[currentKey])) store.textNotesByKey[currentKey] = [];
@@ -11532,6 +11852,7 @@
         redrawBackground();
         redrawOverlay();
         redrawList();
+        if(typeof renderInlineVendorList === "function") renderInlineVendorList();
         updatePageInfo();
         syncButtons();
         syncSelectorsFromSelectedMarker();
