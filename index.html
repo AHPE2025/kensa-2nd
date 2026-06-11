@@ -759,6 +759,28 @@
     .text-note-delete:hover{
       background:#dc2626;
     }
+    .text-note-delete-v2 {
+      position: absolute;
+      top: -12px;
+      right: -12px;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: 2px solid #ffffff;
+      background: #ef4444;
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 22px;
+      text-align: center;
+      cursor: pointer;
+      z-index: 2147483647;
+      pointer-events: auto;
+      user-select: none;
+    }
+    .text-note-delete-v2:hover {
+      background: #dc2626;
+    }
     .text-note-resize-handle{
       position:absolute;
       right:-7px;
@@ -2914,6 +2936,105 @@
       await sb.from("drawing_text_notes")
         .update({ status: "trash", updated_at: new Date().toISOString() })
         .eq("local_text_id", key);
+    }
+
+    async function deleteTextNoteFromCloudV2(note){
+      const key = note.local_text_id || note.localTextId || "";
+      if(!key) return;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      const sb = getSupabase();
+      const { error } = await sb
+        .from("drawing_text_notes")
+        .update({
+          status: "trash",
+          updated_at: new Date().toISOString()
+        })
+        .eq("local_text_id", key);
+      if(error){
+        console.warn("[text note delete cloud v2] supabase error", error);
+      }
+    }
+
+    function deleteTextNoteV2(keyOrNote){
+      const key = typeof keyOrNote === "string"
+        ? keyOrNote
+        : getTextNoteKey(keyOrNote);
+
+      if(!key){
+        console.warn("[text note delete v2] missing key");
+        return;
+      }
+
+      const arr = textNotes();
+      const beforeCount = arr.length;
+
+      const targetNote = arr.find(n=>{
+        const noteKey = n.local_text_id || n.localTextId || n.id || "";
+        return String(noteKey) === String(key);
+      }) || findTextNoteByKey(key);
+
+      removeTextNoteFromStore(targetNote || { local_text_id: key, localTextId: key });
+
+      if(isSameTextNote(targetNote, selectedTextNoteId)) selectedTextNoteId = null;
+      if(textNoteEditorState && targetNote && isSameTextNote(targetNote, editingTextNoteKey || textNoteEditorState)){
+        closeTextNoteEditor();
+      }
+
+      const afterCount = textNotes().length;
+
+      console.log("[text note delete v2]", {
+        key,
+        beforeCount,
+        afterCount,
+        deleted: beforeCount !== afterCount,
+        inputMode
+      });
+
+      saveStore();
+      redrawOverlay();
+
+      if(targetNote){
+        deleteTextNoteFromCloudV2(targetNote).catch(error=>{
+          console.warn("[text note delete cloud v2] failed", error);
+        });
+      }
+    }
+
+    function bindTextNoteDeleteButtonV2(deleteBtn, note, textNoteEl){
+      void textNoteEl;
+      const key = getTextNoteKey(note);
+
+      const stopBubble = (event)=>{
+        event.stopPropagation();
+        if(typeof event.stopImmediatePropagation === "function"){
+          event.stopImmediatePropagation();
+        }
+      };
+
+      deleteBtn.addEventListener("click", (event)=>{
+        event.preventDefault();
+        stopBubble(event);
+
+        console.log("[text note delete v2 click]", {
+          key,
+          inputMode,
+          className: event.target?.className
+        });
+
+        deleteTextNoteV2(key);
+      }, true);
+
+      ["pointerdown", "mousedown", "touchstart", "click"].forEach((eventName)=>{
+        deleteBtn.addEventListener(eventName, (event)=>{
+          if(eventName === "click" || eventName === "touchstart"){
+            event.preventDefault();
+          }
+          stopBubble(event);
+        }, true);
+        if(eventName !== "click"){
+          deleteBtn.addEventListener(eventName, stopBubble, false);
+        }
+      });
     }
 
     async function loadTextNotesFromCloud(inspectionId, floorId, drawingId = null){
@@ -9532,12 +9653,13 @@
         el.style.width = `${w}px`;
         el.style.height = `${h}px`;
 
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "text-note-delete";
-        delBtn.textContent = "×";
-        delBtn.title = "削除";
-        el.appendChild(delBtn);
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "text-note-delete-v2";
+        deleteBtn.textContent = "×";
+        deleteBtn.title = "削除";
+        el.appendChild(deleteBtn);
+        bindTextNoteDeleteButtonV2(deleteBtn, note, el);
 
         const contentEl = document.createElement("div");
         contentEl.className = "text-note-content";
@@ -9607,32 +9729,6 @@
           });
         });
 
-        delBtn.addEventListener("pointerdown", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-        });
-        delBtn.addEventListener("mousedown", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-        });
-        delBtn.addEventListener("click", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-
-          const key = el.dataset.textNoteKey;
-          if(DEBUG_TEXT_NOTES){
-            console.log("[text note delete click]", {
-              inputMode,
-              key,
-              targetClass: event.target?.className
-            });
-          }
-          deleteTextNote(key);
-        });
-
         resizeHandle.addEventListener("pointerdown", (event)=>{
           event.preventDefault();
           event.stopPropagation();
@@ -9656,6 +9752,15 @@
 
         el.addEventListener("pointerdown", (event)=>{
           event.stopPropagation();
+        }, true);
+        el.addEventListener("mousedown", (event)=>{
+          event.stopPropagation();
+        }, true);
+        el.addEventListener("click", (event)=>{
+          event.stopPropagation();
+        }, true);
+        el.addEventListener("pointerdown", (event)=>{
+          event.stopPropagation();
         });
         el.addEventListener("mousedown", (event)=>{
           event.stopPropagation();
@@ -9667,7 +9772,7 @@
         el.addEventListener("pointerdown", (e)=>{
           if(e.button === 2) return;
           if(e.target.closest(".text-note-content")) return;
-          if(e.target.closest(".text-note-delete") || e.target.closest(".text-note-resize-handle")) return;
+          if(e.target.closest(".text-note-delete-v2") || e.target.closest(".text-note-resize-handle")) return;
           e.stopPropagation();
           selectedTextNoteId = noteKey;
           const base = imgRatioToCanvasPx(note.x, note.y);
@@ -10349,7 +10454,26 @@
       return false;
     }
 
-    const TEXT_NOTE_UI_SELECTOR = ".text-note-box, .text-note-content, .text-note-delete, .text-note-resize-handle";
+    const TEXT_NOTE_UI_SELECTOR = ".text-note-box, .text-note-content, .text-note-delete, .text-note-delete-v2, .text-note-resize-handle";
+
+    function isTextNoteControlTarget(target, event){
+      const selector = ".text-note-box, .text-note-content, .text-note-delete, .text-note-delete-v2, .text-note-resize-handle";
+      if(
+        target &&
+        target.closest &&
+        target.closest(selector)
+      ){
+        return true;
+      }
+      if(event){
+        try{
+          const p = getClientPointFromEvent(event);
+          const atPoint = document.elementFromPoint(p.clientX, p.clientY);
+          if(atPoint && atPoint.closest && atPoint.closest(selector)) return true;
+        }catch(_){}
+      }
+      return false;
+    }
 
     function isEventOnTextNoteUI(event){
       const check = (node)=> node?.closest?.(TEXT_NOTE_UI_SELECTOR);
@@ -10364,6 +10488,13 @@
     }
 
     function handleStagePointerTap(e, source = "stage"){
+      if(isTextNoteControlTarget(e.target, e)){
+        console.log("[stage tap skipped: text note control]", {
+          inputMode,
+          className: e.target?.className
+        });
+        return;
+      }
       if(shouldIgnoreBlankCreate(e)) return;
       if(drag || pendingDrag || markerBubbleResize || textNoteDrag) return;
       if(isEventOnTextNoteUI(e)){
@@ -10392,6 +10523,10 @@
       console.debug("stage tapped detail", { source, x: p.x, y: p.y });
       selectedId = null;
       if(inputMode === "text"){
+        if(isTextNoteControlTarget(e.target, e)){
+          console.log("[create text note skipped: text note control]");
+          return;
+        }
         console.log("creating text note");
         closeQuickMarkerEditor({ keepDraft: false });
         createTextNoteAt(p.x, p.y);
@@ -10495,6 +10630,13 @@
         e.preventDefault();
         e.stopPropagation();
       } else {
+        if(isTextNoteControlTarget(e.target, e)){
+          console.log("[stage tap skipped: text note control]", {
+            inputMode,
+            className: e.target?.className
+          });
+          return;
+        }
         // 空白エリアをクリック → 仮ピン作成してクイック編集
         handleStagePointerTap(e, "overlay.pointerdown");
         e.preventDefault();
