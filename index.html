@@ -9563,13 +9563,28 @@
           selectedTextNoteId = noteKey;
           el.classList.add("is-selected");
         });
+        contentEl.addEventListener("mousedown", (event)=>{
+          event.stopPropagation();
+        });
         contentEl.addEventListener("click", (event)=>{
           event.stopPropagation();
         });
         contentEl.addEventListener("keydown", (event)=>{
           event.stopPropagation();
         });
-        contentEl.addEventListener("input", handleTextNoteInput);
+        contentEl.addEventListener("input", (event)=>{
+          event.stopPropagation();
+
+          const key = el.dataset.textNoteKey;
+          const noteRef = findTextNoteByKey(key);
+          if(!noteRef) return;
+
+          setTextNoteContent(noteRef, contentEl.innerText || "");
+          noteRef.status = "active";
+
+          saveStore();
+          scheduleTextNoteSave(noteRef);
+        });
         contentEl.addEventListener("focus", ()=>{
           el.classList.add("is-editing");
           editingTextNoteKey = noteKey;
@@ -9595,20 +9610,58 @@
         delBtn.addEventListener("pointerdown", (event)=>{
           event.preventDefault();
           event.stopPropagation();
+          event.stopImmediatePropagation?.();
+        });
+        delBtn.addEventListener("mousedown", (event)=>{
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation?.();
         });
         delBtn.addEventListener("click", (event)=>{
           event.preventDefault();
           event.stopPropagation();
-          deleteTextNote(noteKey);
+          event.stopImmediatePropagation?.();
+
+          const key = el.dataset.textNoteKey;
+          if(DEBUG_TEXT_NOTES){
+            console.log("[text note delete click]", {
+              inputMode,
+              key,
+              targetClass: event.target?.className
+            });
+          }
+          deleteTextNote(key);
         });
 
         resizeHandle.addEventListener("pointerdown", (event)=>{
           event.preventDefault();
           event.stopPropagation();
+          event.stopImmediatePropagation?.();
+
           selectedTextNoteId = noteKey;
           pushUndoSnapshot("テキストメモサイズ変更");
           startResizeTextNote(event, note, el);
           el.classList.add("is-selected");
+        });
+        resizeHandle.addEventListener("mousedown", (event)=>{
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation?.();
+        });
+        resizeHandle.addEventListener("click", (event)=>{
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation?.();
+        });
+
+        el.addEventListener("pointerdown", (event)=>{
+          event.stopPropagation();
+        });
+        el.addEventListener("mousedown", (event)=>{
+          event.stopPropagation();
+        });
+        el.addEventListener("click", (event)=>{
+          event.stopPropagation();
         });
 
         el.addEventListener("pointerdown", (e)=>{
@@ -10296,14 +10349,36 @@
       return false;
     }
 
+    const TEXT_NOTE_UI_SELECTOR = ".text-note-box, .text-note-content, .text-note-delete, .text-note-resize-handle";
+
+    function isEventOnTextNoteUI(event){
+      const check = (node)=> node?.closest?.(TEXT_NOTE_UI_SELECTOR);
+      if(check(event?.target)) return true;
+      try{
+        const p = getClientPointFromEvent(event);
+        const atPoint = document.elementFromPoint(p.clientX, p.clientY);
+        return !!check(atPoint);
+      }catch(_){
+        return false;
+      }
+    }
+
     function handleStagePointerTap(e, source = "stage"){
       if(shouldIgnoreBlankCreate(e)) return;
       if(drag || pendingDrag || markerBubbleResize || textNoteDrag) return;
+      if(isEventOnTextNoteUI(e)){
+        if(DEBUG_TEXT_NOTES){
+          console.log("[stage tap skipped: text note]", {
+            inputMode,
+            targetClass: e.target?.className
+          });
+        }
+        return;
+      }
       const target = e?.target;
       if(target?.closest){
         if(target.closest("g[data-id]")) return;
         if(target.closest("[data-role]")) return;
-        if(target.closest(".text-note-box")) return;
         if(target.closest("#quickMarkerEditor")) return;
         if(target.closest("#textNoteEditor")) return;
       }
@@ -10583,6 +10658,7 @@
         }
         return;
       }
+      if(e.target?.closest?.(TEXT_NOTE_UI_SELECTOR)) return;
       handleStagePointerTap(e, `fallback.${e.type}`);
     };
 
