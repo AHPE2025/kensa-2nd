@@ -426,6 +426,17 @@
     body.pdf-exporting .annotation-delete-control,
     body.pdf-exporting .annotation-resize-control{display:none !important;}
     body.pdf-exporting .text-note-box.is-selected{outline:none !important;}
+    body.pdf-exporting-stage-only .text-box-v3-delete,
+    body.pdf-exporting-stage-only .text-box-v3-resize,
+    body.pdf-exporting-stage-only .text-note-delete,
+    body.pdf-exporting-stage-only .text-note-delete-v2,
+    body.pdf-exporting-stage-only .text-note-resize-handle,
+    body.pdf-exporting-stage-only .fullscreen-btn,
+    body.pdf-exporting-stage-only .full-screen-btn,
+    body.pdf-exporting-stage-only .btn-fullscreen,
+    body.pdf-exporting-stage-only .fs-btn{display:none !important;}
+    body.pdf-exporting-stage-only .text-box-v3,
+    body.pdf-exporting-stage-only .marker-bubble{box-shadow:none;}
     body.fullscreen-active{overflow:hidden}
     .pseudo-fullscreen{
       position:fixed !important;
@@ -11995,10 +12006,36 @@
       await new Promise(resolve=>setTimeout(resolve, 200));
     }
 
-    async function captureCurrentDrawingStageForPdf(){
-      const target = $("stageRotateLayer") || stageRotateLayer;
-      if(!target){
-        throw new Error("図面キャンバスが見つかりません。");
+    function getPdfExportStageElement(){
+      const candidates = [
+        document.querySelector("[data-pdf-export-stage='true']"),
+        document.querySelector("#stageRotateLayer"),
+        document.querySelector("#drawingStage"),
+        document.querySelector("#pdfStage"),
+        document.querySelector("#stage"),
+        document.querySelector(".drawing-stage"),
+        document.querySelector(".pdf-stage"),
+        document.querySelector(".canvas-stage"),
+        document.querySelector(".drawing-canvas-wrap"),
+        document.querySelector(".pdf-canvas-wrap"),
+        document.querySelector(".floor-canvas"),
+      ].filter(Boolean);
+
+      for(const el of candidates){
+        const hasDrawing =
+          el.querySelector("canvas, img, svg") ||
+          el.querySelector(".marker-bubble, .marker-pin, .text-box-v3, .text-note-box");
+        if(hasDrawing) return el;
+      }
+
+      console.warn("[pdf export] stage element not found");
+      return null;
+    }
+
+    async function captureDrawingStageOnlyForPdf(){
+      const stageEl = getPdfExportStageElement();
+      if(!stageEl){
+        throw new Error("PDF出力用の図面ステージが見つかりません");
       }
       const bg = store.activeBg;
       if(!bg || bg.kind !== "pdf"){
@@ -12010,6 +12047,7 @@
       selectedId = null;
       selectedTextNoteId = null;
 
+      document.body.classList.add("pdf-exporting-stage-only");
       document.body.classList.add("pdf-exporting");
       try{
         try{ redrawOverlay(); }catch(_){}
@@ -12017,22 +12055,24 @@
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         await new Promise(resolve=>setTimeout(resolve, 160));
 
-        const captureW = Math.max(1, Math.round(Number(stageW) || target.offsetWidth || 1));
-        const captureH = Math.max(1, Math.round(Number(stageH) || target.offsetHeight || 1));
+        const captureW = Math.max(1, Math.round(Number(stageW) || stageEl.scrollWidth || stageEl.offsetWidth || 1));
+        const captureH = Math.max(1, Math.round(Number(stageH) || stageEl.scrollHeight || stageEl.offsetHeight || 1));
         const h2c = await loadHtml2Canvas();
         const scale = Math.max(2, window.devicePixelRatio || 1);
         const srcCanvas = $("bg");
 
-        const canvas = await h2c(target, {
+        const canvas = await h2c(stageEl, {
           backgroundColor: "#ffffff",
           scale,
           useCORS: true,
           allowTaint: true,
           logging: false,
-          width: captureW,
-          height: captureH,
           scrollX: 0,
           scrollY: 0,
+          width: captureW,
+          height: captureH,
+          windowWidth: Math.max(document.documentElement.clientWidth, captureW),
+          windowHeight: Math.max(document.documentElement.clientHeight, captureH),
           onclone: (clonedDoc)=>{
             const clonedBg = clonedDoc.getElementById("bg");
             if(!clonedBg || !srcCanvas) return;
@@ -12049,14 +12089,11 @@
           },
         });
 
-        return {
-          dataUrl: canvas.toDataURL("image/png"),
-          width: captureW,
-          height: captureH,
-        };
+        return canvas.toDataURL("image/png", 1.0);
       }finally{
         selectedId = savedSelectedId;
         selectedTextNoteId = savedSelectedTextNoteId;
+        document.body.classList.remove("pdf-exporting-stage-only");
         document.body.classList.remove("pdf-exporting");
         try{ redrawOverlay(); }catch(_){}
         try{ redrawTextNotes(); }catch(_){}
@@ -12369,13 +12406,21 @@
       if(!imageData) return;
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
-      const margin = 4;
+      const margin = 8;
       const maxW = Math.max(10, pageW - margin * 2);
       const maxH = Math.max(10, pageH - margin * 2);
       const props = pdf.getImageProperties(imageData);
-      const scale = Math.min(maxW / props.width, maxH / props.height);
-      const drawW = Math.max(1, props.width * scale);
-      const drawH = Math.max(1, props.height * scale);
+      const imgRatio = props.width / props.height;
+      const pageRatio = maxW / maxH;
+      let drawW;
+      let drawH;
+      if(imgRatio > pageRatio){
+        drawW = maxW;
+        drawH = drawW / imgRatio;
+      }else{
+        drawH = maxH;
+        drawW = drawH * imgRatio;
+      }
       const dx = (pageW - drawW) / 2;
       const dy = (pageH - drawH) / 2;
       const fmt = /^data:image\/png/i.test(imageData) ? "PNG" : "JPEG";
@@ -12400,45 +12445,21 @@
     }
 
     async function buildPdfDrawingPageImage(options = {}){
-      const orderedMarkers = Array.isArray(options.orderedMarkers) ? options.orderedMarkers : [];
-      const pageNumber = Number(options.pageNumber || 1);
       const bg = store.activeBg;
       if(!bg || bg.kind !== "pdf"){
         throw new Error("図面PDFが選択されていません。");
       }
       await ensurePageRendered(Number(bg.page || 1));
       await stabilizePdfCapture();
-      const stageCapture = await captureCurrentDrawingStageForPdf();
-      const stageImageData = stageCapture.dataUrl;
+      const stageEl = getPdfExportStageElement();
+      const stageImageData = await captureDrawingStageOnlyForPdf();
       const drawingSize = {
-        width: Number(stageCapture.width || stageW || 1),
-        height: Number(stageCapture.height || stageH || 1),
+        width: Math.max(1, Math.round(Number(stageW) || stageEl?.scrollWidth || stageEl?.offsetWidth || 1)),
+        height: Math.max(1, Math.round(Number(stageH) || stageEl?.scrollHeight || stageEl?.offsetHeight || 1)),
       };
       const orientation = choosePdfDrawingOrientation(drawingSize);
-      const drawingDom = buildPdfDrawingDom({
-        headerData: getPdfHeaderData(),
-        stageImageData,
-        useStageCapture: true,
-        pageNumber,
-        orderedMarkers,
-        drawingSize,
-        orientation,
-      });
-      const host = createPdfHiddenRoot(orientation === "landscape" ? 1640 : 1160);
-      host.appendChild(drawingDom);
-      await waitForImagesReady(drawingDom);
-      await new Promise(resolve=>setTimeout(resolve, 180));
-      const h2c = await loadHtml2Canvas();
-      const pageCanvas = await h2c(drawingDom, {
-        backgroundColor: "#ffffff",
-        scale: 2.6,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-      });
-      host.remove();
       return {
-        imageData: pageCanvas.toDataURL("image/png"),
+        imageData: stageImageData,
         orientation,
       };
     }
