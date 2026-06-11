@@ -2810,6 +2810,12 @@
       if(payload.id && String(payload.id).startsWith("txt_")){
         delete payload.id;
       }
+      console.log("[text note payload]", {
+        local_text_id: payload.local_text_id,
+        content: payload.content,
+        id: payload.id,
+        status: payload.status,
+      });
       return payload;
     }
 
@@ -2843,7 +2849,6 @@
         inspectionId,
       };
       const payload = buildTextNotePayload(storeNote, saveCtx);
-      console.log("[text note payload]", payload);
       const { data, error } = await sb.from("drawing_text_notes")
         .upsert(payload, { onConflict: "local_text_id" })
         .select("id, local_text_id")
@@ -2878,6 +2883,8 @@
         const { page_number, drawing_id } = parseTextNoteKey(key);
         arr.forEach(note=>{
           if(!shouldSaveTextNote(note)) return;
+          const content = getTextNoteContent(note).trim();
+          if(!content && !isUuid(note.id)) return;
           notesToSave.push({
             note,
             page_number: page_number > 0 ? page_number : 1,
@@ -8560,6 +8567,7 @@
         height: clamp(Number.isFinite(Number(src.height)) ? Number(src.height) : defaultHeightRatio, heightRatioMin, heightRatioMax),
         content,
         text_content: content,
+        textContent: content,
         note_type: src.note_type || src.noteType || "memo",
         font_size: clamp(parseInt(String(src.font_size ?? src.fontSize ?? 14), 10) || 14, 10, 32),
         is_bold: isBold,
@@ -9159,8 +9167,7 @@
       note.updated_at = new Date().toISOString();
     }
 
-    let textNoteInlineSaveTimer = null;
-    let textNoteInlineSaveKey = null;
+    let textNoteSaveTimers = {};
 
     function isTextNoteContentFocused(){
       const ae = document.activeElement;
@@ -9170,25 +9177,22 @@
     function scheduleTextNoteSave(note){
       const key = getTextNoteKey(note);
       if(!key) return;
-      textNoteInlineSaveKey = key;
-      if(textNoteInlineSaveTimer){
-        clearTimeout(textNoteInlineSaveTimer);
-        textNoteInlineSaveTimer = null;
-      }
-      textNoteInlineSaveTimer = setTimeout(()=>{
-        textNoteInlineSaveTimer = null;
-        const target = findTextNoteByKey(textNoteInlineSaveKey);
+      clearTimeout(textNoteSaveTimers[key]);
+      textNoteSaveTimers[key] = setTimeout(()=>{
+        const target = findTextNoteByKey(key) || note;
         if(target){
           saveSingleTextNoteToCloud(target).catch(error=>{
             console.error("[text note inline save] cloud save failed", error);
           });
         }
+        delete textNoteSaveTimers[key];
       }, 800);
     }
 
     function focusTextNoteInlineEditor(note){
       const key = getTextNoteKey(note);
-      const el = document.querySelector(`[data-text-note-key="${key}"] .text-note-content`);
+      const escapedKey = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(key) : key.replace(/"/g, '\\"');
+      const el = document.querySelector(`.text-note-content[data-text-note-key="${escapedKey}"]`);
       if(!el) return;
       const box = el.closest(".text-note-box");
       el.focus();
@@ -9211,18 +9215,35 @@
       el.classList.toggle("is-empty", !text);
     }
 
-    function handleTextNoteInput(event, note){
+    function handleTextNoteInput(event){
       event.stopPropagation();
-      const value = event.currentTarget.innerText || "";
-      const target = findTextNoteByKey(getTextNoteKey(note)) || note;
-      setTextNoteContent(target, value);
-      target.status = "active";
-      target.updated_at = new Date().toISOString();
-      syncTextNoteEmptyState(event.currentTarget);
+      const contentEl = event.currentTarget;
+      const key = contentEl.dataset.textNoteKey || "";
+      const targetNote = findTextNoteByKey(key) || textNotes().find(n=>isSameTextNote(n, key));
+      if(!targetNote){
+        console.warn("[text note input] note not found", {
+          key,
+          notes: textNotes().map(n=>({
+            id: n.id,
+            local_text_id: n.local_text_id,
+            localTextId: n.localTextId,
+            content: n.content,
+          })),
+        });
+        return;
+      }
+      const value = contentEl.innerText || "";
+      setTextNoteContent(targetNote, value);
+      targetNote.status = "active";
+      targetNote.updated_at = new Date().toISOString();
+      console.log("[text note input]", {
+        key,
+        value,
+        contentAfterSet: targetNote.content,
+      });
+      syncTextNoteEmptyState(contentEl);
       saveStore();
-      dirty = true;
-      updateSaveStatus("dirty");
-      scheduleTextNoteSave(target);
+      scheduleTextNoteSave(targetNote);
     }
 
     function findTextNoteByKey(keyOrNote){
@@ -9486,7 +9507,7 @@
       dirty = true;
       updateSaveStatus("dirty");
       redrawOverlay();
-      selectTextNote(note);
+      selectedTextNoteId = getTextNoteKey(note);
       setTimeout(()=>{
         focusTextNoteInlineEditor(note);
       }, 0);
@@ -9534,8 +9555,21 @@
         });
       });
     }
-    function redrawTextNotes(){
+    function redrawTextNotes(options = {}){
       if(!textNotesLayer) return;
+      if(!options.force && isTextNoteContentFocused()){
+        const ae = document.activeElement;
+        const key = ae?.dataset?.textNoteKey || "";
+        if(key){
+          const target = findTextNoteByKey(key);
+          if(target){
+            setTextNoteContent(target, ae.innerText || "");
+            syncTextNoteEmptyState(ae);
+            saveStore();
+          }
+        }
+        return;
+      }
       textNotesLayer.innerHTML = "";
       const arr = textNotes()
         .map((note, idx)=>{
@@ -9567,8 +9601,7 @@
         el.style.color = note.text_color || "#111827";
         el.style.backgroundColor = note.background_color || "#ffffff";
         el.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
-        const text = getTextNoteContent(note);
-        const displayText = String(text) === "メモ未入力" ? "" : String(text || "");
+        const content = getTextNoteContent(note);
         const delBtn = document.createElement("button");
         delBtn.type = "button";
         delBtn.className = "text-note-delete";
@@ -9579,7 +9612,12 @@
         textContent.className = "text-note-content";
         textContent.contentEditable = "true";
         textContent.spellcheck = false;
-        if(displayText) textContent.textContent = displayText;
+        textContent.dataset.textNoteKey = noteKey;
+        textContent.setAttribute("data-text-note-key", noteKey);
+        const isEditing = document.activeElement === textContent;
+        if(!isEditing){
+          textContent.innerText = String(content) === "メモ未入力" ? "" : String(content || "");
+        }
         syncTextNoteEmptyState(textContent);
         if(note.is_bold || note.font_weight === "bold"){
           textContent.style.fontWeight = "bold";
@@ -9589,7 +9627,7 @@
         resizeHandle.className = "text-note-resize-handle";
         resizeHandle.title = "サイズ変更";
         el.appendChild(resizeHandle);
-        el.title = textNoteTypeLabel(note.note_type);
+        el.title = textNoteTypeLabel(note.note_type) + (content ? `: ${String(content).slice(0, 40)}` : "");
         el.addEventListener("pointerdown", (event)=>{
           event.stopPropagation();
         }, true);
@@ -9607,25 +9645,26 @@
         textContent.addEventListener("keydown", (event)=>{
           event.stopPropagation();
         });
-        textContent.addEventListener("input", (event)=>{
-          handleTextNoteInput(event, note);
-        });
+        textContent.addEventListener("input", handleTextNoteInput);
         textContent.addEventListener("focus", ()=>{
           el.classList.add("is-editing");
           editingTextNoteKey = noteKey;
           selectedTextNoteId = noteKey;
         });
-        textContent.addEventListener("blur", ()=>{
+        textContent.addEventListener("blur", (event)=>{
+          event.stopPropagation();
           el.classList.remove("is-editing");
           if(editingTextNoteKey === noteKey) editingTextNoteKey = null;
-          const target = findTextNoteByKey(noteKey);
+          const key = textContent.dataset.textNoteKey || noteKey;
+          const target = findTextNoteByKey(key);
           if(!target) return;
-          setTextNoteContent(target, textContent.innerText || "");
+          const value = textContent.innerText || "";
+          setTextNoteContent(target, value);
           syncTextNoteEmptyState(textContent);
           saveStore();
-          if(textNoteInlineSaveTimer){
-            clearTimeout(textNoteInlineSaveTimer);
-            textNoteInlineSaveTimer = null;
+          if(textNoteSaveTimers[key]){
+            clearTimeout(textNoteSaveTimers[key]);
+            delete textNoteSaveTimers[key];
           }
           saveSingleTextNoteToCloud(target).catch(error=>{
             console.error("[text note blur save] cloud save failed", error);
