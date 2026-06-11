@@ -825,6 +825,91 @@
       content:"メモ入力";
       color:#94a3b8;
     }
+    .text-box-v3 {
+      position: absolute;
+      box-sizing: border-box;
+      width: 260px;
+      height: 90px;
+      min-width: 120px;
+      min-height: 48px;
+      max-width: 600px;
+      max-height: 360px;
+      background: #ffffff;
+      border: 2px solid #2563eb;
+      border-radius: 12px;
+      padding: 12px 14px;
+      z-index: 300;
+      overflow: visible;
+      cursor: move;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+      pointer-events: auto;
+    }
+    .text-box-v3.is-selected {
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    }
+    .text-box-v3-content {
+      width: 100%;
+      height: 100%;
+      outline: none;
+      cursor: text;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 16px;
+      line-height: 1.5;
+      color: #111827;
+      overflow: hidden;
+      user-select: text;
+    }
+    .text-box-v3-content:empty::before {
+      content: "メモ入力";
+      color: #94a3b8;
+    }
+    .text-box-v3-delete {
+      position: absolute;
+      top: -13px;
+      right: -13px;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: 2px solid #ffffff;
+      background: #ef4444;
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 22px;
+      text-align: center;
+      cursor: pointer;
+      z-index: 2147483647;
+      pointer-events: auto;
+      user-select: none;
+    }
+    .text-box-v3-delete:hover {
+      background: #dc2626;
+    }
+    .text-box-v3-resize {
+      position: absolute;
+      right: -8px;
+      bottom: -8px;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      background: #2563eb;
+      border: 2px solid #ffffff;
+      cursor: nwse-resize;
+      z-index: 2147483647;
+      pointer-events: auto;
+      user-select: none;
+    }
+    .text-box-v3-resize::after {
+      content: "";
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      width: 7px;
+      height: 7px;
+      border-right: 2px solid #ffffff;
+      border-bottom: 2px solid #ffffff;
+    }
     .annotation-controls,
     .annotation-control-layer{
       position:absolute;
@@ -9539,6 +9624,564 @@
       }
     }
 
+    // -------------------- textBoxV3 --------------------
+    let textBoxV3SaveTimers = {};
+
+    function getStageRectForTextBoxV3() {
+      const base = getStageRect();
+      if (base && base.width > 0 && base.height > 0) return base;
+      const stage =
+        document.querySelector("#stage") ||
+        document.querySelector("#pdfStage") ||
+        document.querySelector(".stage") ||
+        document.querySelector(".pdf-stage") ||
+        document.querySelector("#stageRotateLayer") ||
+        document.querySelector("#overlay")?.parentElement;
+      if (!stage) return null;
+      const rect = stage.getBoundingClientRect();
+      return {
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+      };
+    }
+
+    function getTextBoxV3Content(note) {
+      return String(note?.content ?? note?.text_content ?? note?.textContent ?? "");
+    }
+
+    function setTextBoxV3Content(note, value) {
+      const v = String(value || "");
+      note.content = v;
+      note.text_content = v;
+      note.textContent = v;
+      note.updated_at = new Date().toISOString();
+    }
+
+    function normalizeTextBoxV3(note) {
+      if (!note.local_text_id && note.localTextId) note.local_text_id = note.localTextId;
+      if (!note.localTextId && note.local_text_id) note.localTextId = note.local_text_id;
+
+      if (!note.local_text_id && !note.localTextId) {
+        const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        note.local_text_id = id;
+        note.localTextId = id;
+      }
+
+      note.content = getTextBoxV3Content(note);
+      note.text_content = note.content;
+      note.textContent = note.content;
+      note.status = note.status || "active";
+      note.type = note.type || "textBoxV3";
+
+      const stageRect = getStageRectForTextBoxV3();
+
+      let widthPx = Number(note.width || 0);
+      let heightPx = Number(note.height || 0);
+
+      if (widthPx > 0 && widthPx <= 1 && stageRect?.width) {
+        widthPx = widthPx * stageRect.width;
+      }
+
+      if (heightPx > 0 && heightPx <= 1 && stageRect?.height) {
+        heightPx = heightPx * stageRect.height;
+      }
+
+      const invalidSize =
+        !widthPx ||
+        !heightPx ||
+        widthPx < 80 ||
+        heightPx < 32 ||
+        widthPx > 600 ||
+        heightPx > 360;
+
+      if (invalidSize) {
+        widthPx = 260;
+        heightPx = 90;
+
+        if (stageRect?.width && stageRect?.height) {
+          note.width = widthPx / stageRect.width;
+          note.height = heightPx / stageRect.height;
+        } else {
+          note.width = widthPx;
+          note.height = heightPx;
+        }
+      }
+
+      return note;
+    }
+
+    function findTextBoxV3Note(key) {
+      return textNotes().find(n => {
+        const noteKey = n.local_text_id || n.localTextId || n.id || "";
+        return String(noteKey) === String(key);
+      });
+    }
+
+    function createTextBoxV3At(x, y) {
+      const stageRect = getStageRectForTextBoxV3();
+
+      const widthPx = 260;
+      const heightPx = 90;
+
+      const note = {
+        id: null,
+        local_text_id: `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        localTextId: null,
+        type: "textBoxV3",
+        content: "",
+        text_content: "",
+        textContent: "",
+        x,
+        y,
+        width: stageRect?.width ? widthPx / stageRect.width : widthPx,
+        height: stageRect?.height ? heightPx / stageRect.height : heightPx,
+        font_size: 16,
+        is_bold: false,
+        note_type: "memo",
+        rotation: 0,
+        display_order: Date.now(),
+        status: "active",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      note.localTextId = note.local_text_id;
+
+      textNotes().push(note);
+
+      saveStore();
+      redrawOverlay();
+
+      setTimeout(() => {
+        focusTextBoxV3(note.local_text_id);
+      }, 0);
+
+      return note;
+    }
+
+    function renderTextBoxV3(note) {
+      normalizeTextBoxV3(note);
+
+      const key = note.local_text_id || note.localTextId;
+      if (!key) return null;
+
+      const stageRect = getStageRectForTextBoxV3();
+      if (!stageRect) return null;
+
+      const box = document.createElement("div");
+      box.className = "text-box-v3";
+      box.dataset.textBoxId = key;
+
+      const xPx = Number(note.x || 0) <= 1 ? Number(note.x || 0) * stageRect.width : Number(note.x || 0);
+      const yPx = Number(note.y || 0) <= 1 ? Number(note.y || 0) * stageRect.height : Number(note.y || 0);
+      const widthPx = Number(note.width || 0) <= 1 ? Number(note.width || 0) * stageRect.width : Number(note.width || 260);
+      const heightPx = Number(note.height || 0) <= 1 ? Number(note.height || 0) * stageRect.height : Number(note.height || 90);
+
+      box.style.left = `${xPx}px`;
+      box.style.top = `${yPx}px`;
+      box.style.width = `${Math.max(120, Math.min(600, widthPx))}px`;
+      box.style.height = `${Math.max(48, Math.min(360, heightPx))}px`;
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "text-box-v3-delete";
+      deleteBtn.textContent = "×";
+      deleteBtn.title = "削除";
+
+      const content = document.createElement("div");
+      content.className = "text-box-v3-content";
+      content.contentEditable = "true";
+      content.innerText = getTextBoxV3Content(note);
+
+      const resize = document.createElement("div");
+      resize.className = "text-box-v3-resize";
+
+      box.appendChild(deleteBtn);
+      box.appendChild(content);
+      box.appendChild(resize);
+
+      bindTextBoxV3Events(box, content, deleteBtn, resize, note);
+
+      return box;
+    }
+
+    function bindTextBoxV3Events(box, content, deleteBtn, resize, note) {
+      const key = note.local_text_id || note.localTextId;
+
+      const stopOnly = (event) => {
+        event.stopPropagation();
+      };
+
+      const stopAll = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+      };
+
+      ["pointerdown", "mousedown", "click", "touchstart"].forEach((eventName) => {
+        box.addEventListener(eventName, stopOnly, true);
+        box.addEventListener(eventName, stopOnly, false);
+      });
+
+      ["pointerdown", "mousedown", "click", "keydown", "keyup"].forEach((eventName) => {
+        content.addEventListener(eventName, stopOnly, true);
+        content.addEventListener(eventName, stopOnly, false);
+      });
+
+      content.addEventListener("input", (event) => {
+        event.stopPropagation();
+
+        const targetNote = findTextBoxV3Note(key);
+        if (!targetNote) return;
+
+        setTextBoxV3Content(targetNote, content.innerText || "");
+        targetNote.status = "active";
+
+        saveStore();
+        scheduleTextBoxV3Save(targetNote);
+      });
+
+      content.addEventListener("blur", (event) => {
+        event.stopPropagation();
+
+        const targetNote = findTextBoxV3Note(key);
+        if (!targetNote) return;
+
+        setTextBoxV3Content(targetNote, content.innerText || "");
+        saveStore();
+        saveTextBoxV3ToCloud(targetNote);
+      });
+
+      ["pointerdown", "mousedown", "touchstart"].forEach((eventName) => {
+        deleteBtn.addEventListener(eventName, stopAll, true);
+        deleteBtn.addEventListener(eventName, stopAll, false);
+      });
+
+      deleteBtn.addEventListener("click", (event) => {
+        stopAll(event);
+
+        console.log("[textBoxV3 delete click]", {
+          key,
+          inputMode
+        });
+
+        deleteTextBoxV3(key);
+      }, true);
+
+      ["pointerdown", "mousedown", "touchstart"].forEach((eventName) => {
+        resize.addEventListener(eventName, stopAll, true);
+        resize.addEventListener(eventName, stopAll, false);
+      });
+
+      resize.addEventListener("pointerdown", (event) => {
+        stopAll(event);
+
+        const targetNote = findTextBoxV3Note(key);
+        if (!targetNote) return;
+
+        startResizeTextBoxV3(event, targetNote, box);
+      }, true);
+
+      box.addEventListener("pointerdown", (event) => {
+        if (
+          event.target.closest(".text-box-v3-content") ||
+          event.target.closest(".text-box-v3-delete") ||
+          event.target.closest(".text-box-v3-resize")
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const targetNote = findTextBoxV3Note(key);
+        if (!targetNote) return;
+
+        startDragTextBoxV3(event, targetNote, box);
+      }, true);
+    }
+
+    function deleteTextBoxV3(key) {
+      const arr = textNotes();
+      const beforeCount = arr.length;
+      const targetNote = findTextBoxV3Note(key);
+
+      const keyActive = activeKey();
+      store.textNotesByKey[keyActive] = arr.filter(n => {
+        const noteKey = n.local_text_id || n.localTextId || n.id || "";
+        return String(noteKey) !== String(key);
+      });
+
+      const afterCount = store.textNotesByKey[keyActive].length;
+
+      console.log("[textBoxV3 deleted]", {
+        key,
+        beforeCount,
+        afterCount,
+        deleted: beforeCount !== afterCount,
+        inputMode
+      });
+
+      saveStore();
+      redrawOverlay();
+
+      if (targetNote) {
+        deleteTextBoxV3FromCloud(targetNote).catch(error => {
+          console.warn("[textBoxV3 cloud delete failed]", error);
+        });
+      }
+    }
+
+    async function deleteTextBoxV3FromCloud(note) {
+      const key = note.local_text_id || note.localTextId;
+      if (!key) return;
+      if (!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+
+      const sb = getSupabase();
+      const { error } = await sb
+        .from("drawing_text_notes")
+        .update({
+          status: "trash",
+          updated_at: new Date().toISOString()
+        })
+        .eq("local_text_id", key);
+
+      if (error) {
+        console.warn("[textBoxV3 cloud delete error]", error);
+      }
+    }
+
+    function startResizeTextBoxV3(event, note, box) {
+      const stageRect = getStageRectForTextBoxV3();
+      if (!stageRect) return;
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = box.offsetWidth;
+      const startHeight = box.offsetHeight;
+
+      function onMove(moveEvent) {
+        moveEvent.preventDefault();
+
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+
+        const newWidth = Math.max(120, Math.min(600, startWidth + dx));
+        const newHeight = Math.max(48, Math.min(360, startHeight + dy));
+
+        box.style.width = `${newWidth}px`;
+        box.style.height = `${newHeight}px`;
+
+        note.width = newWidth / stageRect.width;
+        note.height = newHeight / stageRect.height;
+        note.updated_at = new Date().toISOString();
+
+        saveStore();
+      }
+
+      function onUp() {
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+
+        saveStore();
+        saveTextBoxV3ToCloud(note);
+      }
+
+      window.addEventListener("pointermove", onMove, true);
+      window.addEventListener("pointerup", onUp, true);
+    }
+
+    function startDragTextBoxV3(event, note, box) {
+      const stageRect = getStageRectForTextBoxV3();
+      if (!stageRect) return;
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLeft = box.offsetLeft;
+      const startTop = box.offsetTop;
+
+      function onMove(moveEvent) {
+        moveEvent.preventDefault();
+
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+
+        const newLeft = startLeft + dx;
+        const newTop = startTop + dy;
+
+        box.style.left = `${newLeft}px`;
+        box.style.top = `${newTop}px`;
+
+        note.x = newLeft / stageRect.width;
+        note.y = newTop / stageRect.height;
+        note.updated_at = new Date().toISOString();
+
+        saveStore();
+      }
+
+      function onUp() {
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+
+        saveStore();
+        saveTextBoxV3ToCloud(note);
+      }
+
+      window.addEventListener("pointermove", onMove, true);
+      window.addEventListener("pointerup", onUp, true);
+    }
+
+    function focusTextBoxV3(key) {
+      const el = document.querySelector(`[data-text-box-id="${key}"] .text-box-v3-content`);
+      if (!el) return;
+
+      el.focus();
+
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    function scheduleTextBoxV3Save(note) {
+      const key = note.local_text_id || note.localTextId;
+      if (!key) return;
+
+      clearTimeout(textBoxV3SaveTimers[key]);
+
+      textBoxV3SaveTimers[key] = setTimeout(() => {
+        saveTextBoxV3ToCloud(note);
+        delete textBoxV3SaveTimers[key];
+      }, 800);
+    }
+
+    function buildTextBoxV3Payload(note) {
+      normalizeTextBoxV3(note);
+
+      const bg = store.activeBg || {};
+      const pageInputVal = parseInt(String($("pageInput")?.value || "1"), 10);
+      const currentPage = Number.isFinite(pageInputVal) && pageInputVal > 0
+        ? pageInputVal
+        : Math.max(1, Number(bg.page || 1));
+      const saveCtx = findTextNoteSaveContext(note);
+
+      const payload = {
+        local_text_id: note.local_text_id || note.localTextId,
+        site_id: selectedSiteId || store.siteId || null,
+        inspection_id: currentInspectionId || store.inspectionId || null,
+        floor_id: selectedFloorId || currentFloorId || store.currentFloorId || null,
+        drawing_id: saveCtx.drawing_id ?? note.drawing_id ?? note.drawingId ?? (bg.drawingId || currentDrawingId || store.currentDrawingId || null),
+        page_number: Number(note.page_number || note.pageNumber || saveCtx.page_number || currentPage || 1),
+        content: getTextBoxV3Content(note),
+        x: Number(note.x || 0),
+        y: Number(note.y || 0),
+        width: Number(note.width || 260),
+        height: Number(note.height || 90),
+        font_size: Number(note.font_size || note.fontSize || 16),
+        is_bold: !!(note.is_bold || note.isBold),
+        note_type: note.note_type || note.noteType || "memo",
+        rotation: Number(note.rotation || 0),
+        display_order: Number(note.display_order || note.displayOrder || 0),
+        status: note.status || "active",
+        updated_at: new Date().toISOString()
+      };
+
+      if (isUuid(note.id)) {
+        payload.id = note.id;
+      }
+
+      if (!payload.id) {
+        delete payload.id;
+      }
+
+      if (payload.id && String(payload.id).startsWith("txt_")) {
+        delete payload.id;
+      }
+
+      return payload;
+    }
+
+    async function saveTextBoxV3ToCloud(note) {
+      if (!note || note.status === "trash" || note.status === "deleted") return;
+      if (!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+
+      const payload = buildTextBoxV3Payload(note);
+
+      console.log("[textBoxV3 payload]", {
+        local_text_id: payload.local_text_id,
+        content: payload.content,
+        width: payload.width,
+        height: payload.height
+      });
+
+      const sb = getSupabase();
+      const { data, error } = await sb
+        .from("drawing_text_notes")
+        .upsert(payload, { onConflict: "local_text_id" })
+        .select("id, local_text_id")
+        .single();
+
+      if (error) {
+        console.warn("[textBoxV3 save failed]", error);
+        return;
+      }
+
+      if (data) {
+        note.id = data.id;
+        note.local_text_id = data.local_text_id;
+        note.localTextId = data.local_text_id;
+        saveStore();
+      }
+    }
+
+    function isTextBoxV3ControlTarget(target) {
+      return !!(
+        target &&
+        target.closest &&
+        target.closest(
+          ".text-box-v3, .text-box-v3-content, .text-box-v3-delete, .text-box-v3-resize"
+        )
+      );
+    }
+
+    function redrawTextBoxV3(options = {}) {
+      if (!textNotesLayer) return;
+
+      document.querySelectorAll(".text-note-box, .text-note-delete, .text-note-delete-v2").forEach(el => {
+        el.remove();
+      });
+
+      if (!options.force && document.activeElement?.closest?.(".text-box-v3-content")) {
+        const ae = document.activeElement;
+        const boxEl = ae.closest(".text-box-v3");
+        const key = boxEl?.dataset?.textBoxId || "";
+        if (key) {
+          const target = findTextBoxV3Note(key);
+          if (target) {
+            setTextBoxV3Content(target, ae.innerText || "");
+            saveStore();
+          }
+        }
+        return;
+      }
+
+      textNotesLayer.innerHTML = "";
+
+      const arr = textNotes()
+        .filter(n => n.status !== "trash" && n.status !== "deleted");
+
+      arr.forEach(note => {
+        normalizeTextBoxV3(note);
+        const el = renderTextBoxV3(note);
+        if (el) textNotesLayer.appendChild(el);
+      });
+    }
+
     function createTextNoteAt(x, y){
       pushUndoSnapshot("テキスト追加");
       const ratio = canvasPxToImgRatio(x, y);
@@ -9619,219 +10262,7 @@
 
     let textNoteDrag = null;
     function redrawTextNotes(options = {}){
-      if(!textNotesLayer) return;
-      if(!options.force && isTextNoteContentFocused()){
-        const ae = document.activeElement;
-        const textNoteEl = ae?.closest?.(".text-note-box");
-        const key = textNoteEl?.dataset?.textNoteKey || ae?.dataset?.textNoteKey || "";
-        if(key){
-          const target = findTextNoteByKey(key);
-          if(target){
-            setTextNoteContent(target, ae.innerText || "");
-            saveStore();
-          }
-        }
-        return;
-      }
-      normalizeCurrentPageTextNotes();
-      textNotesLayer.innerHTML = "";
-      const arr = textNotes()
-        .filter(note=>note.status === "active")
-        .sort((a,b)=>(Number(a.display_order || 0) - Number(b.display_order || 0)));
-      arr.forEach(note=>{
-        const point = imgRatioToCanvasPx(note.x, note.y);
-        const noteSize = getTextNoteSizePx(note);
-        const w = noteSize.width;
-        const h = noteSize.height;
-        const noteKey = getTextNoteKey(note);
-        const el = document.createElement("div");
-        el.className = "text-note-box note-" + (note.note_type || "memo") + (isSameTextNote(note, selectedTextNoteId) ? " is-selected" : "");
-        el.dataset.textNoteKey = noteKey;
-        el.setAttribute("data-text-note-key", noteKey);
-        el.style.left = `${clamp(point.x, 0, Math.max(0, stageW - w))}px`;
-        el.style.top = `${clamp(point.y, 0, Math.max(0, stageH - h))}px`;
-        el.style.width = `${w}px`;
-        el.style.height = `${h}px`;
-
-        const deleteBtn = document.createElement("button");
-        deleteBtn.type = "button";
-        deleteBtn.className = "text-note-delete-v2";
-        deleteBtn.textContent = "×";
-        deleteBtn.title = "削除";
-        el.appendChild(deleteBtn);
-        bindTextNoteDeleteButtonV2(deleteBtn, note, el);
-
-        const contentEl = document.createElement("div");
-        contentEl.className = "text-note-content";
-        contentEl.contentEditable = "true";
-        contentEl.spellcheck = false;
-        const content = getTextNoteContent(note);
-        contentEl.innerText = String(content) === "メモ未入力" ? "" : String(content || "");
-        if(note.is_bold || note.font_weight === "bold"){
-          contentEl.style.fontWeight = "bold";
-        }
-        if(note.font_size){
-          contentEl.style.fontSize = `${note.font_size}px`;
-        }
-        el.appendChild(contentEl);
-
-        const resizeHandle = document.createElement("div");
-        resizeHandle.className = "text-note-resize-handle";
-        resizeHandle.title = "サイズ変更";
-        el.appendChild(resizeHandle);
-
-        contentEl.addEventListener("pointerdown", (event)=>{
-          event.stopPropagation();
-          selectedTextNoteId = noteKey;
-          el.classList.add("is-selected");
-        });
-        contentEl.addEventListener("mousedown", (event)=>{
-          event.stopPropagation();
-        });
-        contentEl.addEventListener("click", (event)=>{
-          event.stopPropagation();
-        });
-        contentEl.addEventListener("keydown", (event)=>{
-          event.stopPropagation();
-        });
-        contentEl.addEventListener("input", (event)=>{
-          event.stopPropagation();
-
-          const key = el.dataset.textNoteKey;
-          const noteRef = findTextNoteByKey(key);
-          if(!noteRef) return;
-
-          setTextNoteContent(noteRef, contentEl.innerText || "");
-          noteRef.status = "active";
-
-          saveStore();
-          scheduleTextNoteSave(noteRef);
-        });
-        contentEl.addEventListener("focus", ()=>{
-          el.classList.add("is-editing");
-          editingTextNoteKey = noteKey;
-          selectedTextNoteId = noteKey;
-        });
-        contentEl.addEventListener("blur", (event)=>{
-          event.stopPropagation();
-          el.classList.remove("is-editing");
-          if(editingTextNoteKey === noteKey) editingTextNoteKey = null;
-          const target = findTextNoteByKey(noteKey);
-          if(!target) return;
-          setTextNoteContent(target, contentEl.innerText || "");
-          saveStore();
-          if(textNoteSaveTimers[noteKey]){
-            clearTimeout(textNoteSaveTimers[noteKey]);
-            delete textNoteSaveTimers[noteKey];
-          }
-          saveSingleTextNoteToCloud(target).catch(error=>{
-            console.error("[text note blur save] cloud save failed", error);
-          });
-        });
-
-        resizeHandle.addEventListener("pointerdown", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-
-          selectedTextNoteId = noteKey;
-          pushUndoSnapshot("テキストメモサイズ変更");
-          startResizeTextNote(event, note, el);
-          el.classList.add("is-selected");
-        });
-        resizeHandle.addEventListener("mousedown", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-        });
-        resizeHandle.addEventListener("click", (event)=>{
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation?.();
-        });
-
-        el.addEventListener("pointerdown", (event)=>{
-          event.stopPropagation();
-        }, true);
-        el.addEventListener("mousedown", (event)=>{
-          event.stopPropagation();
-        }, true);
-        el.addEventListener("click", (event)=>{
-          event.stopPropagation();
-        }, true);
-        el.addEventListener("pointerdown", (event)=>{
-          event.stopPropagation();
-        });
-        el.addEventListener("mousedown", (event)=>{
-          event.stopPropagation();
-        });
-        el.addEventListener("click", (event)=>{
-          event.stopPropagation();
-        });
-
-        el.addEventListener("pointerdown", (e)=>{
-          if(e.button === 2) return;
-          if(e.target.closest(".text-note-content")) return;
-          if(e.target.closest(".text-note-delete-v2") || e.target.closest(".text-note-resize-handle")) return;
-          e.stopPropagation();
-          selectedTextNoteId = noteKey;
-          const base = imgRatioToCanvasPx(note.x, note.y);
-          textNoteDrag = {
-            local_text_id: noteKey,
-            pointerId: e.pointerId,
-            startX: e.clientX,
-            startY: e.clientY,
-            baseX: base.x,
-            baseY: base.y,
-            moved: false,
-          };
-          closeQuickMarkerEditor({ keepDraft: false, suppressSync: true });
-          el.classList.add("is-selected", "is-dragging");
-          try{ el.setPointerCapture(e.pointerId); }catch(_){}
-          e.preventDefault();
-        });
-        el.addEventListener("pointermove", (e)=>{
-          if(!textNoteDrag || !isSameTextNote(note, textNoteDrag.local_text_id)) return;
-          const target = findTextNoteByKey(textNoteDrag.local_text_id);
-          if(!target) return;
-          const moveDistance = Math.hypot(e.clientX - textNoteDrag.startX, e.clientY - textNoteDrag.startY);
-          if(moveDistance < 3) return;
-          textNoteDrag.moved = true;
-          if(!textDragUndoPushed.has(String(textNoteDrag.local_text_id || ""))){
-            pushUndoSnapshot("テキスト移動");
-            textDragUndoPushed.add(String(textNoteDrag.local_text_id || ""));
-          }
-          const nx = textNoteDrag.baseX + (e.clientX - textNoteDrag.startX);
-          const ny = textNoteDrag.baseY + (e.clientY - textNoteDrag.startY);
-          const r = canvasPxToImgRatio(clamp(nx, 0, stageW), clamp(ny, 0, stageH));
-          target.x = clamp(r.x, 0, 1);
-          target.y = clamp(r.y, 0, 1);
-          target.updated_at = new Date().toISOString();
-          el.style.left = `${clamp(nx, 0, Math.max(0, stageW - w))}px`;
-          el.style.top = `${clamp(ny, 0, Math.max(0, stageH - h))}px`;
-          e.preventDefault();
-          e.stopPropagation();
-        });
-        el.addEventListener("pointerup", (e)=>{
-          if(!textNoteDrag || !isSameTextNote(note, textNoteDrag.local_text_id)) return;
-          const moved = !!textNoteDrag.moved;
-          textDragUndoPushed.delete(String(textNoteDrag.local_text_id || ""));
-          textNoteDrag = null;
-          el.classList.remove("is-dragging");
-          try{ el.releasePointerCapture(e.pointerId); }catch(_){}
-          const target = findTextNoteByKey(noteKey);
-          if(target && moved){
-            saveStore();
-            dirty = true;
-            updateSaveStatus("dirty");
-            scheduleTextNoteCloudSave("text note moved");
-          }
-          e.preventDefault();
-          e.stopPropagation();
-        });
-
-        textNotesLayer.appendChild(el);
-      });
+      redrawTextBoxV3(options);
     }
 
     function createDraftMarkerAt(x, y){
@@ -10135,6 +10566,9 @@
 
     function redrawOverlay(){
       removeMarkerForceLayer();
+      document.querySelectorAll(".text-note-box, .text-note-delete, .text-note-delete-v2").forEach(el => {
+        el.remove();
+      });
       const key = activeKey();
       if(!store.markersByKey) store.markersByKey = {};
       if(!Array.isArray(store.markersByKey[key])) store.markersByKey[key] = [];
@@ -10450,6 +10884,7 @@
       if(quickEditorState) return true;
       if(textNoteEditorState) return true;
       if(isTextNoteContentFocused()) return true;
+      if(document.activeElement?.closest?.(".text-box-v3-content")) return true;
       if(editingTextNoteKey) return true;
       return false;
     }
@@ -10488,6 +10923,13 @@
     }
 
     function handleStagePointerTap(e, source = "stage"){
+      if(isTextBoxV3ControlTarget(e.target)){
+        console.log("[stage tap skipped: textBoxV3 control]", {
+          inputMode,
+          className: e.target?.className
+        });
+        return;
+      }
       if(isTextNoteControlTarget(e.target, e)){
         console.log("[stage tap skipped: text note control]", {
           inputMode,
@@ -10523,13 +10965,17 @@
       console.debug("stage tapped detail", { source, x: p.x, y: p.y });
       selectedId = null;
       if(inputMode === "text"){
+        if(isTextBoxV3ControlTarget(e.target)){
+          console.log("[create textBoxV3 skipped: textBoxV3 control]");
+          return;
+        }
         if(isTextNoteControlTarget(e.target, e)){
           console.log("[create text note skipped: text note control]");
           return;
         }
-        console.log("creating text note");
+        console.log("creating textBoxV3");
         closeQuickMarkerEditor({ keepDraft: false });
-        createTextNoteAt(p.x, p.y);
+        createTextBoxV3At(p.x, p.y);
       }else{
         console.log(`activeKey before create: ${activeKey()}`);
         console.log("creating marker");
@@ -10630,6 +11076,13 @@
         e.preventDefault();
         e.stopPropagation();
       } else {
+        if(isTextBoxV3ControlTarget(e.target)){
+          console.log("[stage tap skipped: textBoxV3 control]", {
+            inputMode,
+            className: e.target?.className
+          });
+          return;
+        }
         if(isTextNoteControlTarget(e.target, e)){
           console.log("[stage tap skipped: text note control]", {
             inputMode,
@@ -10801,6 +11254,7 @@
         return;
       }
       if(e.target?.closest?.(TEXT_NOTE_UI_SELECTOR)) return;
+      if(isTextBoxV3ControlTarget(e.target)) return;
       handleStagePointerTap(e, `fallback.${e.type}`);
     };
 
