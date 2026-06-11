@@ -418,6 +418,14 @@
     /* フルスクリーンモード */
     .fs-btn{position:absolute;top:10px;right:10px;z-index:50;background:rgba(17,24,39,.75);color:#fff;border:none;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:600;backdrop-filter:blur(4px);}
     .fs-btn:hover{background:rgba(17,24,39,.95)}
+    body.pdf-exporting .text-note-delete,
+    body.pdf-exporting .text-note-delete-v2,
+    body.pdf-exporting .text-note-resize-handle,
+    body.pdf-exporting .annotation-delete-btn,
+    body.pdf-exporting .annotation-resize-handle,
+    body.pdf-exporting .annotation-delete-control,
+    body.pdf-exporting .annotation-resize-control{display:none !important;}
+    body.pdf-exporting .text-note-box.is-selected{outline:none !important;}
     body.fullscreen-active{overflow:hidden}
     .pseudo-fullscreen{
       position:fixed !important;
@@ -11987,6 +11995,74 @@
       await new Promise(resolve=>setTimeout(resolve, 200));
     }
 
+    async function captureCurrentDrawingStageForPdf(){
+      const target = $("stageRotateLayer") || stageRotateLayer;
+      if(!target){
+        throw new Error("図面キャンバスが見つかりません。");
+      }
+      const bg = store.activeBg;
+      if(!bg || bg.kind !== "pdf"){
+        throw new Error("PDF図面が未選択です。");
+      }
+
+      const savedSelectedId = selectedId;
+      const savedSelectedTextNoteId = selectedTextNoteId;
+      selectedId = null;
+      selectedTextNoteId = null;
+
+      document.body.classList.add("pdf-exporting");
+      try{
+        try{ redrawOverlay(); }catch(_){}
+        try{ redrawTextNotes(); }catch(_){}
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await new Promise(resolve=>setTimeout(resolve, 160));
+
+        const captureW = Math.max(1, Math.round(Number(stageW) || target.offsetWidth || 1));
+        const captureH = Math.max(1, Math.round(Number(stageH) || target.offsetHeight || 1));
+        const h2c = await loadHtml2Canvas();
+        const scale = Math.max(2, window.devicePixelRatio || 1);
+        const srcCanvas = $("bg");
+
+        const canvas = await h2c(target, {
+          backgroundColor: "#ffffff",
+          scale,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          width: captureW,
+          height: captureH,
+          scrollX: 0,
+          scrollY: 0,
+          onclone: (clonedDoc)=>{
+            const clonedBg = clonedDoc.getElementById("bg");
+            if(!clonedBg || !srcCanvas) return;
+            try{
+              clonedBg.width = srcCanvas.width;
+              clonedBg.height = srcCanvas.height;
+              clonedBg.style.width = srcCanvas.style.width;
+              clonedBg.style.height = srcCanvas.style.height;
+              const clonedCtx = clonedBg.getContext("2d");
+              if(clonedCtx) clonedCtx.drawImage(srcCanvas, 0, 0);
+            }catch(err){
+              console.warn("[pdf capture] canvas clone failed", err);
+            }
+          },
+        });
+
+        return {
+          dataUrl: canvas.toDataURL("image/png"),
+          width: captureW,
+          height: captureH,
+        };
+      }finally{
+        selectedId = savedSelectedId;
+        selectedTextNoteId = savedSelectedTextNoteId;
+        document.body.classList.remove("pdf-exporting");
+        try{ redrawOverlay(); }catch(_){}
+        try{ redrawTextNotes(); }catch(_){}
+      }
+    }
+
     function getMarkerIssueTitleForPdf(marker, number){
       const issueType = String(marker?.type || "種別未設定").trim() || "種別未設定";
       const memo = String(marker?.memo || "").trim();
@@ -12026,6 +12102,7 @@
       const pageNumber = Number(opts.pageNumber || 1);
       const orderedMarkers = Array.isArray(opts.orderedMarkers) ? opts.orderedMarkers : [];
       const drawingSize = opts.drawingSize || { width: 1, height: 1 };
+      const useStageCapture = !!opts.useStageCapture;
       const orientation = opts.orientation === "portrait" ? "portrait" : "landscape";
       const isLandscape = orientation === "landscape";
       const pageW = isLandscape ? 1600 : 1130;
@@ -12130,32 +12207,34 @@
         .sort((a,b)=>(a.display_order || 0) - (b.display_order || 0));
       const xScaleToDrawing = drawW / Math.max(1, stageW);
       const yScaleToDrawing = drawH / Math.max(1, stageH);
-      activeNotes.forEach(note=>{
-        const noteSize = getTextNoteSizePx(note);
-        const noteW = clamp(noteSize.width * xScaleToDrawing, TEXT_NOTE_MIN_W * xScaleToDrawing, TEXT_NOTE_MAX_W * xScaleToDrawing);
-        const noteH = clamp(noteSize.height * yScaleToDrawing, TEXT_NOTE_MIN_H * yScaleToDrawing, TEXT_NOTE_MAX_H * yScaleToDrawing);
-        const noteEl = document.createElement("div");
-        noteEl.style.position = "absolute";
-        noteEl.style.left = `${drawX + (drawW * clamp(Number(note.x), 0, 1))}px`;
-        noteEl.style.top = `${drawY + (drawH * clamp(Number(note.y), 0, 1))}px`;
-        noteEl.style.width = `${Math.max(10, noteW)}px`;
-        noteEl.style.height = `${Math.max(10, noteH)}px`;
-        noteEl.style.padding = "5px 7px";
-        noteEl.style.boxSizing = "border-box";
-        noteEl.style.borderRadius = "8px";
-        noteEl.style.border = `1px solid ${note.border_color || "#d7dce4"}`;
-        noteEl.style.background = note.background_color || "#ffffff";
-        noteEl.style.color = note.text_color || "#111827";
-        noteEl.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
-        noteEl.style.whiteSpace = "pre-wrap";
-        noteEl.style.wordBreak = "break-word";
-        noteEl.style.overflow = "hidden";
-        noteEl.style.fontSize = `${Math.max(10, Math.round(Number(note.font_size || 14) * Math.min(xScaleToDrawing, yScaleToDrawing)))}px`;
-        noteEl.style.lineHeight = "1.35";
-        noteEl.style.fontWeight = note.font_weight === "bold" ? "700" : "400";
-        noteEl.textContent = getTextNoteContent(note).trim() || "メモ未入力";
-        drawingPanel.appendChild(noteEl);
-      });
+      if(!useStageCapture){
+        activeNotes.forEach(note=>{
+          const noteSize = getTextNoteSizePx(note);
+          const noteW = clamp(noteSize.width * xScaleToDrawing, TEXT_NOTE_MIN_W * xScaleToDrawing, TEXT_NOTE_MAX_W * xScaleToDrawing);
+          const noteH = clamp(noteSize.height * yScaleToDrawing, TEXT_NOTE_MIN_H * yScaleToDrawing, TEXT_NOTE_MAX_H * yScaleToDrawing);
+          const noteEl = document.createElement("div");
+          noteEl.style.position = "absolute";
+          noteEl.style.left = `${drawX + (drawW * clamp(Number(note.x), 0, 1))}px`;
+          noteEl.style.top = `${drawY + (drawH * clamp(Number(note.y), 0, 1))}px`;
+          noteEl.style.width = `${Math.max(10, noteW)}px`;
+          noteEl.style.height = `${Math.max(10, noteH)}px`;
+          noteEl.style.padding = "5px 7px";
+          noteEl.style.boxSizing = "border-box";
+          noteEl.style.borderRadius = "8px";
+          noteEl.style.border = `1px solid ${note.border_color || "#d7dce4"}`;
+          noteEl.style.background = note.background_color || "#ffffff";
+          noteEl.style.color = note.text_color || "#111827";
+          noteEl.style.opacity = String(clamp(Number(note.opacity || 1), 0.2, 1));
+          noteEl.style.whiteSpace = "pre-wrap";
+          noteEl.style.wordBreak = "break-word";
+          noteEl.style.overflow = "hidden";
+          noteEl.style.fontSize = `${Math.max(10, Math.round(Number(note.font_size || 14) * Math.min(xScaleToDrawing, yScaleToDrawing)))}px`;
+          noteEl.style.lineHeight = "1.35";
+          noteEl.style.fontWeight = note.font_weight === "bold" ? "700" : "400";
+          noteEl.textContent = getTextNoteContent(note).trim() || "メモ未入力";
+          drawingPanel.appendChild(noteEl);
+        });
+      }
       main.appendChild(drawingPanel);
 
       const notePane = document.createElement("div");
@@ -12220,8 +12299,13 @@
       orderedMarkers.forEach(({ marker, number }, idx)=>{
         const mx = clamp(Number.isFinite(Number(marker?.x)) ? Number(marker.x) : 0.5, 0, 1);
         const my = clamp(Number.isFinite(Number(marker?.y)) ? Number(marker.y) : 0.5, 0, 1);
-        const pinX = drawX + (drawW * mx);
-        const pinY = drawY + (drawH * my);
+        let pinX = drawX + (drawW * mx);
+        let pinY = drawY + (drawH * my);
+        if(useStageCapture){
+          const pinCanvas = imgRatioToCanvasPx(mx, my);
+          pinX = drawX + (pinCanvas.x * xScaleToDrawing);
+          pinY = drawY + (pinCanvas.y * yScaleToDrawing);
+        }
         const noteAnchor = noteAnchors[idx] || null;
         if(noteAnchor){
           const elbowX = drawingW + 2;
@@ -12245,24 +12329,26 @@
           overlaySvg.appendChild(line2);
         }
 
-        const pinCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        pinCircle.setAttribute("cx", pinX.toFixed(2));
-        pinCircle.setAttribute("cy", pinY.toFixed(2));
-        pinCircle.setAttribute("r", "13");
-        pinCircle.setAttribute("fill", "#dc2626");
-        pinCircle.setAttribute("stroke", "#ffffff");
-        pinCircle.setAttribute("stroke-width", "2");
-        overlaySvg.appendChild(pinCircle);
+        if(!useStageCapture){
+          const pinCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          pinCircle.setAttribute("cx", pinX.toFixed(2));
+          pinCircle.setAttribute("cy", pinY.toFixed(2));
+          pinCircle.setAttribute("r", "13");
+          pinCircle.setAttribute("fill", "#dc2626");
+          pinCircle.setAttribute("stroke", "#ffffff");
+          pinCircle.setAttribute("stroke-width", "2");
+          overlaySvg.appendChild(pinCircle);
 
-        const pinLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        pinLabel.setAttribute("x", pinX.toFixed(2));
-        pinLabel.setAttribute("y", (pinY + 4.2).toFixed(2));
-        pinLabel.setAttribute("text-anchor", "middle");
-        pinLabel.setAttribute("font-size", "12");
-        pinLabel.setAttribute("font-weight", "800");
-        pinLabel.setAttribute("fill", "#ffffff");
-        pinLabel.textContent = String(number);
-        overlaySvg.appendChild(pinLabel);
+          const pinLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          pinLabel.setAttribute("x", pinX.toFixed(2));
+          pinLabel.setAttribute("y", (pinY + 4.2).toFixed(2));
+          pinLabel.setAttribute("text-anchor", "middle");
+          pinLabel.setAttribute("font-size", "12");
+          pinLabel.setAttribute("font-weight", "800");
+          pinLabel.setAttribute("fill", "#ffffff");
+          pinLabel.textContent = String(number);
+          overlaySvg.appendChild(pinLabel);
+        }
       });
       main.appendChild(overlaySvg);
 
@@ -12321,16 +12407,18 @@
         throw new Error("図面PDFが選択されていません。");
       }
       await ensurePageRendered(Number(bg.page || 1));
-      const stageImageData = getCurrentPdfPageImageForExport();
-      const drawingImg = await loadImageElement(stageImageData);
+      await stabilizePdfCapture();
+      const stageCapture = await captureCurrentDrawingStageForPdf();
+      const stageImageData = stageCapture.dataUrl;
       const drawingSize = {
-        width: Number(drawingImg.naturalWidth || drawingImg.width || 1),
-        height: Number(drawingImg.naturalHeight || drawingImg.height || 1),
+        width: Number(stageCapture.width || stageW || 1),
+        height: Number(stageCapture.height || stageH || 1),
       };
       const orientation = choosePdfDrawingOrientation(drawingSize);
       const drawingDom = buildPdfDrawingDom({
         headerData: getPdfHeaderData(),
         stageImageData,
+        useStageCapture: true,
         pageNumber,
         orderedMarkers,
         drawingSize,
