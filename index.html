@@ -828,8 +828,6 @@
     .text-box-v3 {
       position: absolute;
       box-sizing: border-box;
-      width: 260px;
-      height: 90px;
       min-width: 120px;
       min-height: 48px;
       max-width: 600px;
@@ -840,8 +838,6 @@
       padding: 12px 14px;
       z-index: 300;
       overflow: visible;
-      cursor: move;
-      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
       pointer-events: auto;
     }
     .text-box-v3.is-selected {
@@ -858,7 +854,7 @@
       line-height: 1.5;
       color: #111827;
       overflow: hidden;
-      user-select: text;
+      pointer-events: auto;
     }
     .text-box-v3-content:empty::before {
       content: "メモ入力";
@@ -9796,7 +9792,7 @@
 
       const box = document.createElement("div");
       box.className = "text-box-v3";
-      box.dataset.textBoxId = key;
+      box.dataset.textBoxId = String(note.local_text_id || note.localTextId || "");
 
       const xPx = Number(note.x || 0) <= 1 ? Number(note.x || 0) * stageRect.width : Number(note.x || 0);
       const yPx = Number(note.y || 0) <= 1 ? Number(note.y || 0) * stageRect.height : Number(note.y || 0);
@@ -9838,14 +9834,6 @@
         event.stopPropagation();
       };
 
-      const stopAll = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") {
-          event.stopImmediatePropagation();
-        }
-      };
-
       ["pointerdown", "mousedown", "click", "touchstart"].forEach((eventName) => {
         box.addEventListener(eventName, stopOnly, true);
         box.addEventListener(eventName, stopOnly, false);
@@ -9880,36 +9868,6 @@
         saveTextBoxV3ToCloud(targetNote);
       });
 
-      ["pointerdown", "mousedown", "touchstart"].forEach((eventName) => {
-        deleteBtn.addEventListener(eventName, stopAll, true);
-        deleteBtn.addEventListener(eventName, stopAll, false);
-      });
-
-      deleteBtn.addEventListener("click", (event) => {
-        stopAll(event);
-
-        console.log("[textBoxV3 delete click]", {
-          key,
-          inputMode
-        });
-
-        deleteTextBoxV3(key);
-      }, true);
-
-      ["pointerdown", "mousedown", "touchstart"].forEach((eventName) => {
-        resize.addEventListener(eventName, stopAll, true);
-        resize.addEventListener(eventName, stopAll, false);
-      });
-
-      resize.addEventListener("pointerdown", (event) => {
-        stopAll(event);
-
-        const targetNote = findTextBoxV3Note(key);
-        if (!targetNote) return;
-
-        startResizeTextBoxV3(event, targetNote, box);
-      }, true);
-
       box.addEventListener("pointerdown", (event) => {
         if (
           event.target.closest(".text-box-v3-content") ||
@@ -9929,18 +9887,43 @@
       }, true);
     }
 
-    function deleteTextBoxV3(key) {
-      const arr = textNotes();
-      const beforeCount = arr.length;
-      const targetNote = findTextBoxV3Note(key);
+    function getTextBoxV3KeyFromElement(el) {
+      const box = el?.closest?.(".text-box-v3");
+      if (!box) return "";
 
-      const keyActive = activeKey();
-      store.textNotesByKey[keyActive] = arr.filter(n => {
-        const noteKey = n.local_text_id || n.localTextId || n.id || "";
-        return String(noteKey) !== String(key);
+      return String(
+        box.dataset.textBoxId ||
+        box.dataset.textNoteKey ||
+        ""
+      );
+    }
+
+    function findTextBoxV3NoteByKey(key) {
+      if (!key) return null;
+
+      return textNotes().find(n => {
+        const noteKey = String(n.local_text_id || n.localTextId || n.id || "");
+        return noteKey === String(key);
+      }) || null;
+    }
+
+    function deleteTextBoxV3ByElement(deleteBtn) {
+      const key = getTextBoxV3KeyFromElement(deleteBtn);
+
+      if (!key) {
+        console.warn("[textBoxV3 delete] missing key", deleteBtn);
+        return;
+      }
+
+      const beforeCount = textNotes().length;
+      const targetNote = findTextBoxV3NoteByKey(key);
+
+      store.textNotesByKey[activeKey()] = textNotes().filter(n => {
+        const noteKey = String(n.local_text_id || n.localTextId || n.id || "");
+        return noteKey !== String(key);
       });
 
-      const afterCount = store.textNotesByKey[keyActive].length;
+      const afterCount = textNotes().length;
 
       console.log("[textBoxV3 deleted]", {
         key,
@@ -9950,8 +9933,14 @@
         inputMode
       });
 
+      const box = deleteBtn.closest(".text-box-v3");
+      if (box) box.remove();
+
       saveStore();
-      redrawOverlay();
+
+      if (typeof redrawList === "function") {
+        redrawList();
+      }
 
       if (targetNote) {
         deleteTextBoxV3FromCloud(targetNote).catch(error => {
@@ -9961,9 +9950,11 @@
     }
 
     async function deleteTextBoxV3FromCloud(note) {
+      if (!window.supabase) return;
+
       const key = String(note.local_text_id || note.localTextId || "");
+
       if (!key) return;
-      if (!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
 
       const sb = getSupabase();
       const { error } = await sb
@@ -9979,17 +9970,34 @@
       }
     }
 
-    function startResizeTextBoxV3(event, note, box) {
+    function startResizeTextBoxV3FromElement(event, resizeHandle) {
+      const box = resizeHandle.closest(".text-box-v3");
+      if (!box) return;
+
+      const key = getTextBoxV3KeyFromElement(resizeHandle);
+      const note = findTextBoxV3NoteByKey(key);
+
+      if (!note) {
+        console.warn("[textBoxV3 resize] note not found", { key });
+        return;
+      }
+
       const stageRect = getStageRectForTextBoxV3();
-      if (!stageRect) return;
+      if (!stageRect) {
+        console.warn("[textBoxV3 resize] stage rect not found");
+        return;
+      }
 
       const startX = event.clientX;
       const startY = event.clientY;
       const startWidth = box.offsetWidth;
       const startHeight = box.offsetHeight;
 
+      box.classList.add("is-selected");
+
       function onMove(moveEvent) {
         moveEvent.preventDefault();
+        moveEvent.stopPropagation();
 
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
@@ -10007,16 +10015,99 @@
         saveStore();
       }
 
-      function onUp() {
+      function onUp(upEvent) {
+        upEvent.preventDefault();
+        upEvent.stopPropagation();
+
         window.removeEventListener("pointermove", onMove, true);
         window.removeEventListener("pointerup", onUp, true);
 
+        box.classList.remove("is-selected");
+
         saveStore();
-        saveTextBoxV3ToCloud(note);
+
+        if (typeof saveTextBoxV3ToCloud === "function") {
+          saveTextBoxV3ToCloud(note);
+        }
+
+        console.log("[textBoxV3 resize saved]", {
+          key,
+          width: note.width,
+          height: note.height
+        });
       }
 
       window.addEventListener("pointermove", onMove, true);
       window.addEventListener("pointerup", onUp, true);
+    }
+
+    function installTextBoxV3GlobalHandlers() {
+      if (window.__textBoxV3GlobalHandlersInstalled) return;
+      window.__textBoxV3GlobalHandlersInstalled = true;
+
+      const stopAll = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+      };
+
+      document.addEventListener("pointerdown", (event) => {
+        const deleteBtn = event.target?.closest?.(".text-box-v3-delete");
+        if (!deleteBtn) return;
+
+        stopAll(event);
+
+        console.log("[textBoxV3 delete pointerdown captured]", {
+          inputMode,
+          className: event.target?.className
+        });
+
+        deleteTextBoxV3ByElement(deleteBtn);
+      }, true);
+
+      document.addEventListener("mousedown", (event) => {
+        const deleteBtn = event.target?.closest?.(".text-box-v3-delete");
+        if (!deleteBtn) return;
+
+        stopAll(event);
+      }, true);
+
+      document.addEventListener("click", (event) => {
+        const deleteBtn = event.target?.closest?.(".text-box-v3-delete");
+        if (!deleteBtn) return;
+
+        stopAll(event);
+      }, true);
+
+      document.addEventListener("pointerdown", (event) => {
+        const resizeHandle = event.target?.closest?.(".text-box-v3-resize");
+        if (!resizeHandle) return;
+
+        stopAll(event);
+
+        console.log("[textBoxV3 resize pointerdown captured]", {
+          inputMode,
+          className: event.target?.className
+        });
+
+        startResizeTextBoxV3FromElement(event, resizeHandle);
+      }, true);
+
+      document.addEventListener("mousedown", (event) => {
+        const resizeHandle = event.target?.closest?.(".text-box-v3-resize");
+        if (!resizeHandle) return;
+
+        stopAll(event);
+      }, true);
+
+      document.addEventListener("click", (event) => {
+        const resizeHandle = event.target?.closest?.(".text-box-v3-resize");
+        if (!resizeHandle) return;
+
+        stopAll(event);
+      }, true);
     }
 
     function startDragTextBoxV3(event, note, box) {
@@ -11000,7 +11091,7 @@
       selectedId = null;
       if(inputMode === "text"){
         if(isTextBoxV3ControlTarget(e.target)){
-          console.log("[create textBoxV3 skipped: textBoxV3 control]");
+          console.log("[create textBoxV3 skipped: control target]");
           return;
         }
         if(isTextNoteControlTarget(e.target, e)){
@@ -14626,6 +14717,7 @@
     // -------------------- Boot --------------------
     function boot(){
       console.debug("boot start");
+      installTextBoxV3GlobalHandlers();
       try{
         resizeStage();
         removeMarkerForceLayer();
