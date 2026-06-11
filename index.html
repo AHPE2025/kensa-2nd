@@ -9710,7 +9710,29 @@
         }
       }
 
+      const rawOrder = Number(note.display_order || note.displayOrder || 0);
+
+      if (!Number.isFinite(rawOrder) || rawOrder > 999999 || rawOrder < 0) {
+        const fixedOrder = getNextTextBoxV3DisplayOrder();
+        note.display_order = fixedOrder;
+        note.displayOrder = fixedOrder;
+      } else {
+        note.display_order = rawOrder;
+        note.displayOrder = rawOrder;
+      }
+
       return note;
+    }
+
+    function getNextTextBoxV3DisplayOrder() {
+      const orders = textNotes()
+        .filter(n => n.status !== "trash" && n.status !== "deleted")
+        .map(n => Number(n.display_order || n.displayOrder || 0))
+        .filter(n => Number.isFinite(n) && n >= 0 && n <= 999999);
+
+      const maxOrder = orders.length ? Math.max(...orders) : 0;
+
+      return Math.min(maxOrder + 1, 999999);
     }
 
     function findTextBoxV3Note(key) {
@@ -9742,13 +9764,14 @@
         is_bold: false,
         note_type: "memo",
         rotation: 0,
-        display_order: Date.now(),
+        display_order: getNextTextBoxV3DisplayOrder(),
         status: "active",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
       note.localTextId = note.local_text_id;
+      note.displayOrder = note.display_order;
 
       textNotes().push(note);
 
@@ -10095,7 +10118,10 @@
         is_bold: !!(note.is_bold || note.isBold),
         note_type: note.note_type || note.noteType || "memo",
         rotation: Number(note.rotation || 0),
-        display_order: Number(note.display_order || note.displayOrder || 0),
+        display_order: (() => {
+          const n = Number(note.display_order || note.displayOrder || 0);
+          return Number.isFinite(n) ? Math.max(0, Math.min(n, 999999)) : 0;
+        })(),
         status: note.status || "active",
         updated_at: new Date().toISOString()
       };
@@ -10123,7 +10149,8 @@
         local_text_id: payload.local_text_id,
         content: payload.content,
         width: payload.width,
-        height: payload.height
+        height: payload.height,
+        display_order: payload.display_order
       });
 
       const sb = getSupabase();
