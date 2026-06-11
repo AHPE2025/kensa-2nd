@@ -9658,13 +9658,16 @@
     }
 
     function normalizeTextBoxV3(note) {
-      if (!note.local_text_id && note.localTextId) note.local_text_id = note.localTextId;
-      if (!note.localTextId && note.local_text_id) note.localTextId = note.local_text_id;
+      if (!note.local_text_id && note.localTextId) note.local_text_id = String(note.localTextId);
+      if (!note.localTextId && note.local_text_id) note.localTextId = String(note.local_text_id);
 
       if (!note.local_text_id && !note.localTextId) {
         const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         note.local_text_id = id;
         note.localTextId = id;
+      } else {
+        note.local_text_id = String(note.local_text_id || note.localTextId || "");
+        note.localTextId = String(note.localTextId || note.local_text_id || "");
       }
 
       note.content = getTextBoxV3Content(note);
@@ -9935,7 +9938,7 @@
     }
 
     async function deleteTextBoxV3FromCloud(note) {
-      const key = note.local_text_id || note.localTextId;
+      const key = String(note.local_text_id || note.localTextId || "");
       if (!key) return;
       if (!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
 
@@ -10063,20 +10066,26 @@
     function buildTextBoxV3Payload(note) {
       normalizeTextBoxV3(note);
 
+      const localTextId = String(note.local_text_id || note.localTextId || "");
+
+      if (!localTextId) {
+        console.warn("[textBoxV3 payload skipped] missing local_text_id", note);
+        return null;
+      }
+
       const bg = store.activeBg || {};
       const pageInputVal = parseInt(String($("pageInput")?.value || "1"), 10);
       const currentPage = Number.isFinite(pageInputVal) && pageInputVal > 0
         ? pageInputVal
         : Math.max(1, Number(bg.page || 1));
-      const saveCtx = findTextNoteSaveContext(note);
 
       const payload = {
-        local_text_id: note.local_text_id || note.localTextId,
-        site_id: selectedSiteId || store.siteId || null,
+        local_text_id: localTextId,
+        site_id: (typeof currentSiteId !== "undefined" ? currentSiteId : null) || store.siteId || null,
         inspection_id: currentInspectionId || store.inspectionId || null,
-        floor_id: selectedFloorId || currentFloorId || store.currentFloorId || null,
-        drawing_id: saveCtx.drawing_id ?? note.drawing_id ?? note.drawingId ?? (bg.drawingId || currentDrawingId || store.currentDrawingId || null),
-        page_number: Number(note.page_number || note.pageNumber || saveCtx.page_number || currentPage || 1),
+        floor_id: currentFloorId || store.currentFloorId || null,
+        drawing_id: currentDrawingId || store.currentDrawingId || null,
+        page_number: Number(note.page_number || note.pageNumber || currentPage || 1),
         content: getTextBoxV3Content(note),
         x: Number(note.x || 0),
         y: Number(note.y || 0),
@@ -10099,18 +10108,16 @@
         delete payload.id;
       }
 
-      if (payload.id && String(payload.id).startsWith("txt_")) {
-        delete payload.id;
-      }
-
       return payload;
     }
 
     async function saveTextBoxV3ToCloud(note) {
       if (!note || note.status === "trash" || note.status === "deleted") return;
-      if (!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      if (!window.supabase) return;
 
       const payload = buildTextBoxV3Payload(note);
+
+      if (!payload) return;
 
       console.log("[textBoxV3 payload]", {
         local_text_id: payload.local_text_id,
@@ -10133,8 +10140,8 @@
 
       if (data) {
         note.id = data.id;
-        note.local_text_id = data.local_text_id;
-        note.localTextId = data.local_text_id;
+        note.local_text_id = String(data.local_text_id);
+        note.localTextId = String(data.local_text_id);
         saveStore();
       }
     }
