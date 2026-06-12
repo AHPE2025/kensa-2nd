@@ -1946,6 +1946,7 @@
     const DEBUG_FULLSCREEN = false;
     const DEBUG_PHOTOS = false;
     const DEBUG_TEXT_NOTES = false;
+    const DEBUG_VENDOR_FILTER = false;
     let dirty = false;
     let autoSaveTimer = null;
     let autoSaveInFlight = false;
@@ -5925,31 +5926,197 @@
       activePhotoPreviewOverlay = overlay;
     }
 
-    function updateInlineVendorSummary(allRows, vendorFiltered){
+    function normalizeVendorName(value){
+      return String(value || "")
+        .trim()
+        .replace(/\s+/g, "")
+        .replace(/　+/g, "")
+        .replace(/（メイン）/g, "")
+        .replace(/\(メイン\)/g, "")
+        .replace(/（サブ[0-9]+）/g, "")
+        .replace(/\(サブ[0-9]+\)/g, "");
+    }
+
+    function isCommonVendorValue(value){
+      const v = normalizeVendorName(value);
+      return (
+        v === "共通" ||
+        v === "全業者" ||
+        v === "全て" ||
+        v === "すべて" ||
+        v === "all" ||
+        v === "ALL"
+      );
+    }
+
+    function isCommonMarker(marker){
+      if(marker?.is_common || marker?.vendor_source === "common") return true;
+
+      const category = normalizeVendorName(
+        marker?.category ||
+        marker?.issue_type ||
+        marker?.issueType ||
+        marker?.type ||
+        marker?.kind ||
+        ""
+      );
+
+      const vendor = normalizeVendorName(
+        marker?.vendor ||
+        marker?.vendor_name ||
+        marker?.vendorName ||
+        marker?.assignee ||
+        marker?.assignee_name ||
+        marker?.assigned_vendor ||
+        marker?.assignedVendor ||
+        marker?.main_vendor_name ||
+        marker?.primary_vendor_name ||
+        ""
+      );
+
+      return isCommonVendorValue(category) || isCommonVendorValue(vendor);
+    }
+
+    function getMarkerVendorNames(marker){
+      const values = [];
+
+      const keys = [
+        "vendor",
+        "vendor_name",
+        "vendorName",
+        "assignee",
+        "assignee_name",
+        "assigned_vendor",
+        "assignedVendor",
+        "main_vendor",
+        "mainVendor",
+        "main_vendor_name",
+        "primary_vendor_name",
+        "sub_vendor_1",
+        "subVendor1",
+        "sub_vendor_2",
+        "subVendor2",
+        "sub_vendor_3",
+        "subVendor3",
+        "sub_vendor_4",
+        "subVendor4"
+      ];
+
+      keys.forEach((key)=>{
+        if(marker && marker[key]) values.push(marker[key]);
+      });
+
+      if(Array.isArray(marker?.vendors)){
+        marker.vendors.forEach(v=>values.push(v));
+      }
+
+      if(Array.isArray(marker?.related_vendors)){
+        marker.related_vendors.forEach(v=>values.push(v));
+      }
+
+      if(Array.isArray(marker?.relatedVendors)){
+        marker.relatedVendors.forEach(v=>values.push(v));
+      }
+
+      if(Array.isArray(marker?.assigned_vendor_names)){
+        marker.assigned_vendor_names.forEach(v=>values.push(v));
+      }
+
+      if(Array.isArray(marker?.sub_vendor_names)){
+        marker.sub_vendor_names.forEach(v=>values.push(v));
+      }
+
+      if(typeof marker?.related_vendor_names === "string"){
+        marker.related_vendor_names.split(/[、,]/).forEach(v=>values.push(v));
+      }
+
+      if(typeof marker?.relatedVendorNames === "string"){
+        marker.relatedVendorNames.split(/[、,]/).forEach(v=>values.push(v));
+      }
+
+      return values
+        .map(normalizeVendorName)
+        .filter(Boolean);
+    }
+
+    function markerMatchesVendorFilter(marker, selectedVendor){
+      const selected = normalizeVendorName(selectedVendor);
+
+      if(!selected || isCommonVendorValue(selected)){
+        return true;
+      }
+
+      if(isCommonMarker(marker)){
+        return true;
+      }
+
+      const vendorNames = getMarkerVendorNames(marker);
+
+      return vendorNames.some(v=>v === selected);
+    }
+
+    function markerMatchesStatusFilter(marker, selectedStatus){
+      const selected = String(selectedStatus || "").trim();
+
+      if(!selected || selected === "全て" || selected === "all"){
+        return true;
+      }
+
+      if(selected === "未対応" || selected === "open"){
+        return normalizeMarkerStatus(marker) === "open";
+      }
+
+      if(selected === "完了" || selected === "completed" || selected === "done"){
+        return normalizeMarkerStatus(marker) === "completed";
+      }
+
+      return String(marker?.status || "").trim() === selected;
+    }
+
+    function getFilteredMarkersForVendorList(markers, selectedVendor, selectedStatus){
+      return (markers || []).filter(marker=>{
+        return (
+          markerMatchesVendorFilter(marker, selectedVendor) &&
+          markerMatchesStatusFilter(marker, selectedStatus)
+        );
+      });
+    }
+
+    function updateInlineVendorSummary(allRows, selectedVendorFilter){
       const countsEl = $("inlineVendorCounts");
       const summaryEl = $("inlineVendorFilterSummary");
-      const total = allRows.length;
-      const openCount = allRows.filter(({ marker })=>normalizeMarkerStatus(marker) === "open").length;
-      const completedCount = total - openCount;
+      const markers = allRows.map(({ marker })=>marker);
+      const vendorFiltered = getFilteredMarkersForVendorList(markers, selectedVendorFilter, "all");
+      const isAllVendors = !selectedVendorFilter || isCommonVendorValue(selectedVendorFilter);
+
+      const totalCount = isAllVendors ? allRows.length : vendorFiltered.length;
+      const openCount = (isAllVendors ? markers : vendorFiltered)
+        .filter(marker=>markerMatchesStatusFilter(marker, "未対応")).length;
+      const doneCount = (isAllVendors ? markers : vendorFiltered)
+        .filter(marker=>markerMatchesStatusFilter(marker, "完了")).length;
+
       if(countsEl){
         countsEl.innerHTML = `
-          <span>全指摘：${total}件</span>
+          <span>全指摘：${totalCount}件</span>
           <span>未対応：${openCount}件</span>
-          <span>完了：${completedCount}件</span>
+          <span>完了：${doneCount}件</span>
         `;
       }
       if(summaryEl){
-        const vendorLabel = filterVendor || "全て";
-        const filteredOpen = vendorFiltered.filter(({ marker })=>normalizeMarkerStatus(marker) === "open").length;
-        const filteredCompleted = vendorFiltered.length - filteredOpen;
-        summaryEl.textContent = `${vendorLabel}：未対応 ${filteredOpen}件 / 完了 ${filteredCompleted}件`;
+        if(isAllVendors){
+          summaryEl.textContent = "";
+        }else{
+          const vendorLabel = selectedVendorFilter || "全て";
+          summaryEl.innerHTML = `${escapeHtml(vendorLabel)}：対象 ${vendorFiltered.length}件 / 未対応 ${openCount}件 / 完了 ${doneCount}件 <span class="small" style="color:#64748b">（共通／全業者を含む）</span>`;
+        }
       }
     }
 
     function renderVendorWorkList(){
       const list = $("vendorWorkList");
       if(!list) return;
-      const statusFilter = $("vendorWorkStatusFilter")?.value || filterStatus || "open";
+      const selectedVendorFilter = filterVendor;
+      const selectedStatusFilter = $("vendorWorkStatusFilter")?.value || filterStatus || "open";
       list.innerHTML = "";
       const cacheKey = getVendorWorkPhotoCacheKey();
       if(cacheKey && vendorWorkPhotoCacheKey !== cacheKey){
@@ -5962,9 +6129,32 @@
       const markerRows = getCurrentFloorMarkerEntries().flatMap(([key, arr])=>
         (Array.isArray(arr) ? arr.map(m=>({ marker: m, markerKey: key })) : [])
       );
-      const vendorFiltered = markerRows.filter(({ marker })=>shouldShowMarkerForVendor(marker, filterVendor));
-      updateInlineVendorSummary(markerRows, vendorFiltered);
-      const filtered = filterMarkersByStatus(vendorFiltered, statusFilter);
+      const markers = markerRows.map(({ marker })=>marker);
+      const filteredMarkers = getFilteredMarkersForVendorList(
+        markers,
+        selectedVendorFilter,
+        selectedStatusFilter
+      );
+      if(DEBUG_VENDOR_FILTER){
+        console.log("[vendor filter]", {
+          selectedVendorFilter,
+          selectedStatusFilter,
+          totalMarkers: markers.length,
+          filteredCount: filteredMarkers.length,
+          filteredMarkers: filteredMarkers.map(m=>({
+            no: m.no || m.displayNo || m.display_no,
+            category: m.category || m.issue_type || m.issueType || m.type,
+            vendor: m.vendor || m.vendor_name || m.vendorName || m.assignee || m.assigned_vendor || m.main_vendor_name,
+            related: m.related_vendor_names || m.relatedVendors || m.related_vendors || m.assigned_vendor_names,
+            status: m.status
+          }))
+        });
+      }
+      updateInlineVendorSummary(markerRows, selectedVendorFilter);
+      const filtered = markerRows.filter(({ marker })=>(
+        markerMatchesVendorFilter(marker, selectedVendorFilter) &&
+        markerMatchesStatusFilter(marker, selectedStatusFilter)
+      ));
       if(filtered.length === 0){
         list.innerHTML = `<div class="vendor-row"><span class="small">該当する指摘がありません。</span></div>`;
         return;
@@ -11860,13 +12050,6 @@
       if(raw === "all" || raw === "全て") return "all";
       if(raw === "completed" || raw === "完了") return "completed";
       return "open";
-    }
-
-    function markerMatchesStatusFilter(marker, statusFilter){
-      const normalizedStatus = normalizeMarkerStatus(marker);
-      if(statusFilter === "all") return true;
-      if(statusFilter === "completed") return normalizedStatus === "completed";
-      return normalizedStatus === "open";
     }
 
     function getOrderedMarkersForPdf(options = {}){
