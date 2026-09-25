@@ -2358,14 +2358,15 @@
       });
     }
 
-    function buildMarkerRows(inspectionId){
+    function buildMarkerRows(inspectionId, floorId, siteId){
       const rows = [];
+      if(!floorId) return rows;
       const mbk = store.markersByKey || {};
       const bg = store.activeBg || { kind:"none" };
       const activeDrawingId = bg.kind === "pdf" ? (bg.drawingId || currentDrawingId || null) : null;
       const activePdfIdentity = resolvePdfIdentity(bg);
       for(const [key, arr] of Object.entries(mbk)){
-        if(!keyMatchesFloor(key, currentFloorId)) continue;
+        if(!keyMatchesFloor(key, floorId)) continue;
         if(!Array.isArray(arr)) continue;
         const { page_number, pdfId, drawing_id, markerKey } = parseMarkerKey(key);
         const markerDrawingId = drawing_id || ((pdfId && activeDrawingId && pdfId === activePdfIdentity)
@@ -2386,8 +2387,8 @@
           const subVendorIds = Array.isArray(m.sub_vendor_ids) ? [...m.sub_vendor_ids] : [];
           rows.push({
             inspection_id: inspectionId,
-            site_id: selectedSiteId || null,
-            floor_id: selectedFloorId || null,
+            site_id: siteId || null,
+            floor_id: floorId,
             floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
             drawing_id: markerDrawingId,
             page_number,
@@ -2401,6 +2402,7 @@
             assigned_vendor_names: assignedVendorNames,
             sub_vendor_names: subVendorNames,
             status: normalizedStatus,
+            deleted_at: (normalizedStatus === "open" || normalizedStatus === "completed") ? null : undefined,
             completed_at: m.completed_at || null,
             completed_by: m.completed_by || "",
             vendor_status: m.vendor_status || "assigned",
@@ -2417,8 +2419,8 @@
               drawingId: markerDrawingId,
               display_no: displayNo,
               marker_no: displayNo,
-              site_id: selectedSiteId || null,
-              floor_id: selectedFloorId || null,
+              site_id: siteId || null,
+              floor_id: floorId,
               floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
               pdfId,
               createdAt: m.createdAt || Date.now(),
@@ -2846,25 +2848,83 @@
       return drawing;
     }
 
-    async function saveMarkersToCloud(inspectionId){
+    function markerDrawingPageKey(drawingId, pageNumber){
+      return `${String(drawingId || "")}::${Number(pageNumber) || 0}`;
+    }
+
+    async function saveMarkersToCloud(inspectionId, floorId, siteId){
+      if(!inspectionId) throw new Error("inspection_id が未確定です。");
+      if(!floorId) throw new Error("floor_id が未確定です。");
       const sb = getSupabase();
-      const { error: delErr } = await sb.from("markers")
-        .delete()
-        .eq("inspection_id", inspectionId);
-      if(delErr) throw delErr;
-      const markerRows = buildMarkerRows(inspectionId);
-      let inserted = [];
-      if(markerRows.length > 0){
-        const { data, error: insErr } = await sb.from("markers")
-          .insert(markerRows)
-          .select("id, local_marker_id");
-        if(insErr) throw insErr;
-        inserted = data || [];
+      const markerRows = buildMarkerRows(inspectionId, floorId, siteId);
+      const dedupedRows = [];
+      const seenLocalIds = new Set();
+      for(let i = markerRows.length - 1; i >= 0; i -= 1){
+        const localId = String(markerRows[i]?.local_marker_id || "");
+        if(!localId || seenLocalIds.has(localId)) continue;
+        seenLocalIds.add(localId);
+        dedupedRows.push(markerRows[i]);
       }
-      mapSavedMarkerIdsToLocalMarkers(inserted);
+      dedupedRows.reverse();
+      let saved = [];
+      if(dedupedRows.length > 0){
+        const { data, error: upsertErr } = await sb.from("markers")
+          .upsert(dedupedRows, { onConflict: "inspection_id,local_marker_id" })
+          .select("id, local_marker_id");
+        if(upsertErr) throw upsertErr;
+        saved = data || [];
+      }
+      const localIdsByPage = new Map();
+      const mbk = store.markersByKey || {};
+      const bg = store.activeBg || { kind:"none" };
+      const activeDrawingId = bg.kind === "pdf" ? (bg.drawingId || currentDrawingId || null) : null;
+      const activePdfIdentity = resolvePdfIdentity(bg);
+      for(const [key, arr] of Object.entries(mbk)){
+        if(!keyMatchesFloor(key, floorId)) continue;
+        if(!Array.isArray(arr)) continue;
+        const parsed = parseMarkerKey(key);
+        const markerDrawingId = parsed.drawing_id || ((parsed.pdfId && activeDrawingId && parsed.pdfId === activePdfIdentity)
+          ? activeDrawingId
+          : (parsed.pdfId === activeDrawingId ? activeDrawingId : null));
+        const pageKey = markerDrawingPageKey(markerDrawingId, parsed.page_number);
+        if(!localIdsByPage.has(pageKey)) localIdsByPage.set(pageKey, new Set());
+        arr.forEach(marker=>{
+          const localId = String(marker?.id || marker?.local_marker_id || "");
+          if(localId) localIdsByPage.get(pageKey).add(localId);
+        });
+      }
+      if(localIdsByPage.size > 0){
+        const { data: cloudRows, error: listErr } = await sb.from("markers")
+          .select("id, local_marker_id, status, drawing_id, page_number")
+          .eq("inspection_id", inspectionId);
+        if(listErr) throw listErr;
+        const staleIds = (cloudRows || [])
+          .filter(row => {
+            const status = String(row?.status || "").toLowerCase();
+            if(status === "deleted" || status === "trash") return false;
+            const pageKey = markerDrawingPageKey(row?.drawing_id, row?.page_number);
+            const localIds = localIdsByPage.get(pageKey);
+            if(!localIds) return false;
+            return !localIds.has(String(row?.local_marker_id ?? ""));
+          })
+          .map(row => row.id)
+          .filter(Boolean);
+        if(staleIds.length > 0){
+          const nowIso = new Date().toISOString();
+          const chunkSize = 100;
+          for(let i = 0; i < staleIds.length; i += chunkSize){
+            const chunk = staleIds.slice(i, i + chunkSize);
+            const { error: softErr } = await sb.from("markers")
+              .update({ status: "deleted", deleted_at: nowIso, updated_at: nowIso })
+              .in("id", chunk);
+            if(softErr) throw softErr;
+          }
+        }
+      }
+      mapSavedMarkerIdsToLocalMarkers(saved);
       return {
-        markerCount: markerRows.length,
-        insertedRows: inserted,
+        markerCount: dedupedRows.length,
+        insertedRows: saved,
       };
     }
 
@@ -3210,15 +3270,18 @@
       return idMap;
     }
 
-    function resolveMarkerPhotoContext(marker, kind){
-      const inspectionId = currentInspectionId || null;
-      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || null;
-      const siteId = (typeof currentSiteId !== "undefined" ? currentSiteId : null) || selectedSiteId || selectedSite?.id || null;
+    function resolveMarkerPhotoContext(marker, kind, scope = null){
+      const inspectionId = scope?.inspectionId || currentInspectionId || null;
+      const floorId = scope?.floorId || currentFloorId || selectedFloorId || selectedFloor?.id || null;
+      const siteId = scope?.siteId || (typeof currentSiteId !== "undefined" ? currentSiteId : null) || selectedSiteId || selectedSite?.id || null;
       const markerId = marker?.cloud_marker_id || marker?.supabase_marker_id || null;
       const localMarkerId = marker?.local_marker_id || marker?.id || null;
       let drawingId = store?.activeBg?.drawingId || currentDrawingId || null;
       let pageNumber = Math.max(1, Number(store?.activeBg?.page || 1) || 1);
-      for(const [key, arr] of getCurrentFloorMarkerEntries()){
+      const markerEntries = scope?.floorId
+        ? Object.entries(store?.markersByKey || {}).filter(([key])=>keyMatchesFloor(key, scope.floorId))
+        : getCurrentFloorMarkerEntries();
+      for(const [key, arr] of markerEntries){
         if(!Array.isArray(arr)) continue;
         const hit = arr.find(item=>String(item?.id || "") === String(marker?.id || ""));
         if(!hit) continue;
@@ -3239,8 +3302,8 @@
       };
     }
 
-    async function uploadMarkerPhotoToSupabase(marker, file, kind){
-      const context = resolveMarkerPhotoContext(marker, kind);
+    async function uploadMarkerPhotoToSupabase(marker, file, kind, scope = null){
+      const context = resolveMarkerPhotoContext(marker, kind, scope);
       const inspectionId = context.inspection_id;
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       if(!marker) throw new Error("対象マーカーが未指定です。");
@@ -3274,8 +3337,8 @@
       };
     }
 
-    async function saveMarkerPhotoRecord(marker, photoInfo, kind){
-      const context = resolveMarkerPhotoContext(marker, kind);
+    async function saveMarkerPhotoRecord(marker, photoInfo, kind, scope = null){
+      const context = resolveMarkerPhotoContext(marker, kind, scope);
       if(!context.local_marker_id) throw new Error("local_marker_id が未確定です。");
       if(!context.inspection_id) throw new Error("inspection_id が未確定です。");
       if(!context.floor_id) throw new Error("floor_id が未確定です。");
@@ -3306,7 +3369,7 @@
         display_order: context.kind === "before" ? 0 : 1,
       };
       let existingQuery = sb.from("marker_photos")
-        .select("id")
+        .select("id, storage_path, marker_id")
         .eq("inspection_id", context.inspection_id)
         .eq("floor_id", context.floor_id)
         .eq("local_marker_id", context.local_marker_id)
@@ -3321,6 +3384,11 @@
       const existing = existingRows?.[0] || null;
       let error = null;
       if(existing?.id){
+        const storageUnchanged = String(existing.storage_path || "") === String(photoInfo.storage_path || "");
+        const markerUnchanged = String(existing.marker_id || "") === String(context.marker_id || "");
+        if(storageUnchanged && markerUnchanged){
+          return payload;
+        }
         const res = await sb.from("marker_photos")
           .update(payload)
           .eq("id", existing.id);
@@ -3341,12 +3409,12 @@
       return payload;
     }
 
-    async function uploadMarkerPhotoToStorage(marker, kind, file){
+    async function uploadMarkerPhotoToStorage(marker, kind, file, scope = null){
       if(kind !== "before" && kind !== "after"){
         throw new Error("kind は before / after のみ対応です。");
       }
-      const uploaded = await uploadMarkerPhotoToSupabase(marker, file, kind);
-      await saveMarkerPhotoRecord(marker, uploaded, kind);
+      const uploaded = await uploadMarkerPhotoToSupabase(marker, file, kind, scope);
+      await saveMarkerPhotoRecord(marker, uploaded, kind, scope);
       const photoKey = kind === "after" ? "afterPhoto" : "beforePhoto";
       const fileKey = kind === "after" ? "afterPhotoFile" : "beforePhotoFile";
       const delKey = kind === "after" ? "afterPhotoDelete" : "beforePhotoDelete";
@@ -3360,12 +3428,12 @@
       return uploaded;
     }
 
-    async function saveMarkerPhotosToCloud(marker){
+    async function saveMarkerPhotosToCloud(marker, scope = null){
       if(!marker) return 0;
       const markerCloudId = marker.cloud_marker_id || marker.supabase_marker_id || null;
       const markerLocalId = marker.local_marker_id || marker.id || null;
-      const inspectionId = currentInspectionId || null;
-      const floorId = currentFloorId || selectedFloorId || selectedFloor?.id || null;
+      const inspectionId = scope?.inspectionId || currentInspectionId || null;
+      const floorId = scope?.floorId || currentFloorId || selectedFloorId || selectedFloor?.id || null;
       const drawingId = store?.activeBg?.drawingId || currentDrawingId || null;
       if(!inspectionId || !floorId || !markerLocalId) return 0;
       marker.cloud_marker_id = markerCloudId;
@@ -3405,12 +3473,12 @@
             continue;
           }
           if(selectedFile instanceof File){
-            await uploadMarkerPhotoToStorage(marker, kind, selectedFile);
+            await uploadMarkerPhotoToStorage(marker, kind, selectedFile, scope);
             savedCount += 1;
             continue;
           }
           if(marker[photoKey]?.storage_path){
-            await saveMarkerPhotoRecord(marker, marker[photoKey], kind);
+            await saveMarkerPhotoRecord(marker, marker[photoKey], kind, scope);
             marker[delPathKey] = null;
             savedCount += 1;
           }
@@ -3663,6 +3731,7 @@
             .eq("floor_id", currentFloorId)
             .eq("drawing_id", drawingRow.id)
             .neq("status", "deleted")
+            .neq("status", "trash")
             .order("sort_order", { ascending: true });
           if(mErr) throw mErr;
           markerRows = data || [];
@@ -3780,6 +3849,9 @@
     }
 
     async function autoSaveToCloud(reason = "autosave", options = {}){
+      const siteId = selectedSiteId || selectedSite?.id || null;
+      const floorId = currentFloorId || selectedFloorId || null;
+      const inspectionId = currentInspectionId || selectedInspectionId || null;
       const manual = !!options.manual;
       if(autoSaveTimer){
         clearTimeout(autoSaveTimer);
@@ -3809,20 +3881,26 @@
           updateSaveStatus("saving");
           if(normalizeAllMarkersInStore()) saveStore();
           const sb = getSupabase();
-          const inspectionId = await ensureCurrentInspection();
+          const savedInspectionId = inspectionId
+            || (siteId && floorId
+              ? await ensureInspectionForFloor(siteId, floorId)
+              : await ensureCurrentInspection());
           await uploadCurrentPdfToStorage();
           let payload = readInspectionForm();
           const { error: updErr } = await sb.from("inspections")
             .update(payload)
-            .eq("id", inspectionId);
+            .eq("id", savedInspectionId);
           if(updErr) throw updErr;
-          const markerSaveRes = await saveMarkersToCloud(inspectionId);
-          const textNoteSaveRes = await saveTextNotesToCloud(inspectionId);
+          const markerSaveRes = await saveMarkersToCloud(savedInspectionId, floorId, siteId);
+          const textNoteSaveRes = await saveTextNotesToCloud(savedInspectionId);
+          const photoScope = { inspectionId: savedInspectionId, floorId, siteId };
           let photoSavedCount = 0;
-          for(const [, arr] of getCurrentFloorMarkerEntries()){
+          const markerEntries = Object.entries(store?.markersByKey || {})
+            .filter(([key])=>keyMatchesFloor(key, floorId));
+          for(const [, arr] of markerEntries){
             if(!Array.isArray(arr)) continue;
             for(const marker of arr){
-              photoSavedCount += await saveMarkerPhotosToCloud(marker);
+              photoSavedCount += await saveMarkerPhotosToCloud(marker, photoScope);
             }
           }
           await cleanupPendingPhotoStorageDeletes();
@@ -3842,8 +3920,8 @@
           }
           updateCloudCurrentIdLabel();
           await refreshCloudInspectionList();
-          if(selectedSiteId) await loadInspectionSites();
-          if(selectedSiteId && selectedFloorId) await loadFloors(selectedSiteId);
+          if(siteId) await loadInspectionSites();
+          if(siteId && floorId) await loadFloors(siteId);
           return true;
         }catch(error){
           console.error("[autosave] error", error);
@@ -4270,7 +4348,9 @@
           if(inspIds.length > 0){
             const { data: markers } = await sb.from("markers")
               .select("inspection_id, status")
-              .in("inspection_id", inspIds);
+              .in("inspection_id", inspIds)
+              .neq("status", "deleted")
+              .neq("status", "trash");
             const markerRows = markers || [];
             const inspToSite = new Map(inspRows.map(i=>[String(i.id), String(i.site_id || "")]));
             markerRows.forEach(m=>{
@@ -4633,7 +4713,8 @@
         const { data: markers } = await sb.from("markers")
           .select("inspection_id, status")
           .in("inspection_id", inspIds)
-          .neq("status", "deleted");
+          .neq("status", "deleted")
+          .neq("status", "trash");
         (markers || []).forEach(m=>{
           const floorKey = inspToFloor.get(String(m.inspection_id || ""));
           if(!floorKey || !summaryByFloor.has(floorKey)) return;
@@ -13575,6 +13656,7 @@
         .select("*")
         .eq("floor_id", scope.floorId)
         .neq("status", "deleted")
+        .neq("status", "trash")
         .order("sort_order", { ascending: true });
       if(scope.inspectionId) query = query.eq("inspection_id", scope.inspectionId);
       if(scope.siteId) query = query.eq("site_id", scope.siteId);

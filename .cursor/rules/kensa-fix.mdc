@@ -1,0 +1,24 @@
+---
+description: 建物検査システム（kensa-2nd）本番前修正の共通ルール
+alwaysApply: true
+---
+
+# プロジェクト概要
+- 石栄建物向け「建物検査システム」。図面PDF上に指摘ピンを打ち、写真・業者・ステータスを管理し、PDF出力する。
+- 単一HTMLファイル（約15,000行）。CSSは8–1146行、JSは1717–15052行で、すべて `DOMContentLoaded` の1つのクロージャ内。
+- バックエンドは Supabase（supabase-js v2 をCDN読み込み）。URLとanonキーは `SUPABASE_URL` / `SUPABASE_ANON_KEY`（1845行付近）。
+- テーブル: sites, site_floors, inspections, drawings, drawing_pages, markers, marker_photos, drawing_text_notes, inspection_vendors, inspection_categories, inspection_category_vendor_assignments
+- Storage バケット: inspection-drawings（PDF）, marker-photos（写真）
+- 保存の流れ: 変更→ markDirty() → scheduleAutoSave()（1.5秒デバウンス）→ autoSaveToCloud()。ローカルは saveStore() で localStorage["inspection_system_v3_plainjs"] に全フロア分を保存。
+
+# 作業ルール（必ず守る）
+- 作業ブランチ: fix/production-readiness-20260924
+- 編集前に、対象の関数名を grep して現在の行番号を確認する。指示書の行番号は目安。
+- 1回の変更は1項目に限定する。関係ない箇所のリファクタ・整形・console.log削除はしない（P2で別途行う）。
+- DBスキーマ変更は追加のみ（ADD COLUMN / CREATE UNIQUE INDEX / CREATE POLICY）。DROP・列型変更・物理DELETEは禁止。SQLは実行せず `migrations/YYYYMMDD_xxx.sql` として書き出し、内容を報告する。
+- 既存データを壊さない。データ補正SQLは必ず `SELECT` での影響件数確認クエリをセットで書く。
+- 削除系は必ずソフトデリート（status='deleted' / 'trash' + deleted_at）。Storage の実ファイル削除をクライアントから即時に行わない。
+- 日付は `YYYY-MM-DD` 文字列で扱う。`toISOString()` を日付（検査日など）の変換に使わない（JST→UTCで1日ずれる）。
+- 座標は 0〜1 の比率で保存する。px で保存しない。
+- ユーザー向けテキストは日本語。エラーはトースト（toast()）で必ず可視化し、console だけに出して終わらない。
+- 変更後は必ず「変更した関数名一覧」「変更理由」「手動テスト手順」を報告する。
