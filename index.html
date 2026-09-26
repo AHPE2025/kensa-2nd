@@ -2852,6 +2852,12 @@
       return `${String(drawingId || "")}::${Number(pageNumber) || 0}`;
     }
 
+    function isUnregisteredMarkerScope(drawingId, pageNumber){
+      if(drawingId == null || String(drawingId) === "") return true;
+      if(pageNumber == null || pageNumber === "") return false;
+      return Number(pageNumber) === 0;
+    }
+
     async function saveMarkersToCloud(inspectionId, floorId, siteId){
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       if(!floorId) throw new Error("floor_id が未確定です。");
@@ -2883,6 +2889,7 @@
         if(!keyMatchesFloor(key, floorId)) continue;
         if(!Array.isArray(arr)) continue;
         const parsed = parseMarkerKey(key);
+        if(isUnregisteredMarkerScope(parsed.drawing_id, parsed.page_number)) continue;
         const markerDrawingId = parsed.drawing_id || ((parsed.pdfId && activeDrawingId && parsed.pdfId === activePdfIdentity)
           ? activeDrawingId
           : (parsed.pdfId === activeDrawingId ? activeDrawingId : null));
@@ -2902,6 +2909,7 @@
           .filter(row => {
             const status = String(row?.status || "").toLowerCase();
             if(status === "deleted" || status === "trash") return false;
+            if(isUnregisteredMarkerScope(row?.drawing_id, row?.page_number)) return false;
             const pageKey = markerDrawingPageKey(row?.drawing_id, row?.page_number);
             const localIds = localIdsByPage.get(pageKey);
             if(!localIds) return false;
@@ -3737,6 +3745,28 @@
           markerRows = data || [];
         }
 
+        let unregisteredPinNotice = "";
+        if(!drawingRow?.id && currentFloorId){
+          try{
+            const { count, error: orphanErr } = await sb.from("markers")
+              .select("id", { count: "exact", head: true })
+              .eq("inspection_id", inspectionId)
+              .eq("floor_id", currentFloorId)
+              .is("drawing_id", null)
+              .eq("page_number", 0)
+              .neq("status", "deleted")
+              .neq("status", "trash");
+            if(orphanErr) throw orphanErr;
+            const unregisteredPinCount = Number(count) || 0;
+            if(unregisteredPinCount > 0){
+              unregisteredPinNotice = `図面未登録のピンが ${unregisteredPinCount} 件あります`;
+            }
+          }catch(orphanError){
+            console.error("[unregistered pins] count failed", orphanError);
+            unregisteredPinNotice = "図面未登録のピンの確認に失敗しました";
+          }
+        }
+
         applyLoadedInspectionToStore(insp, markerRows);
         try{
           const localMarkers = Object.entries(store.markersByKey || {})
@@ -3789,7 +3819,13 @@
         const tn = Object.entries(store.textNotesByKey || {})
           .filter(([key])=>keyMatchesFloor(key, currentFloorId))
           .reduce((s,[,a])=>s+(Array.isArray(a)?a.filter(v=>normalizeTextNote(v).status === "active").length:0),0);
-        toast(`クラウド読み込み完了。\n${insp.title || "無題"}\nマーカー合計: ${n}件 / テキスト合計: ${tn}件`);
+        const doneLines = [
+          "クラウド読み込み完了。",
+          insp.title || "無題",
+          `マーカー合計: ${n}件 / テキスト合計: ${tn}件`,
+        ];
+        if(unregisteredPinNotice) doneLines.push(unregisteredPinNotice);
+        toast(doneLines.join("\n"));
         dirty = false;
         updateSaveStatus("saved");
         renderCloudInspectionList(lastCloudListCache);
@@ -3951,6 +3987,12 @@
           queuedAutoSaveReason = "";
           scheduleAutoSave(queuedReason);
         }
+      }
+    }
+
+    async function waitForInFlightAutoSave(){
+      while(autoSaveInFlight){
+        await new Promise(resolve => setTimeout(resolve, 40));
       }
     }
 
@@ -11338,6 +11380,10 @@
     }
 
     function handleStagePointerTap(e, source = "stage"){
+      if(store.activeBg?.kind !== "pdf"){
+        toast("先に図面PDFを登録してください");
+        return;
+      }
       if(isTextBoxV3ControlTarget(e.target)){
         console.log("[stage tap skipped: textBoxV3 control]", {
           inputMode,
@@ -13511,7 +13557,7 @@
 
     function normalizeRestoreStatusFromPrevious(previousStatus, fallback = "active"){
       const prev = String(previousStatus || "").toLowerCase();
-      if(!prev || prev === "trash" || prev === "deleted" || prev === "active") return fallback;
+      if(!prev || prev === "trash" || prev === "deleted") return fallback;
       return prev;
     }
 
@@ -13546,8 +13592,8 @@
         const fromData = marker?.marker_data && typeof marker.marker_data === "object"
           ? String(marker.marker_data.previous_status || "")
           : "";
-        const prev = String(marker?.previous_status || fromData || "").toLowerCase();
-        const restoredStatus = prev === "completed" ? "completed" : "open";
+        const prev = String(marker?.previous_status || fromData || "");
+        const restoredStatus = normalizeRestoreStatusFromPrevious(prev, "open");
         const markerData = (marker?.marker_data && typeof marker.marker_data === "object" && !Array.isArray(marker.marker_data))
           ? { ...marker.marker_data }
           : null;
@@ -13761,8 +13807,61 @@
       });
     }
 
+    async function trashDrawingScopedRows(sb, tableName, drawingId, now, options = {}){
+      const selectColumns = options.selectColumns || "id,status";
+      const { data: rows, error: readErr } = await sb.from(tableName)
+        .select(selectColumns)
+        .eq("drawing_id", drawingId);
+      if(readErr){
+        logPdfDeleteError(`movePdfDrawingToTrash.${tableName}.select`, readErr, { drawingId });
+        if(isMissingColumnOrTableError(readErr)) return;
+        throw readErr;
+      }
+      for(const row of (rows || [])){
+        const currentStatus = String(row?.status || options.defaultStatus || "active").toLowerCase();
+        if(currentStatus === "trash" || currentStatus === "deleted") continue;
+        let payloads;
+        if(options.withMarkerData){
+          const markerData = (row?.marker_data && typeof row.marker_data === "object" && !Array.isArray(row.marker_data))
+            ? { ...row.marker_data, previous_status: currentStatus }
+            : { previous_status: currentStatus };
+          payloads = [
+            { status: "trash", previous_status: currentStatus, marker_data: markerData, deleted_at: now, updated_at: now },
+            { status: "trash", marker_data: markerData, deleted_at: now, updated_at: now },
+            { status: "trash", deleted_at: now, updated_at: now },
+            { status: "trash", updated_at: now },
+          ];
+        }else{
+          payloads = [
+            { status: "trash", previous_status: currentStatus, deleted_at: now, updated_at: now },
+            { status: "trash", deleted_at: now, updated_at: now },
+            { status: "trash", updated_at: now },
+          ];
+        }
+        let done = false;
+        let lastError = null;
+        for(const payload of payloads){
+          const { error } = await sb.from(tableName).update(payload).eq("id", row.id);
+          if(!error){
+            done = true;
+            break;
+          }
+          lastError = error;
+          if(!isMissingColumnOrTableError(error)) break;
+        }
+        if(!done && lastError) throw lastError;
+      }
+    }
+
     async function movePdfDrawingToTrash(drawingId, options = {}){
       if(!drawingId) return false;
+      await waitForInFlightAutoSave();
+      collectPdfScopedKeys(store?.markersByKey, drawingId).forEach(key=>{
+        delete store.markersByKey[key];
+      });
+      collectPdfScopedKeys(store?.textNotesByKey, drawingId).forEach(key=>{
+        delete store.textNotesByKey[key];
+      });
       if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return true;
       const sb = getSupabase();
       const now = new Date().toISOString();
@@ -13801,6 +13900,17 @@
           if(pageErr) throw pageErr;
         }
       }
+      await trashDrawingScopedRows(sb, "markers", drawingId, now, {
+        selectColumns: "id,status,marker_data",
+        withMarkerData: true,
+        defaultStatus: "open",
+      });
+      await trashDrawingScopedRows(sb, "drawing_text_notes", drawingId, now, {
+        defaultStatus: "active",
+      });
+      await trashDrawingScopedRows(sb, "marker_photos", drawingId, now, {
+        defaultStatus: "active",
+      });
       if((currentInspectionId || drawingRow?.inspection_id) && String(currentDrawingId || "") === String(drawingId)){
         const { error: inspErr } = await sb.from("inspections")
           .update({ current_drawing_id: null, current_page: 1 })
