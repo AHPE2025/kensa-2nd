@@ -1344,6 +1344,7 @@
           <option value="">業者: 全て</option>
         </select>
         <button class="btn" id="btnToggleIssuePanel" type="button">指摘一覧へ移動</button>
+        <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn primary" id="btnExportPdf" type="button">PDF出力</button>
         <button class="btn" id="btnSavePng" type="button">PNG保存</button>
         <button class="btn" id="btnClearStorage" type="button">データ消去</button>
@@ -1365,7 +1366,6 @@
       <div class="cloud-actions floor-cloud-admin-hidden">
         <button class="btn" id="btnSupabaseTest" type="button">Supabase接続確認</button>
         <button class="btn ok" id="btnNewInspection" type="button">新規検査案件作成</button>
-        <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn" id="btnCloudLoad" type="button">クラウド読み込み</button>
       </div>
       <div class="cloud-list floor-cloud-admin-hidden" id="cloudInspectionList"></div>
@@ -1942,6 +1942,8 @@
     const ACCEPTED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
     const MAX_PHOTO_FILE_SIZE = 15 * 1024 * 1024;
     const AUTO_SAVE_DELAY_MS = 1500;
+    const AUTO_SAVE_RETRY_BASE_MS = 2000;
+    const AUTO_SAVE_RETRY_MAX_MS = 60000;
     const DEBUG_MARKERS = false;
     const DEBUG_FULLSCREEN = false;
     const DEBUG_PHOTOS = false;
@@ -1949,8 +1951,11 @@
     const DEBUG_VENDOR_FILTER = false;
     let dirty = false;
     let autoSaveTimer = null;
-    let autoSaveInFlight = false;
-    let queuedAutoSaveReason = "";
+    let autoSaveInFlight = null;
+    let autoSaveRetryTimer = null;
+    let autoSaveRetryAttempt = 0;
+    let autoSaveNeedsRetry = false;
+    let autoSaveFailureNotified = false;
     let textNoteEditorOutsideCloseGuardUntil = 0;
     let textNoteCloudSaveTimer = null;
     const TEXT_NOTE_CLOUD_SAVE_DELAY_MS = 1500;
@@ -2024,10 +2029,11 @@
         pdf_unsaved: { text: "PDF未保存", level: "warn" },
         photo_unsaved: { text: "写真未保存", level: "warn" },
         failed: { text: "自動保存失敗", level: "err" },
+        error: { text: "保存失敗（再試行中）", level: "err" },
       };
       const base = map[status] || map.saved;
       const text = message
-        ? (status === "local" ? message : `${base.text} (${message})`)
+        ? ((status === "local" || status === "error") ? message : `${base.text} (${message})`)
         : base.text;
       setCloudStatus(text, base.level);
     }
@@ -2358,9 +2364,10 @@
       });
     }
 
-    function buildMarkerRows(inspectionId, floorId, siteId){
+    function buildMarkerRows(inspectionId, floorId, siteId, floorName = null){
       const rows = [];
       if(!floorId) return rows;
+      const resolvedFloorName = floorName || selectedFloor?.floor_name || $("inpFloorName").value || null;
       const mbk = store.markersByKey || {};
       const bg = store.activeBg || { kind:"none" };
       const activeDrawingId = bg.kind === "pdf" ? (bg.drawingId || currentDrawingId || null) : null;
@@ -2389,7 +2396,7 @@
             inspection_id: inspectionId,
             site_id: siteId || null,
             floor_id: floorId,
-            floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
+            floor_name: resolvedFloorName,
             drawing_id: markerDrawingId,
             page_number,
             local_marker_id: m.id,
@@ -2421,7 +2428,7 @@
               marker_no: displayNo,
               site_id: siteId || null,
               floor_id: floorId,
-              floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
+              floor_name: resolvedFloorName,
               pdfId,
               createdAt: m.createdAt || Date.now(),
               status: normalizedStatus,
@@ -2611,7 +2618,24 @@
       updateCurrentContextLabels();
     }
 
-    function applyLoadedInspectionToStore(insp, markerRows){
+    async function applyLoadedInspectionToStore(insp, markerRows){
+      if(dirty){
+        const overwrite = await askConfirm(
+          "この端末に未保存の変更があります。クラウドの内容で上書きしますか？",
+          {
+            title: "未保存の変更",
+            okLabel: "上書きする",
+            cancelLabel: "キャンセル",
+            danger: true,
+          }
+        );
+        if(!overwrite){
+          autoSaveToCloud("keep local").catch(error=>{
+            console.error("[autosave] keep local retry failed", error);
+          });
+          return false;
+        }
+      }
       const settings = insp.settings || {};
       const floorScopeId = getScopedFloorId(insp.floor_id || selectedFloorId || currentFloorId);
       const loadedMarkersByKey = markerRowsToMarkersByKey(markerRows, null);
@@ -2629,6 +2653,7 @@
       }
       store.inputMode = settings.inputMode === "text" ? "text" : (store.inputMode || "pin");
       store.version = 1;
+      return true;
     }
 
     function refreshUiAfterDataChange(){
@@ -2920,11 +2945,11 @@
       }
     }
 
-    async function saveMarkersToCloud(inspectionId, floorId, siteId){
+    async function saveMarkersToCloud(inspectionId, floorId, siteId, floorName = null){
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       if(!floorId) throw new Error("floor_id が未確定です。");
       const sb = getSupabase();
-      const markerRows = buildMarkerRows(inspectionId, floorId, siteId);
+      const markerRows = buildMarkerRows(inspectionId, floorId, siteId, floorName);
       const dedupedRows = [];
       const seenLocalIds = new Set();
       for(let i = markerRows.length - 1; i >= 0; i -= 1){
@@ -3048,9 +3073,9 @@
       const normalizedContent = String(content) === "メモ未入力" ? "" : String(content ?? "");
       const payload = {
         local_text_id: note.local_text_id,
-        site_id: selectedSiteId || store.siteId || null,
+        site_id: ctx.siteId || selectedSiteId || store.siteId || null,
         inspection_id: ctx.inspectionId || currentInspectionId || store.inspectionId || null,
-        floor_id: selectedFloorId || currentFloorId || store.currentFloorId || null,
+        floor_id: ctx.floorId || selectedFloorId || currentFloorId || store.currentFloorId || null,
         drawing_id: ctx.drawing_id ?? note.drawing_id ?? note.drawingId ?? (bg.drawingId || currentDrawingId || store.currentDrawingId || null),
         page_number: Number(note.page_number || note.pageNumber || ctx.page_number || currentPage || 1),
         content: normalizedContent,
@@ -3133,11 +3158,12 @@
       }
     }
 
-    async function saveTextNotesToCloud(inspectionId){
+    async function saveTextNotesToCloud(inspectionId, floorId = null, siteId = null){
       const notesToSave = [];
+      const scopeFloorId = floorId || currentFloorId;
       const byKey = store.textNotesByKey || {};
       for(const [key, arr] of Object.entries(byKey)){
-        if(!keyMatchesFloor(key, currentFloorId)) continue;
+        if(!keyMatchesFloor(key, scopeFloorId)) continue;
         if(!Array.isArray(arr)) continue;
         const { page_number, drawing_id } = parseTextNoteKey(key);
         arr.forEach(note=>{
@@ -3154,7 +3180,13 @@
       if(notesToSave.length === 0) return { textNoteCount: 0 };
       let savedCount = 0;
       for(const { note, page_number, drawing_id } of notesToSave){
-        await saveSingleTextNoteToCloud(note, { inspectionId, page_number, drawing_id });
+        await saveSingleTextNoteToCloud(note, {
+          inspectionId,
+          page_number,
+          drawing_id,
+          floorId: scopeFloorId,
+          siteId: siteId || null,
+        });
         savedCount += 1;
       }
       if(DEBUG_TEXT_NOTES){
@@ -3427,7 +3459,7 @@
         marker_id: context.marker_id,
         local_marker_id: context.local_marker_id,
         page_number: context.page_number,
-        floor_name: selectedFloor?.floor_name || $("inpFloorName").value || null,
+        floor_name: scope?.floorName || selectedFloor?.floor_name || $("inpFloorName").value || null,
         kind: context.kind,
         photo_type: context.kind,
         storage_path: photoInfo.storage_path,
@@ -3508,7 +3540,9 @@
       const markerLocalId = marker.local_marker_id || marker.id || null;
       const inspectionId = scope?.inspectionId || currentInspectionId || null;
       const floorId = scope?.floorId || currentFloorId || selectedFloorId || selectedFloor?.id || null;
-      const drawingId = store?.activeBg?.drawingId || currentDrawingId || null;
+      const drawingId = scope
+        ? (scope.drawingId || null)
+        : (store?.activeBg?.drawingId || currentDrawingId || null);
       if(!inspectionId || !floorId || !markerLocalId) return 0;
       marker.cloud_marker_id = markerCloudId;
       marker.supabase_marker_id = markerCloudId;
@@ -3796,8 +3830,6 @@
           throw new Error("trash floor is not openable");
         }
 
-        resetFloorRuntimeState();
-        applyInspectionForm(insp);
         let drawingRow = null;
         if(currentFloorId){
           const { data: drawingRows, error: dErr } = await sb.from("drawings")
@@ -3847,7 +3879,10 @@
           }
         }
 
-        applyLoadedInspectionToStore(insp, markerRows);
+        const applied = await applyLoadedInspectionToStore(insp, markerRows);
+        if(!applied) return;
+        resetFloorRuntimeState();
+        applyInspectionForm(insp);
         try{
           const localMarkers = Object.entries(store.markersByKey || {})
             .filter(([key])=>keyMatchesFloor(key, currentFloorId))
@@ -3964,22 +3999,60 @@
       return data.id;
     }
 
-    async function autoSaveToCloud(reason = "autosave", options = {}){
-      const siteId = selectedSiteId || selectedSite?.id || null;
-      const floorId = currentFloorId || selectedFloorId || null;
-      const inspectionId = currentInspectionId || selectedInspectionId || null;
-      const manual = !!options.manual;
-      if(autoSaveTimer){
-        clearTimeout(autoSaveTimer);
-        autoSaveTimer = null;
+    function resetAutoSaveRetryState(){
+      if(autoSaveRetryTimer){
+        clearTimeout(autoSaveRetryTimer);
+        autoSaveRetryTimer = null;
       }
-      if(autoSaveInFlight){
-        queuedAutoSaveReason = reason || "queued";
-        return false;
+      autoSaveRetryAttempt = 0;
+      autoSaveNeedsRetry = false;
+      autoSaveFailureNotified = false;
+    }
+
+    function scheduleAutoSaveRetry(reason){
+      if(autoSaveRetryTimer){
+        clearTimeout(autoSaveRetryTimer);
+        autoSaveRetryTimer = null;
       }
-      autoSaveInFlight = true;
+      const delay = Math.min(
+        AUTO_SAVE_RETRY_MAX_MS,
+        AUTO_SAVE_RETRY_BASE_MS * (2 ** autoSaveRetryAttempt)
+      );
+      autoSaveRetryAttempt += 1;
+      autoSaveRetryTimer = setTimeout(()=>{
+        autoSaveRetryTimer = null;
+        autoSaveToCloud(reason || "autosave retry").catch(error=>{
+          console.error("[autosave] retry failed", error);
+        });
+      }, delay);
+    }
+
+    function handleAutoSaveFailure(error, manual, reason){
+      console.error("[autosave] error", error);
       try{
-        if(selectedFloor && !isActiveFloorStatus(selectedFloor.status)){
+        saveStore();
+      }catch(saveErr){
+        console.error("[autosave] local save failed", saveErr);
+      }
+      autoSaveNeedsRetry = true;
+      updateSaveStatus("error", "保存失敗（再試行中）");
+      const shouldToast = !!manual || !autoSaveFailureNotified;
+      autoSaveFailureNotified = true;
+      if(shouldToast){
+        toast("保存に失敗しました。再試行します。");
+      }
+      scheduleAutoSaveRetry(reason);
+    }
+
+    async function executeAutoSave(reason, options, scope){
+      const manual = !!options.manual;
+      const { siteId, floorId, inspectionId, floorName, siteName, drawingId } = scope;
+      try{
+        if(autoSaveRetryTimer){
+          clearTimeout(autoSaveRetryTimer);
+          autoSaveRetryTimer = null;
+        }
+        if(!scope.floorIsActive){
           if(manual){
             toast("ゴミ箱内のフロアは保存対象外です。復元後に保存してください。");
           }
@@ -3993,86 +4066,109 @@
           }
           return false;
         }
-        try{
-          updateSaveStatus("saving");
-          if(normalizeAllMarkersInStore()) saveStore();
-          const sb = getSupabase();
-          const savedInspectionId = inspectionId
-            || (siteId && floorId
-              ? await ensureInspectionForFloor(siteId, floorId)
-              : await ensureCurrentInspection());
-          await uploadCurrentPdfToStorage();
-          let payload = readInspectionForm();
-          const { error: updErr } = await sb.from("inspections")
-            .update(payload)
-            .eq("id", savedInspectionId);
-          if(updErr) throw updErr;
-          const markerSaveRes = await saveMarkersToCloud(savedInspectionId, floorId, siteId);
-          const textNoteSaveRes = await saveTextNotesToCloud(savedInspectionId);
-          const photoScope = { inspectionId: savedInspectionId, floorId, siteId };
-          let photoSavedCount = 0;
-          const markerEntries = Object.entries(store?.markersByKey || {})
-            .filter(([key])=>keyMatchesFloor(key, floorId));
-          for(const [, arr] of markerEntries){
-            if(!Array.isArray(arr)) continue;
-            for(const marker of arr){
-              photoSavedCount += await saveMarkerPhotosToCloud(marker, photoScope);
-            }
+        updateSaveStatus("saving");
+        if(normalizeAllMarkersInStore()) saveStore();
+        const sb = getSupabase();
+        const savedInspectionId = inspectionId
+          || (siteId && floorId
+            ? await ensureInspectionForFloor(siteId, floorId)
+            : await ensureCurrentInspection());
+        await uploadCurrentPdfToStorage();
+        const payload = readInspectionForm();
+        if(siteId) payload.site_id = siteId;
+        if(floorId) payload.floor_id = floorId;
+        if(floorName) payload.floor_name = floorName;
+        if(siteName) payload.site_name = siteName;
+        const { error: updErr } = await sb.from("inspections")
+          .update(payload)
+          .eq("id", savedInspectionId);
+        if(updErr) throw updErr;
+        const markerSaveRes = await saveMarkersToCloud(savedInspectionId, floorId, siteId, floorName);
+        const textNoteSaveRes = await saveTextNotesToCloud(savedInspectionId, floorId, siteId);
+        const photoScope = {
+          inspectionId: savedInspectionId,
+          floorId,
+          siteId,
+          floorName,
+          drawingId,
+        };
+        let photoSavedCount = 0;
+        const markerEntries = Object.entries(store?.markersByKey || {})
+          .filter(([key])=>keyMatchesFloor(key, floorId));
+        for(const [, arr] of markerEntries){
+          if(!Array.isArray(arr)) continue;
+          for(const marker of arr){
+            photoSavedCount += await saveMarkerPhotosToCloud(marker, photoScope);
           }
-          await cleanupPendingPhotoStorageDeletes();
-          setAllMarkerSyncStatus("synced");
-          saveStore();
+        }
+        await cleanupPendingPhotoStorageDeletes();
+        setAllMarkerSyncStatus("synced");
+        saveStore();
+        const stillCurrent = !floorId || String(currentFloorId || selectedFloorId || "") === String(floorId);
+        if(stillCurrent){
           dirty = false;
           updateSaveStatus("saved");
-          if(manual){
-            toast("クラウド保存しました");
-          }else{
-            console.debug("[autosave] success", {
-              reason,
-              markerCount: markerSaveRes.markerCount,
-              textNoteCount: textNoteSaveRes.textNoteCount,
-              photoCount: photoSavedCount,
-            });
-          }
-          updateCloudCurrentIdLabel();
-          await refreshCloudInspectionList();
-          if(siteId) await loadInspectionSites();
-          if(siteId && floorId) await loadFloors(siteId);
-          return true;
-        }catch(error){
-          console.error("[autosave] error", error);
-          saveStore();
-          if (typeof updateSaveStatus === "function") {
-            updateSaveStatus("local", "ローカル保存中");
-          }
-          return false;
         }
-      }catch(e){
-        console.error("[autosave] error", e);
-        let localSaved = true;
-        try{
-          saveStore();
-        }catch(_){
-          localSaved = false;
-        }
-        updateSaveStatus(localSaved ? "local_only" : "failed");
+        resetAutoSaveRetryState();
         if(manual){
-          toast("クラウド保存に失敗しました。ローカルには保存されています");
+          toast("クラウド保存しました");
+        }else{
+          console.debug("[autosave] success", {
+            reason,
+            markerCount: markerSaveRes.markerCount,
+            textNoteCount: textNoteSaveRes.textNoteCount,
+            photoCount: photoSavedCount,
+          });
         }
+        updateCloudCurrentIdLabel();
+        await refreshCloudInspectionList();
+        if(siteId) await loadInspectionSites();
+        if(siteId && floorId) await loadFloors(siteId);
+        return true;
+      }catch(error){
+        handleAutoSaveFailure(error, manual, reason);
         return false;
-      }finally{
-        autoSaveInFlight = false;
-        if(queuedAutoSaveReason){
-          const queuedReason = queuedAutoSaveReason;
-          queuedAutoSaveReason = "";
-          scheduleAutoSave(queuedReason);
+      }
+    }
+
+    async function autoSaveToCloud(reason = "autosave", options = {}){
+      const bg = store?.activeBg || { kind: "none" };
+      const scope = {
+        siteId: selectedSiteId || selectedSite?.id || null,
+        floorId: currentFloorId || selectedFloorId || null,
+        inspectionId: currentInspectionId || selectedInspectionId || null,
+        floorName: selectedFloor?.floor_name || $("inpFloorName")?.value || null,
+        siteName: selectedSite?.site_name || $("inpSiteName")?.value || null,
+        drawingId: bg.drawingId || currentDrawingId || null,
+        floorIsActive: !(selectedFloor && !isActiveFloorStatus(selectedFloor.status)),
+      };
+      if(autoSaveTimer){
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+      const previous = autoSaveInFlight;
+      const run = (async()=>{
+        await Promise.resolve();
+        if(previous){
+          try{ await previous; }catch(_){}
         }
+        return await executeAutoSave(reason, options, scope);
+      })();
+      autoSaveInFlight = run;
+      try{
+        return await run;
+      }finally{
+        if(autoSaveInFlight === run) autoSaveInFlight = null;
       }
     }
 
     async function waitForInFlightAutoSave(){
       while(autoSaveInFlight){
-        await new Promise(resolve => setTimeout(resolve, 40));
+        const pending = autoSaveInFlight;
+        try{
+          await pending;
+        }catch(_){}
+        if(autoSaveInFlight === pending) break;
       }
     }
 
@@ -4374,21 +4470,6 @@
         url.hash = hash.toString();
         history.replaceState(history.state || {}, "", url.toString());
       }catch(_){}
-    }
-
-    async function askFloorSwitchSaveMode(){
-      const saveAndMove = await askConfirm(
-        "現在のフロアに未保存の変更があります。保存してから移動しますか？",
-        {
-          title: "フロア切替",
-          okLabel: "保存して移動",
-          cancelLabel: "その他",
-          danger: false,
-        }
-      );
-      if(saveAndMove) return "save";
-      const moveWithoutSave = window.confirm("保存せず移動しますか？\nキャンセルを選ぶとフロア切替を中止します。");
-      return moveWithoutSave ? "skip" : "cancel";
     }
 
     function ensureActiveFloorScopedBuffers(){
@@ -5899,20 +5980,31 @@
         const previousFloorId = selectedFloorId || currentFloorId || null;
         const isSwitchingFloor = previousFloorId && String(previousFloorId) !== String(floorId);
         if(isSwitchingFloor){
-          let saveMode = "save";
-          if(dirty){
-            saveMode = await askFloorSwitchSaveMode();
-            if(saveMode === "cancel"){
-              renderFloorSwitchOptions();
-              return;
-            }
-          }
-          if(saveMode !== "skip"){
+          let ok = await autoSaveToCloud("floor switch");
+          while(autoSaveInFlight){
+            const pending = autoSaveInFlight;
             try{
-              await autoSaveToCloud("floor switch");
+              const chainedOk = await pending;
+              if(chainedOk === false) ok = false;
             }catch(saveErr){
               console.error("[floor switch] autosave failed", saveErr);
-              toast("現在のフロアの保存に失敗しました。切替後に内容を確認してください。");
+              ok = false;
+            }
+            if(autoSaveInFlight === pending) break;
+          }
+          if(!ok){
+            const moveAnyway = await askConfirm(
+              "保存できていません。それでも移動しますか？",
+              {
+                title: "フロア切替",
+                okLabel: "移動する",
+                cancelLabel: "キャンセル",
+                danger: true,
+              }
+            );
+            if(!moveAnyway){
+              renderFloorSwitchOptions();
+              return;
             }
           }
         }
@@ -5955,6 +6047,14 @@
       }
     }
 
+    function rememberInspectionId(id, floorId){
+      const activeFloorId = currentFloorId || selectedFloorId || null;
+      if(id && activeFloorId && floorId && String(activeFloorId) !== String(floorId)) return;
+      currentInspectionId = id;
+      selectedInspectionId = id;
+      selectedCloudInspectionId = id;
+    }
+
     async function ensureInspectionForFloor(siteId, floorId){
       if(!siteId || !floorId) throw new Error("site_id / floor_id が不足しています。");
       try{
@@ -5968,9 +6068,7 @@
           .limit(1);
         if(error) throw error;
         if(exists && exists.length > 0){
-          currentInspectionId = exists[0].id;
-          selectedInspectionId = exists[0].id;
-          selectedCloudInspectionId = exists[0].id;
+          rememberInspectionId(exists[0].id, floorId);
           return exists[0].id;
         }
         const formData = readInspectionForm();
@@ -5997,9 +6095,7 @@
           .select("id")
           .single();
         if(insertErr) throw insertErr;
-        currentInspectionId = data.id;
-        selectedInspectionId = data.id;
-        selectedCloudInspectionId = data.id;
+        rememberInspectionId(data.id, floorId);
         return data.id;
       }catch(e){
         logFloorOpenError("ensureInspectionForFloor", e, siteId, floorId);
@@ -15527,6 +15623,17 @@
       if(!dirty) return;
       e.preventDefault();
       e.returnValue = "";
+    });
+
+    window.addEventListener("online", ()=>{
+      if(!autoSaveNeedsRetry) return;
+      if(autoSaveRetryTimer){
+        clearTimeout(autoSaveRetryTimer);
+        autoSaveRetryTimer = null;
+      }
+      autoSaveToCloud("online").catch(error=>{
+        console.error("[autosave] online retry failed", error);
+      });
     });
 
     // -------------------- Boot --------------------
