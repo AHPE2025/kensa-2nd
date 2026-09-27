@@ -2652,7 +2652,6 @@
     function clearCurrentFloorDrawingState(){
       cancelActivePdfRenderTask();
       pdfRenderToken += 1;
-      hidePdfLoading();
       currentDrawingId = null;
       currentDrawingStoragePath = null;
       lastPdfFile = null;
@@ -2662,6 +2661,8 @@
       if(!store.markersByKey || typeof store.markersByKey !== "object") store.markersByKey = {};
       if(!store.textNotesByKey || typeof store.textNotesByKey !== "object") store.textNotesByKey = {};
       store.activeBg = { kind: "none" };
+      clearBackgroundCanvasNow();
+      hidePdfLoading();
       const pageInputEl = $("pageInput");
       if(pageInputEl) pageInputEl.value = "1";
       normalRotation = 0;
@@ -2858,6 +2859,67 @@
       return Number(pageNumber) === 0;
     }
 
+    function isRetiredCloudMarkerStatus(status){
+      const normalized = String(status || "").trim().toLowerCase();
+      return normalized === "deleted" || normalized === "trash";
+    }
+
+    async function findDeletedMarkersRevivedByUpsert(sb, inspectionId, rows){
+      const nextStatusByLocalId = new Map();
+      (rows || []).forEach(row=>{
+        const localId = String(row?.local_marker_id || "").trim();
+        const nextStatus = String(row?.status || "").trim().toLowerCase();
+        if(!localId) return;
+        if(nextStatus !== "open" && nextStatus !== "completed") return;
+        nextStatusByLocalId.set(localId, nextStatus);
+      });
+      const localIds = [...nextStatusByLocalId.keys()];
+      if(localIds.length === 0) return [];
+      const revived = [];
+      const chunkSize = 100;
+      for(let i = 0; i < localIds.length; i += chunkSize){
+        const chunk = localIds.slice(i, i + chunkSize);
+        const { data, error } = await sb.from("markers")
+          .select("local_marker_id, status")
+          .eq("inspection_id", inspectionId)
+          .in("local_marker_id", chunk);
+        if(error) throw error;
+        (data || []).forEach(row=>{
+          const localId = String(row?.local_marker_id || "").trim();
+          if(!localId || !nextStatusByLocalId.has(localId)) return;
+          if(String(row?.status || "").trim().toLowerCase() !== "deleted") return;
+          revived.push(localId);
+        });
+      }
+      return [...new Set(revived)];
+    }
+
+    async function reactivateMarkerPhotosByLocalIds(sb, inspectionId, localIds){
+      const uniqueIds = [...new Set((localIds || []).map(id=>String(id || "").trim()).filter(Boolean))];
+      if(!inspectionId || uniqueIds.length === 0) return;
+      const nowIso = new Date().toISOString();
+      const chunkSize = 100;
+      for(let i = 0; i < uniqueIds.length; i += chunkSize){
+        const chunk = uniqueIds.slice(i, i + chunkSize);
+        let { error } = await sb.from("marker_photos")
+          .update({ status: "active", deleted_at: null, updated_at: nowIso })
+          .eq("inspection_id", inspectionId)
+          .in("local_marker_id", chunk);
+        if(error && isMissingColumnOrTableError(error)){
+          const retry = await sb.from("marker_photos")
+            .update({ status: "active", updated_at: nowIso })
+            .eq("inspection_id", inspectionId)
+            .in("local_marker_id", chunk);
+          error = retry.error || null;
+        }
+        if(error){
+          console.error("[revived marker photo restore] failed", error);
+          toast("【エラー】復活したピンの写真状態を復元できませんでした。");
+          throw error;
+        }
+      }
+    }
+
     async function saveMarkersToCloud(inspectionId, floorId, siteId){
       if(!inspectionId) throw new Error("inspection_id が未確定です。");
       if(!floorId) throw new Error("floor_id が未確定です。");
@@ -2874,11 +2936,15 @@
       dedupedRows.reverse();
       let saved = [];
       if(dedupedRows.length > 0){
+        const revivedLocalIds = await findDeletedMarkersRevivedByUpsert(sb, inspectionId, dedupedRows);
         const { data, error: upsertErr } = await sb.from("markers")
           .upsert(dedupedRows, { onConflict: "inspection_id,local_marker_id" })
           .select("id, local_marker_id");
         if(upsertErr) throw upsertErr;
         saved = data || [];
+        if(revivedLocalIds.length > 0){
+          await reactivateMarkerPhotosByLocalIds(sb, inspectionId, revivedLocalIds);
+        }
       }
       const localIdsByPage = new Map();
       const mbk = store.markersByKey || {};
@@ -3504,16 +3570,30 @@
       if(pendingPhotoStorageDeletes.size === 0) return;
       const paths = [...pendingPhotoStorageDeletes];
       pendingPhotoStorageDeletes.clear();
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()){
+        paths.forEach(path=>pendingPhotoStorageDeletes.add(path));
+        return;
+      }
       try{
         const sb = getSupabase();
-        const { error } = await sb.storage.from(getPhotoBucketName()).remove(paths);
-        if(error){
-          console.error("写真Storage削除失敗", error);
-          toast("【エラー】写真ファイルの一部削除に失敗しました。");
+        const nowIso = new Date().toISOString();
+        const chunkSize = 100;
+        for(let i = 0; i < paths.length; i += chunkSize){
+          const chunk = paths.slice(i, i + chunkSize);
+          const { error } = await sb.from("marker_photos")
+            .update({ status: "deleted", deleted_at: nowIso, updated_at: nowIso })
+            .in("storage_path", chunk)
+            .neq("status", "deleted");
+          if(error){
+            chunk.forEach(path=>pendingPhotoStorageDeletes.add(path));
+            console.error("写真の論理削除失敗", error);
+            toast("【エラー】写真の削除状態の保存に失敗しました。");
+          }
         }
       }catch(e){
-        console.error("写真Storage削除例外", e);
-        toast("【エラー】写真ファイルの削除処理でエラーが発生しました。");
+        paths.forEach(path=>pendingPhotoStorageDeletes.add(path));
+        console.error("写真の論理削除例外", e);
+        toast("【エラー】写真の削除処理でエラーが発生しました。");
       }
     }
 
@@ -5044,6 +5124,7 @@
           logPdfDeleteError("hardDeleteExpiredPdfTrashRows", err, { drawingId: row?.id });
         }
       }
+      await purgeExpiredDeletedMarkerPhotoFiles();
       toast("10日経過PDFの完全削除を実行しました。");
     }
 
@@ -5598,6 +5679,7 @@
       const noteRows = await selectRowsByFloorWithSiteFallback(sb, "drawing_text_notes", "id", floorId, siteId, { inspectionIds });
       const noteIds = noteRows.map(r=>r.id).filter(Boolean);
 
+      await purgeExpiredDeletedMarkerPhotoFiles();
       await deleteRowsByIds(sb, "marker_photos", "marker_id", markerIds);
       await deleteRowsByIds(sb, "drawing_text_notes", "id", noteIds);
       await deleteRowsByIds(sb, "markers", "id", markerIds);
@@ -5628,6 +5710,157 @@
       }
       if(!options.silent) toast("フロアを完全削除しました");
       return true;
+    }
+
+    const purgedExpiredPhotoStoragePaths = new Set();
+
+    async function fetchMarkersByIdsForPhotoPurge(sb, markerIds){
+      const map = new Map();
+      const ids = [...new Set((markerIds || []).map(id=>String(id || "").trim()).filter(Boolean))];
+      const chunkSize = 100;
+      for(let i = 0; i < ids.length; i += chunkSize){
+        const chunk = ids.slice(i, i + chunkSize);
+        const { data, error } = await sb.from("markers")
+          .select("id, status, inspection_id, local_marker_id")
+          .in("id", chunk);
+        if(error) throw error;
+        (data || []).forEach(row=>{
+          if(row?.id) map.set(String(row.id), row);
+        });
+      }
+      return map;
+    }
+
+    async function fetchMarkersByLocalIdsForPhotoPurge(sb, photoRows){
+      const map = new Map();
+      const localIdsByInspection = new Map();
+      (photoRows || []).forEach(photo=>{
+        const inspectionId = String(photo?.inspection_id || "").trim();
+        const localId = String(photo?.local_marker_id || "").trim();
+        if(!inspectionId || !localId) return;
+        if(!localIdsByInspection.has(inspectionId)) localIdsByInspection.set(inspectionId, new Set());
+        localIdsByInspection.get(inspectionId).add(localId);
+      });
+      const chunkSize = 100;
+      for(const [inspectionId, localIdSet] of localIdsByInspection){
+        const localIds = [...localIdSet];
+        for(let i = 0; i < localIds.length; i += chunkSize){
+          const chunk = localIds.slice(i, i + chunkSize);
+          const { data, error } = await sb.from("markers")
+            .select("id, status, inspection_id, local_marker_id")
+            .eq("inspection_id", inspectionId)
+            .in("local_marker_id", chunk);
+          if(error) throw error;
+          (data || []).forEach(row=>{
+            const key = `${row?.inspection_id || ""}::${row?.local_marker_id || ""}`;
+            const current = map.get(key);
+            if(!current || isRetiredCloudMarkerStatus(current.status)){
+              map.set(key, row);
+            }
+          });
+        }
+      }
+      return map;
+    }
+
+    function resolveMarkerForExpiredPhoto(photo, markersById, markersByLocal){
+      const byId = photo?.marker_id ? markersById.get(String(photo.marker_id)) : null;
+      const localKey = (photo?.inspection_id && photo?.local_marker_id)
+        ? `${photo.inspection_id}::${photo.local_marker_id}`
+        : "";
+      const byLocal = localKey ? markersByLocal.get(localKey) : null;
+      if(byId && !isRetiredCloudMarkerStatus(byId.status)) return byId;
+      if(byLocal && !isRetiredCloudMarkerStatus(byLocal.status)) return byLocal;
+      return byId || byLocal || null;
+    }
+
+    async function reactivateMarkerPhotosByIds(sb, photoIds){
+      const uniqueIds = [...new Set((photoIds || []).map(id=>String(id || "").trim()).filter(Boolean))];
+      if(uniqueIds.length === 0) return;
+      const nowIso = new Date().toISOString();
+      const chunkSize = 100;
+      for(let i = 0; i < uniqueIds.length; i += chunkSize){
+        const chunk = uniqueIds.slice(i, i + chunkSize);
+        let { error } = await sb.from("marker_photos")
+          .update({ status: "active", deleted_at: null, updated_at: nowIso })
+          .in("id", chunk);
+        if(error && isMissingColumnOrTableError(error)){
+          const retry = await sb.from("marker_photos")
+            .update({ status: "active", updated_at: nowIso })
+            .in("id", chunk);
+          error = retry.error || null;
+        }
+        if(error){
+          console.error("[expired photo restore] failed", error);
+          toast("【エラー】使用中ピンの写真状態を復元できませんでした。");
+          throw error;
+        }
+      }
+    }
+
+    async function purgeExpiredDeletedMarkerPhotoFiles(){
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      try{
+        const sb = getSupabase();
+        const cutoff = new Date(Date.now() - TEN_DAYS_MS).toISOString();
+        const expiredPhotos = [];
+        const pageSize = 500;
+        for(let from = 0; from < 20000; from += pageSize){
+          const { data, error } = await sb.from("marker_photos")
+            .select("id, storage_path, marker_id, inspection_id, local_marker_id")
+            .eq("status", "deleted")
+            .lte("deleted_at", cutoff)
+            .range(from, from + pageSize - 1);
+          if(error) throw error;
+          const rows = data || [];
+          expiredPhotos.push(...rows);
+          if(rows.length < pageSize) break;
+        }
+        if(expiredPhotos.length === 0) return;
+        const markersById = await fetchMarkersByIdsForPhotoPurge(sb, expiredPhotos.map(row=>row?.marker_id));
+        const markersByLocal = await fetchMarkersByLocalIdsForPhotoPurge(sb, expiredPhotos);
+        const restorePhotoIds = [];
+        const keptPaths = new Set();
+        const removePaths = [];
+        expiredPhotos.forEach(photo=>{
+          const path = normalizePhotoStoragePath(photo?.storage_path);
+          const marker = resolveMarkerForExpiredPhoto(photo, markersById, markersByLocal);
+          const markerStatus = String(marker?.status || "").trim().toLowerCase();
+          const markerStillLive = !!marker && !isRetiredCloudMarkerStatus(markerStatus);
+          if(markerStillLive){
+            if(photo?.id) restorePhotoIds.push(photo.id);
+            if(path) keptPaths.add(path);
+            return;
+          }
+          if(!path || path.startsWith("http://") || path.startsWith("https://")) return;
+          if(purgedExpiredPhotoStoragePaths.has(path)) return;
+          removePaths.push(path);
+        });
+        if(restorePhotoIds.length > 0){
+          await reactivateMarkerPhotosByIds(sb, restorePhotoIds);
+        }
+        const uniquePaths = [...new Set(removePaths.filter(path=>!keptPaths.has(path)))];
+        if(uniquePaths.length === 0) return;
+        const bucket = getPhotoBucketName();
+        const chunkSize = 100;
+        let failed = false;
+        for(let i = 0; i < uniquePaths.length; i += chunkSize){
+          const chunk = uniquePaths.slice(i, i + chunkSize);
+          const { error } = await sb.storage.from(bucket).remove(chunk);
+          if(error){
+            failed = true;
+            console.error("期限切れ写真Storage削除失敗", error);
+          }else{
+            chunk.forEach(path=>purgedExpiredPhotoStoragePaths.add(path));
+          }
+        }
+        if(failed){
+          toast("【エラー】10日経過した写真ファイルの一部削除に失敗しました。");
+        }
+      }catch(error){
+        console.error("[expired photo storage purge] error", error);
+        toast("【エラー】10日経過した写真ファイルの削除に失敗しました。");
+      }
     }
 
     async function hardDeleteExpiredTrashFloors(){
@@ -8239,8 +8472,72 @@
       updateUndoRedoButtons();
     }
 
+    function collectMarkerIdentitySet(storeObj){
+      const ids = new Set();
+      const byKey = storeObj?.markersByKey || {};
+      Object.values(byKey).forEach(arr=>{
+        if(!Array.isArray(arr)) return;
+        arr.forEach(marker=>{
+          const id = String(marker?.id || marker?.local_marker_id || "").trim();
+          if(id) ids.add(id);
+        });
+      });
+      return ids;
+    }
+
+    function collectRevivedMarkerPhotoPaths(beforeIds, storeObj){
+      const paths = [];
+      const byKey = storeObj?.markersByKey || {};
+      Object.values(byKey).forEach(arr=>{
+        if(!Array.isArray(arr)) return;
+        arr.forEach(marker=>{
+          const id = String(marker?.id || marker?.local_marker_id || "").trim();
+          if(!id || beforeIds.has(id)) return;
+          [marker?.beforePhoto?.storage_path, marker?.afterPhoto?.storage_path].forEach(path=>{
+            const normalized = String(path || "").trim();
+            if(normalized) paths.push(normalized);
+          });
+        });
+      });
+      return [...new Set(paths)];
+    }
+
+    async function reactivateRevivedMarkerPhotos(paths){
+      const uniquePaths = [...new Set((paths || []).map(path=>String(path || "").trim()).filter(Boolean))];
+      uniquePaths.forEach(path=>pendingPhotoStorageDeletes.delete(path));
+      if(uniquePaths.length === 0) return;
+      if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return;
+      const sb = getSupabase();
+      const nowIso = new Date().toISOString();
+      const chunkSize = 100;
+      for(let i = 0; i < uniquePaths.length; i += chunkSize){
+        const chunk = uniquePaths.slice(i, i + chunkSize);
+        let { error } = await sb.from("marker_photos")
+          .update({ status: "active", deleted_at: null, updated_at: nowIso })
+          .in("storage_path", chunk)
+          .eq("status", "deleted");
+        if(error && isMissingColumnOrTableError(error)){
+          const retry = await sb.from("marker_photos")
+            .update({ status: "active", updated_at: nowIso })
+            .in("storage_path", chunk)
+            .eq("status", "deleted");
+          error = retry.error || null;
+        }
+        if(error){
+          console.error("[undo photo restore] failed", error);
+          toast("【エラー】戻したピンの写真状態を復元できませんでした。");
+        }
+      }
+    }
+
     async function restoreSnapshot(snapshot){
       if(!snapshot || !snapshot.store) return false;
+      if(autoSaveTimer){
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+      await waitForInFlightAutoSave();
+      const markerIdsBeforeRestore = collectMarkerIdentitySet(store);
       const previousDrawingId = (store?.activeBg?.drawingId || currentDrawingId || null);
       const targetDrawingId = snapshot.currentDrawingId || snapshot.activeBg?.drawingId || snapshot.activeBg?.pdfId || null;
       const targetIsPdf = snapshot.activeBg?.kind === "pdf" && !!targetDrawingId;
@@ -8276,6 +8573,8 @@
       }else{
         clearCurrentPdfFromUi();
       }
+      const revivedPhotoPaths = collectRevivedMarkerPhotoPaths(markerIdsBeforeRestore, store);
+      await reactivateRevivedMarkerPhotos(revivedPhotoPaths);
       setInputMode(inputMode);
       redrawBackground();
       redrawOverlay();
@@ -8330,6 +8629,7 @@
     let lastLoadedBgCacheKey = "";
     let lastLoadedBgDataUrl = "";
     let lastLoadedBgImage = null;
+    let bgDrawGeneration = 0;
     let pdfRenderToken = 0;
     let currentPdfRenderTask = null;
     let isRenderingPdfPage = false;
@@ -8401,6 +8701,25 @@
       ctx.fillStyle = "#6b7280";
       ctx.font = "14px system-ui, sans-serif";
       ctx.fillText("背景が未設定です（PDFをアップロードしてください）", 18, 28);
+    }
+
+    function clearBackgroundCanvasNow(){
+      bgDrawGeneration += 1;
+      lastLoadedBgImage = null;
+      lastLoadedBgCacheKey = "";
+      lastLoadedBgDataUrl = "";
+      if(!bgCanvas || !ctx) return;
+      const cssW = bgCanvas.style.width;
+      const cssH = bgCanvas.style.height;
+      const pixelW = bgCanvas.width;
+      const pixelH = bgCanvas.height;
+      if(pixelW > 0) bgCanvas.width = pixelW;
+      if(pixelH > 0) bgCanvas.height = pixelH;
+      if(cssW) bgCanvas.style.width = cssW;
+      if(cssH) bgCanvas.style.height = cssH;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      clearBackground();
     }
 
     // PDFのアスペクト比をstageWrapに適用する（resizeStageは呼ばない）
@@ -9274,8 +9593,13 @@
             lastLoadedBgDataUrl === dataURL
           );
           const drawLoadedImage = (img)=>{
+            const drawToken = bgDrawGeneration;
             applyPdfAspectRatio(img.width, img.height);
             requestAnimationFrame(()=>{
+              if(drawToken !== bgDrawGeneration) return;
+              if(store?.activeBg?.kind !== "pdf") return;
+              const liveKey = `${resolvePdfIdentity(store.activeBg)}:${store.activeBg.page}`;
+              if(liveKey !== cacheKey) return;
               const dpr2 = window.devicePixelRatio || 1;
               const r = stageWrap.getBoundingClientRect();
               const cssW2 = Math.max(1, Math.round(r.width));
@@ -9294,19 +9618,26 @@
               redrawOverlay();
             });
           };
+          const drawTokenAtSchedule = bgDrawGeneration;
           if(canReuseLoadedImage){
             drawLoadedImage(lastLoadedBgImage);
           }else{
             const img = new Image();
             img.onload = ()=>{
+              if(drawTokenAtSchedule !== bgDrawGeneration) return;
+              if(store?.activeBg?.kind !== "pdf") return;
+              const liveKey = `${resolvePdfIdentity(store.activeBg)}:${store.activeBg.page}`;
+              if(liveKey !== cacheKey) return;
               lastLoadedBgImage = img;
               lastLoadedBgCacheKey = cacheKey;
               lastLoadedBgDataUrl = dataURL;
               drawLoadedImage(img);
             };
             img.onerror = ()=>{
-              clearBackground();
-              redrawOverlay();
+              if(store?.activeBg?.kind === "pdf"){
+                clearBackground();
+                redrawOverlay();
+              }
             };
             img.src = dataURL;
           }
@@ -9322,7 +9653,7 @@
           redrawOverlay();
         }
       }else{
-        clearBackground();
+        clearBackgroundCanvasNow();
         redrawOverlay();
       }
     }
