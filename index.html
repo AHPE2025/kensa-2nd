@@ -6101,7 +6101,26 @@
           .insert(payload)
           .select("id")
           .single();
-        if(insertErr) throw insertErr;
+        if(insertErr){
+          // (site_id, floor_id) WHERE status = 'draft' の部分ユニークは
+          // PostgREST の upsert(onConflict) では ON CONFLICT の WHERE を渡せない。
+          // 同時作成で 23505 になったときは、同じ条件の既存 draft を返す。
+          if(String(insertErr.code || "") === "23505"){
+            const { data: raced, error: racedErr } = await sb.from("inspections")
+              .select(INSPECTION_SELECT_COLUMNS)
+              .eq("site_id", siteId)
+              .eq("floor_id", floorId)
+              .eq("status", "draft")
+              .order("updated_at", { ascending: false })
+              .limit(1);
+            if(racedErr) throw racedErr;
+            if(raced && raced.length > 0){
+              rememberInspectionId(raced[0].id, floorId);
+              return raced[0].id;
+            }
+          }
+          throw insertErr;
+        }
         rememberInspectionId(data.id, floorId);
         return data.id;
       }catch(e){
@@ -6132,6 +6151,7 @@
         .select(INSPECTION_SELECT_COLUMNS)
         .eq("site_id", siteId)
         .eq("floor_id", floorId)
+        .eq("status", "draft")
         .order("updated_at", { ascending: false })
         .limit(1);
       if(error) throw error;
