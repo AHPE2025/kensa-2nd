@@ -181,6 +181,11 @@
     .app-view.active{display:block}
     .inspection-grid{display:grid;grid-template-columns:2fr 1fr;gap:12px}
     .inspection-header{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .auth-bar{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .auth-bar[hidden]{display:none}
+    .auth-bar-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .login-card{max-width:420px;margin:48px auto}
+    .auth-text-link{display:inline-block;margin-top:12px;padding:0;border:none;background:none;color:#1d4ed8;text-decoration:underline;cursor:pointer;font-size:13px}
     .inspection-row{display:grid;grid-template-columns:2fr 1.2fr 1.2fr 0.8fr 0.8fr 0.8fr 1.2fr auto;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
     .inspection-row.head{font-size:12px;font-weight:700;background:#f8fafc}
     .inspection-row:last-child{border-bottom:none}
@@ -1148,7 +1153,56 @@
 </head>
 <body>
   <div class="wrap">
-    <div id="inspectionListView" class="app-view active">
+    <div id="authBar" class="auth-bar" hidden>
+      <strong>建物検査システム</strong>
+      <div class="auth-bar-actions">
+        <span class="small" id="authUserEmail"></span>
+        <button class="btn" id="btnLogout" type="button">ログアウト</button>
+      </div>
+    </div>
+    <div id="loginView" class="app-view active">
+      <div class="card login-card">
+        <h2>ログイン</h2>
+        <div class="body">
+          <p class="hint">管理者から発行されたメールアドレスとパスワードでログインしてください。</p>
+          <form id="loginForm">
+            <div class="field">
+              <label for="loginEmail">メールアドレス</label>
+              <input id="loginEmail" type="email" autocomplete="username" required />
+            </div>
+            <div class="field" style="margin-top:10px">
+              <label for="loginPassword">パスワード</label>
+              <input id="loginPassword" type="password" autocomplete="current-password" required />
+            </div>
+            <div id="loginStatus" class="small" style="min-height:18px;margin-top:8px"></div>
+            <div id="loginError" class="small" style="color:#b91c1c;min-height:18px"></div>
+            <button class="btn primary" id="btnLogin" type="submit">ログイン</button>
+            <button class="auth-text-link" id="btnForgotPassword" type="button">パスワードを忘れた方</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div id="setPasswordView" class="app-view">
+      <div class="card login-card">
+        <h2>新しいパスワードを設定</h2>
+        <div class="body">
+          <p class="hint">招待メール、またはパスワード再設定メールから開いた方は、新しいパスワードを設定してください。</p>
+          <form id="setPasswordForm">
+            <div class="field">
+              <label for="newPassword">新しいパスワード</label>
+              <input id="newPassword" type="password" autocomplete="new-password" required minlength="6" />
+            </div>
+            <div class="field" style="margin-top:10px">
+              <label for="newPasswordConfirm">新しいパスワード（確認）</label>
+              <input id="newPasswordConfirm" type="password" autocomplete="new-password" required minlength="6" />
+            </div>
+            <div id="setPasswordError" class="small" style="color:#b91c1c;min-height:18px;margin-top:8px"></div>
+            <button class="btn primary" id="btnSetPassword" type="submit">設定する</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div id="inspectionListView" class="app-view">
       <div class="inspection-header">
         <strong style="font-size:16px">検査案件一覧</strong>
         <button class="btn primary" id="btnNewInspectionSite" type="button">新規検査案件作成</button>
@@ -1846,6 +1900,13 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4dmlxYmp6cHNoZXN0d3Btb2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNDAwMzgsImV4cCI6MjA5NTcxNjAzOH0.o8Li0WfCmVqKEx8BbZGI_PmdDQ723-mM5ITIgZi4xMc";
 
     let supabaseClient = null;
+    let authSession = null;
+    let bootStarted = false;
+    let authListenerReady = false;
+    let passwordSetupPending = false;
+    let authLinkType = "";
+    const SIGNED_URL_TTL_SEC = 60 * 60;
+    const signedUrlCache = new Map();
     let currentInspectionId = null;
     let selectedCloudInspectionId = null;
     let currentDrawingId = null;
@@ -1910,16 +1971,43 @@
       return url;
     }
 
-    function getPhotoPublicUrlFromStoragePath(storagePath){
+    function isSupabasePublicObjectUrl(url){
+      return /\/storage\/v1\/object\/public\//i.test(String(url || ""));
+    }
+
+    function lookupCachedSignedPhotoUrl(storagePath){
+      const path = normalizePhotoStoragePath(storagePath);
+      if(!path || path.startsWith("http://") || path.startsWith("https://")) return "";
+      const cached = signedUrlCache.get(`${getPhotoBucketName()}|${path}`);
+      if(cached && cached.expiresAt > Date.now() + 30 * 1000) return cached.url;
+      return "";
+    }
+
+    async function getPhotoSignedUrlFromStoragePath(storagePath){
       const path = normalizePhotoStoragePath(storagePath);
       if(!path) return "";
-      if(path.startsWith("http://") || path.startsWith("https://")) return path;
+      if(path.startsWith("http://") || path.startsWith("https://")){
+        return isSupabasePublicObjectUrl(path) ? "" : path;
+      }
       if(!isSupabaseConfigured() || !isSupabaseSdkReady()) return "";
+      const cached = lookupCachedSignedPhotoUrl(path);
+      if(cached) return cached;
       try{
         const sb = getSupabase();
-        const { data } = sb.storage.from(getPhotoBucketName()).getPublicUrl(path);
-        return String(data?.publicUrl || "").trim();
-      }catch(_){
+        const signed = await sb.storage.from(getPhotoBucketName()).createSignedUrl(path, SIGNED_URL_TTL_SEC);
+        if(signed?.error){
+          console.warn("[photo] createSignedUrl failed", signed.error);
+          return "";
+        }
+        const url = String(signed?.data?.signedUrl || "").trim();
+        if(!/^https?:\/\//i.test(url)) return "";
+        signedUrlCache.set(`${getPhotoBucketName()}|${path}`, {
+          url,
+          expiresAt: Date.now() + (SIGNED_URL_TTL_SEC - 120) * 1000,
+        });
+        return url;
+      }catch(error){
+        console.warn("[photo] createSignedUrl failed", error);
         return "";
       }
     }
@@ -1927,12 +2015,17 @@
     function hydrateMarkerPhotoRow(row){
       const next = { ...(row || {}) };
       next.public_url = sanitizeMarkerPhotoPublicUrl(next.public_url);
-      if(next.storage_path){
-        const generated = getPhotoPublicUrlFromStoragePath(next.storage_path);
-        if(generated && !/^https?:\/\//i.test(next.public_url)){
-          next.public_url = generated;
-        }
-      }
+      const cached = lookupCachedSignedPhotoUrl(next.storage_path);
+      if(cached) next.signed_url = cached;
+      return next;
+    }
+
+    async function attachSignedUrlToPhotoRow(row){
+      const next = hydrateMarkerPhotoRow(row);
+      const path = normalizePhotoStoragePath(next.storage_path);
+      if(!path || path.startsWith("http://") || path.startsWith("https://")) return next;
+      const signedUrl = await getPhotoSignedUrlFromStoragePath(path);
+      if(signedUrl) next.signed_url = signedUrl;
       return next;
     }
     const FLOOR_CONTEXT_STORAGE_KEY = "kensa:last-floor-context";
@@ -1978,7 +2071,13 @@
         throw new Error("SUPABASE_URL と SUPABASE_ANON_KEY を index.html 内で設定してください。");
       }
       if(!supabaseClient){
-        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+        });
       }
       return supabaseClient;
     }
@@ -3425,10 +3524,14 @@
         toast(`【エラー】${photoKindLabel(kind)}写真アップロードに失敗しました。`);
         throw uploadRes.error;
       }
-      const { data } = sb.storage.from(bucket).getPublicUrl(storagePath);
+      const signedUrl = await getPhotoSignedUrlFromStoragePath(storagePath);
+      if(!signedUrl){
+        toast("【エラー】写真の表示URLを取得できませんでした。");
+      }
       return {
         storage_path: storagePath,
-        public_url: String(data?.publicUrl || "").trim(),
+        public_url: "",
+        signed_url: signedUrl,
         file_name: file.name || safeName,
         mime_type: file.type || "image/jpeg",
         file_size: Number(file.size || 0) || 0,
@@ -3456,7 +3559,7 @@
         kind: context.kind,
         photo_type: context.kind,
         storage_path: photoInfo.storage_path,
-        public_url: sanitizeMarkerPhotoPublicUrl(photoInfo.public_url) || getPhotoPublicUrlFromStoragePath(photoInfo.storage_path) || "",
+        public_url: sanitizeMarkerPhotoPublicUrl(photoInfo.public_url) || "",
         file_name: photoInfo.file_name || "",
         mime_type: photoInfo.mime_type || "image/jpeg",
         file_size: Number(photoInfo.file_size || 0) || 0,
@@ -3663,26 +3766,17 @@
         });
       }
       const hydrated = [];
+      let signFailed = false;
       for(const row of rows){
-        const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
-        next.signed_url = sanitizeMarkerPhotoPublicUrl(next.signed_url);
+        const next = await attachSignedUrlToPhotoRow({ ...row, bucket: getPhotoBucketName() });
         if(!resolvePhotoUrl(next, { warn: false }) && hasRealPhotoData(next)){
-          try{
-            const bucket = getPhotoBucketName();
-            const normalizedPath = normalizePhotoStoragePath(next.storage_path);
-            if(normalizedPath && !normalizedPath.startsWith("http://") && !normalizedPath.startsWith("https://")){
-              const signed = await sb.storage.from(bucket).createSignedUrl(normalizedPath, 60 * 60);
-              const signedUrl = String(signed?.data?.signedUrl || "").trim();
-              if(/^https?:\/\//i.test(signedUrl)){
-                next.signed_url = signedUrl;
-              }
-            }
-          }catch(_){}
-        }
-        if(!resolvePhotoUrl(next, { warn: false }) && hasRealPhotoData(next)){
+          signFailed = true;
           console.warn("[photo] failed to resolve url", next);
         }
         hydrated.push(next);
+      }
+      if(signFailed){
+        toast("【エラー】写真の表示URLを取得できませんでした。");
       }
       if(DEBUG_PHOTOS){
         console.log("[photos] loaded", hydrated.length);
@@ -4494,6 +4588,10 @@
     }
 
     function showView(viewName){
+      if(!authSession){
+        showLoginScreen();
+        return;
+      }
       currentView = viewName;
       const map = {
         inspection_list: "inspectionListView",
@@ -6254,12 +6352,17 @@
             .neq("status", "trash")
             .order("display_order", { ascending: true });
           if(error) throw error;
-          vendorWorkPhotoRowsCache = (data || []).map(row=>hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() }));
+          const signedRows = [];
+          for(const row of (data || [])){
+            signedRows.push(await attachSignedUrlToPhotoRow({ ...row, bucket: getPhotoBucketName() }));
+          }
+          vendorWorkPhotoRowsCache = signedRows;
           vendorWorkPhotoCacheKey = cacheKey;
           indexVendorWorkPhotoRows(vendorWorkPhotoRowsCache);
           return vendorWorkPhotoRowsCache;
         }catch(error){
           console.warn("業者別確認用の写真取得に失敗", error);
+          toast("【エラー】写真の取得に失敗しました。");
           vendorWorkPhotoRowsCache = [];
           vendorWorkPhotoCacheKey = cacheKey;
           indexVendorWorkPhotoRows([]);
@@ -8051,7 +8154,7 @@
           logPhotoResolved(photo, d);
           return d;
         }
-        if(d.startsWith("http://") || d.startsWith("https://")){
+        if((d.startsWith("http://") || d.startsWith("https://")) && !isSupabasePublicObjectUrl(d)){
           logPhotoResolved(photo, d);
           return d;
         }
@@ -8061,15 +8164,11 @@
         }
         if(isUuidLikeToken(d)) return "";
         const normalized = normalizePhotoStoragePath(d);
-        if(!normalized) return "";
-        if(normalized.startsWith("http://") || normalized.startsWith("https://")){
-          logPhotoResolved(photo, normalized);
-          return normalized;
-        }
-        const fromPath = getPhotoPublicUrlFromStoragePath(normalized);
-        if(fromPath){
-          logPhotoResolved(photo, fromPath);
-          return fromPath;
+        if(!normalized || isSupabasePublicObjectUrl(normalized)) return "";
+        const fromCache = lookupCachedSignedPhotoUrl(normalized);
+        if(fromCache){
+          logPhotoResolved(photo, fromCache);
+          return fromCache;
         }
         return "";
       }
@@ -8091,27 +8190,17 @@
         return localPreview;
       }
 
-      const directCandidates = [
-        photo.public_url,
-        photo.publicUrl,
+      const signedCandidates = [
         photo.signed_url,
-        photo.signedUrl,
-        photo.url,
-        photo.previewUrl
+        photo.signedUrl
       ];
 
-      for(const value of directCandidates){
+      for(const value of signedCandidates){
         if(!value || typeof value !== "string") continue;
-
         const v = value.trim();
-
-        if(v.startsWith("http://") || v.startsWith("https://")){
+        if((v.startsWith("http://") || v.startsWith("https://")) && !isSupabasePublicObjectUrl(v)){
           logPhotoResolved(photo, v);
           return v;
-        }
-
-        if(v.startsWith("blob:")){
-          console.warn("[photo] ignored blob url", v);
         }
       }
 
@@ -8122,32 +8211,11 @@
 
       const path = normalizePhotoStoragePath(rawPath);
 
-      if(path){
-        if(path.startsWith("http://") || path.startsWith("https://")){
-          logPhotoResolved(photo, path);
-          return path;
-        }
-
-        if(isSupabaseConfigured() && isSupabaseSdkReady()){
-          try{
-            const sb = getSupabase();
-            const { data } = sb.storage
-              .from(getPhotoBucketName())
-              .getPublicUrl(path);
-
-            if(data && data.publicUrl){
-              logPhotoResolved(photo, data.publicUrl);
-              return data.publicUrl;
-            }
-          }catch(error){
-            console.warn("[photo] getPublicUrl failed", error, photo);
-          }
-        }
-
-        const fallback = getPhotoPublicUrlFromStoragePath(path);
-        if(fallback){
-          logPhotoResolved(photo, fallback);
-          return fallback;
+      if(path && !path.startsWith("http://") && !path.startsWith("https://")){
+        const fromCache = lookupCachedSignedPhotoUrl(path);
+        if(fromCache){
+          logPhotoResolved(photo, fromCache);
+          return fromCache;
         }
       }
 
@@ -13249,6 +13317,13 @@
     }
 
     async function resolveImageForPdf(photo){
+      if(photo && typeof photo === "object"){
+        const path = photo.storage_path || photo.storagePath || photo.path;
+        if(path && !getLocalPhotoPreviewDataUrl(photo)){
+          const signedUrl = await getPhotoSignedUrlFromStoragePath(path);
+          if(signedUrl) photo.signed_url = signedUrl;
+        }
+      }
       const src = getPhotoSource(photo);
       if(!src) return { dataUrl: "", error: null };
       if(/^data:image\//i.test(src)) return { dataUrl: src, error: null };
@@ -14254,13 +14329,15 @@
         if(!dedupMap.has(key)) dedupMap.set(key, row);
       });
       const uniqueRows = [...dedupMap.values()];
-      return uniqueRows.map(row=>{
-        const next = hydrateMarkerPhotoRow({ ...row, bucket: getPhotoBucketName() });
+      const signedRows = [];
+      for(const row of uniqueRows){
+        const next = await attachSignedUrlToPhotoRow({ ...row, bucket: getPhotoBucketName() });
         if(next?.drawing_id == null && Number(next?.page_number || 0) > 0){
           next.drawing_id = scope.drawingId;
         }
-        return next;
-      });
+        signedRows.push(next);
+      }
+      return signedRows;
     }
 
     async function trashDrawingScopedRows(sb, tableName, drawingId, now, options = {}){
@@ -15691,6 +15768,295 @@
       });
     });
 
+    function readAuthActionType(){
+      const searchType = new URLSearchParams(window.location.search).get("type");
+      const hashType = new URLSearchParams(String(window.location.hash || "").replace(/^#/, "")).get("type");
+      const type = String(hashType || searchType || "").trim().toLowerCase();
+      if(type === "invite" || type === "recovery") return type;
+      return "";
+    }
+
+    function clearAuthRedirectParams(){
+      const url = new URL(window.location.href);
+      ["code", "type", "error", "error_code", "error_description"].forEach(key=>{
+        url.searchParams.delete(key);
+      });
+      const hash = new URLSearchParams(String(url.hash || "").replace(/^#/, ""));
+      ["access_token", "refresh_token", "expires_in", "expires_at", "token_type", "type", "error", "error_code", "error_description"].forEach(key=>{
+        hash.delete(key);
+      });
+      const nextHash = hash.toString();
+      url.hash = nextHash;
+      const next = url.pathname + url.search + (nextHash ? `#${nextHash}` : "");
+      history.replaceState(null, "", next);
+    }
+
+    function hideAuthScreens(){
+      ["loginView", "setPasswordView", "inspectionListView", "inspectionDetailView", "categoryVendorSettingsView", "floorInspectionView"].forEach(id=>{
+        const el = $(id);
+        if(el) el.classList.remove("active");
+      });
+    }
+
+    function showLoginScreen(options = {}){
+      passwordSetupPending = false;
+      authSession = null;
+      hideAuthScreens();
+      const login = $("loginView");
+      if(login) login.classList.add("active");
+      const bar = $("authBar");
+      if(bar) bar.hidden = true;
+      const emailEl = $("authUserEmail");
+      if(emailEl) emailEl.textContent = "";
+      const list = $("inspectionSiteList");
+      if(list) list.innerHTML = "";
+      const statusEl = $("loginStatus");
+      if(statusEl) statusEl.textContent = options.checking ? "ログイン状態を確認しています…" : "";
+      const errEl = $("loginError");
+      if(errEl){
+        if(options.message) errEl.textContent = options.message;
+        else if(!options.keepError) errEl.textContent = "";
+      }
+    }
+
+    function showSetPasswordScreen(){
+      passwordSetupPending = true;
+      hideAuthScreens();
+      const view = $("setPasswordView");
+      if(view) view.classList.add("active");
+      const bar = $("authBar");
+      if(bar) bar.hidden = true;
+      const errEl = $("setPasswordError");
+      if(errEl) errEl.textContent = "";
+    }
+
+    function startAppAfterLogin(session){
+      passwordSetupPending = false;
+      authLinkType = "";
+      authSession = session || null;
+      hideAuthScreens();
+      const bar = $("authBar");
+      if(bar) bar.hidden = false;
+      const emailEl = $("authUserEmail");
+      if(emailEl) emailEl.textContent = session?.user?.email || "";
+      const errEl = $("loginError");
+      if(errEl) errEl.textContent = "";
+      const statusEl = $("loginStatus");
+      if(statusEl) statusEl.textContent = "";
+      clearAuthRedirectParams();
+      if(!bootStarted){
+        bootStarted = true;
+        boot();
+        return;
+      }
+      showView("inspection_list");
+    }
+
+    async function submitLogin(event){
+      if(event) event.preventDefault();
+      const email = String($("loginEmail")?.value || "").trim();
+      const password = String($("loginPassword")?.value || "");
+      const errEl = $("loginError");
+      if(!email || !password){
+        const msg = "メールアドレスとパスワードを入力してください。";
+        if(errEl) errEl.textContent = msg;
+        toast(msg);
+        return;
+      }
+      const button = $("btnLogin");
+      if(button) button.disabled = true;
+      try{
+        const sb = getSupabase();
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        if(error || !data?.session){
+          const msg = "ログインに失敗しました。メールアドレスとパスワードを確認してください。";
+          if(errEl) errEl.textContent = msg;
+          toast("【エラー】" + msg);
+          return;
+        }
+        const passwordEl = $("loginPassword");
+        if(passwordEl) passwordEl.value = "";
+        startAppAfterLogin(data.session);
+      }catch(error){
+        console.error("[auth] login failed", error);
+        const msg = "ログイン処理でエラーが発生しました。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+      }finally{
+        if(button) button.disabled = false;
+      }
+    }
+
+    async function submitForgotPassword(){
+      const email = String($("loginEmail")?.value || "").trim();
+      const errEl = $("loginError");
+      if(!email){
+        const msg = "パスワード再設定には、メールアドレスを入力してください。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+        return;
+      }
+      const button = $("btnForgotPassword");
+      if(button) button.disabled = true;
+      try{
+        const sb = getSupabase();
+        const { error } = await sb.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        });
+        if(error){
+          console.error("[auth] reset email failed", error);
+          const msg = "パスワード再設定メールの送信に失敗しました。";
+          if(errEl) errEl.textContent = msg;
+          toast("【エラー】" + msg);
+          return;
+        }
+        const msg = "パスワード再設定メールを送信しました。届いたメールのリンクを開いてください。";
+        if(errEl) errEl.textContent = "";
+        const statusEl = $("loginStatus");
+        if(statusEl) statusEl.textContent = msg;
+        toast(msg);
+      }catch(error){
+        console.error("[auth] reset email failed", error);
+        const msg = "パスワード再設定メールの送信に失敗しました。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+      }finally{
+        if(button) button.disabled = false;
+      }
+    }
+
+    async function submitNewPassword(event){
+      if(event) event.preventDefault();
+      const password = String($("newPassword")?.value || "");
+      const confirmPassword = String($("newPasswordConfirm")?.value || "");
+      const errEl = $("setPasswordError");
+      if(password.length < 6){
+        const msg = "パスワードは6文字以上にしてください。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+        return;
+      }
+      if(password !== confirmPassword){
+        const msg = "パスワードが一致しません。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+        return;
+      }
+      const button = $("btnSetPassword");
+      if(button) button.disabled = true;
+      try{
+        const sb = getSupabase();
+        const { error } = await sb.auth.updateUser({ password });
+        if(error){
+          console.error("[auth] update password failed", error);
+          const msg = "パスワードの設定に失敗しました。";
+          if(errEl) errEl.textContent = msg;
+          toast("【エラー】" + msg);
+          return;
+        }
+        const passwordEl = $("newPassword");
+        const confirmEl = $("newPasswordConfirm");
+        if(passwordEl) passwordEl.value = "";
+        if(confirmEl) confirmEl.value = "";
+        const { data, error: sessionErr } = await sb.auth.getSession();
+        if(sessionErr) throw sessionErr;
+        toast("パスワードを設定しました。");
+        startAppAfterLogin(data?.session || authSession);
+      }catch(error){
+        console.error("[auth] update password failed", error);
+        const msg = "パスワードの設定に失敗しました。";
+        if(errEl) errEl.textContent = msg;
+        toast("【エラー】" + msg);
+      }finally{
+        if(button) button.disabled = false;
+      }
+    }
+
+    async function logout(){
+      if(dirty){
+        let saved = false;
+        try{
+          saved = await autoSaveToCloud("logout", { manual: true });
+        }catch(error){
+          console.error("[auth] logout save failed", error);
+          saved = false;
+        }
+        if(!saved){
+          const proceed = confirm("保存に失敗しました。保存しないでログアウトしますか？");
+          if(!proceed) return;
+          resetAutoSaveRetryState();
+        }
+      }
+      try{
+        const sb = getSupabase();
+        const { error } = await sb.auth.signOut();
+        if(error) throw error;
+        toast("ログアウトしました。");
+      }catch(error){
+        console.error("[auth] logout failed", error);
+        toast("【エラー】ログアウトに失敗しました。");
+      }
+    }
+
+    function needsPasswordSetup(){
+      return passwordSetupPending || authLinkType === "invite" || authLinkType === "recovery";
+    }
+
+    async function startAuthGate(){
+      authLinkType = readAuthActionType();
+      showLoginScreen({ checking: true });
+      if(!isSupabaseSdkReady()){
+        const msg = "Supabase SDKが読み込まれていません。ページを再読み込みしてください。";
+        showLoginScreen({ message: msg });
+        toast("【エラー】" + msg);
+        return;
+      }
+      if(!isSupabaseConfigured()){
+        const msg = "SUPABASE_URL と SUPABASE_ANON_KEY を設定してください。";
+        showLoginScreen({ message: msg });
+        toast("【確認】" + msg);
+        return;
+      }
+      try{
+        const sb = getSupabase();
+        sb.auth.onAuthStateChange((event, session)=>{
+          if(event === "PASSWORD_RECOVERY"){
+            authSession = session || authSession;
+            showSetPasswordScreen();
+            return;
+          }
+          if(!authListenerReady) return;
+          if(event === "SIGNED_OUT") showLoginScreen();
+        });
+        const { data, error } = await sb.auth.getSession();
+        if(error) throw error;
+        authListenerReady = true;
+        if(needsPasswordSetup()){
+          if(data?.session || authSession){
+            authSession = data?.session || authSession;
+            showSetPasswordScreen();
+            return;
+          }
+          const msg = "パスワード設定用のリンクが無効か、期限切れです。";
+          showLoginScreen({ message: msg });
+          toast("【エラー】" + msg);
+          clearAuthRedirectParams();
+          return;
+        }
+        if(!data?.session){
+          showLoginScreen();
+          return;
+        }
+        startAppAfterLogin(data.session);
+      }catch(error){
+        authListenerReady = true;
+        console.error("[auth] session check failed", error);
+        const msg = "ログイン状態の確認に失敗しました。";
+        showLoginScreen({ message: msg });
+        toast("【エラー】" + msg);
+      }
+    }
+
     // -------------------- Boot --------------------
     function boot(){
       console.debug("boot start");
@@ -15732,7 +16098,11 @@
         }
       }
     }
-    boot();
+    $("loginForm").addEventListener("submit", submitLogin);
+    $("btnForgotPassword").addEventListener("click", submitForgotPassword);
+    $("setPasswordForm").addEventListener("submit", submitNewPassword);
+    $("btnLogout").addEventListener("click", ()=>{ logout(); });
+    startAuthGate();
   }); // DOMContentLoaded
   </script>
 </body>
