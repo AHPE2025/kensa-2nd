@@ -1347,7 +1347,7 @@
         <button class="btn primary" id="btnCloudSave" type="button">クラウド保存</button>
         <button class="btn primary" id="btnExportPdf" type="button">PDF出力</button>
         <button class="btn" id="btnSavePng" type="button">PNG保存</button>
-        <button class="btn" id="btnClearStorage" type="button">データ消去</button>
+        <button class="btn" id="btnClearStorage" type="button" hidden>データ消去</button>
         <button class="btn toolbar-hidden" id="btnEditMemo" disabled type="button">メモ</button>
         <button class="btn danger toolbar-hidden" id="btnDeleteSelected" disabled type="button">削除</button>
       </div>
@@ -2570,7 +2570,7 @@
 
     function readInspectionForm(){
       const bg = store.activeBg || { kind:"none" };
-      const inspectedRaw = $("inpInspectedAt").value;
+      const inspectedRaw = inspectionDateToStoredYmd($("inpInspectedAt").value);
       const siteName = (selectedSite?.site_name || $("inpSiteName").value || "").trim();
       const floorName = (selectedFloor?.floor_name || $("inpFloorName").value || "").trim();
       const inspectionTitle = [siteName, floorName, "検査"].filter(Boolean).join(" ");
@@ -2580,7 +2580,7 @@
         floor_id: selectedFloorId || null,
         floor_name: floorName || null,
         site_name: siteName || null,
-        inspected_at: inspectedRaw ? new Date(inspectedRaw + "T00:00:00").toISOString() : null,
+        inspected_at: inspectedRaw || null,
         inspector_name: ($("inpInspectorName").value || "").trim() || null,
         status: "draft",
         current_drawing_id: (bg.kind === "pdf")
@@ -2603,15 +2603,7 @@
       $("inpSiteName").value = siteName;
       $("inpFloorName").value = insp.floor_name || selectedFloor?.floor_name || "";
       $("inpInspectorName").value = insp.inspector_name || "";
-      if(insp.inspected_at){
-        try{
-          $("inpInspectedAt").value = new Date(insp.inspected_at).toISOString().slice(0,10);
-        }catch(_){
-          $("inpInspectedAt").value = "";
-        }
-      }else{
-        $("inpInspectedAt").value = "";
-      }
+      $("inpInspectedAt").value = inspectionDateToStoredYmd(insp.inspected_at);
       if(selectedSite?.memo){
         $("inpSiteMemo").value = selectedSite.memo;
       }
@@ -2635,6 +2627,7 @@
           });
           return false;
         }
+        dirty = false;
       }
       const settings = insp.settings || {};
       const floorScopeId = getScopedFloorId(insp.floor_id || selectedFloorId || currentFloorId);
@@ -4014,6 +4007,7 @@
         clearTimeout(autoSaveRetryTimer);
         autoSaveRetryTimer = null;
       }
+      if(navigator.onLine === false) return;
       const delay = Math.min(
         AUTO_SAVE_RETRY_MAX_MS,
         AUTO_SAVE_RETRY_BASE_MS * (2 ** autoSaveRetryAttempt)
@@ -4257,11 +4251,26 @@
       return (site?.site_name || "").trim() || "（現場名未設定）";
     }
 
+    function formatLocalYmd(date){
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    function inspectionDateToStoredYmd(value){
+      const raw = String(value ?? "").trim();
+      if(!raw) return "";
+      return raw.slice(0, 10);
+    }
+
     function formatDateLabel(value){
       if(!value) return "-";
-      const d = new Date(value);
-      if(Number.isNaN(d.getTime())) return String(value);
-      return d.toISOString().slice(0, 10);
+      const raw = String(value).trim();
+      if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+      const d = new Date(raw);
+      if(Number.isNaN(d.getTime())) return raw;
+      return formatLocalYmd(d);
     }
 
     function applySiteDetailToRuntimeState(values){
@@ -6075,9 +6084,7 @@
         const floorName = (selectedFloor?.floor_name || formData.floor_name || $("inpFloorName").value || "").trim();
         const siteName = (selectedSite?.site_name || formData.site_name || $("inpSiteName").value || "").trim();
         const inspectedAtSource = selectedSite?.inspection_date || $("inpInspectedAt").value || "";
-        const inspectedAt = inspectedAtSource
-          ? new Date(`${inspectedAtSource}T00:00:00`).toISOString()
-          : null;
+        const inspectedAt = inspectionDateToStoredYmd(inspectedAtSource) || null;
         const payload = {
           site_id: siteId,
           floor_id: floorId,
@@ -13554,7 +13561,9 @@
       const header = getPdfHeaderData();
       const siteToken = buildAsciiToken(header.site_name, "site");
       const floorToken = buildAsciiToken(header.floor_name, "floor");
-      const ts = new Date().toISOString().slice(0, 10);
+      const ts = /^\d{4}-\d{2}-\d{2}$/.test(header.inspection_date)
+        ? header.inspection_date
+        : formatLocalYmd(new Date());
       return toSafeFileName(`inspection_${siteToken}_${floorToken}_${ts}.pdf`);
     }
 
@@ -15101,38 +15110,64 @@
       const m = markers().find(mm=>mm.id===selectedId);
       if(m) openQuickMarkerEditor(m, { isNew: false });
     });
-    $("btnClearStorage").addEventListener("click", ()=>{
-      const ok = confirm("端末内の保存データを削除します。\n（マーカー・PDFページ画像キャッシュが消えます）\nよろしいですか？");
-      if(!ok) return;
-      localStorage.removeItem(STORAGE_KEY);
-      store = loadStore();
-      clearUndoRedoHistory();
-      selectedId = null;
-      selectedTextNoteId = null;
-      filterVendor = "";
-      filterStatus = "open";
-      inlineVendorListCollapsed = false;
-      closeTextNoteEditor();
-      setInputMode("pin");
-      syncInlineVendorFilterControls();
-      applyInlineVendorListCollapsed(false);
-      $("memoInput").value = "";
-      $("pageInput").value = "1";
-      closeIssuePanel();
-      lastPdfFile = null;
-      currentDrawingId = null;
-      currentDrawingStoragePath = null;
-      cachedPdfDoc = null;
-      cachedPdfFileRef = null;
-      $("pdfInput").value = "";  // ファイル入力をリセット（同じPDFを再選択できるように）
-      redrawBackground();
-      redrawOverlay();
-      redrawList();
-      syncButtons();
-      updatePageInfo();
-      syncSelectorsFromSelectedMarker();
-      toast("保存データを削除しました。");
-    });
+    const btnClearStorage = $("btnClearStorage");
+    const devToolsEnabled = new URLSearchParams(location.search).get("dev") === "1";
+    if(btnClearStorage && devToolsEnabled){
+      btnClearStorage.hidden = false;
+      btnClearStorage.addEventListener("click", ()=>{
+        const ok = confirm("端末内の保存データを削除します。\n（マーカー・PDFページ画像キャッシュが消えます）\nよろしいですか？");
+        if(!ok) return;
+        if(autoSaveTimer){
+          clearTimeout(autoSaveTimer);
+          autoSaveTimer = null;
+        }
+        if(autoSaveRetryTimer){
+          clearTimeout(autoSaveRetryTimer);
+          autoSaveRetryTimer = null;
+        }
+        autoSaveNeedsRetry = false;
+        localStorage.removeItem(STORAGE_KEY);
+        store = loadStore();
+        clearUndoRedoHistory();
+        selectedId = null;
+        selectedTextNoteId = null;
+        filterVendor = "";
+        filterStatus = "open";
+        inlineVendorListCollapsed = false;
+        closeTextNoteEditor();
+        setInputMode("pin");
+        syncInlineVendorFilterControls();
+        applyInlineVendorListCollapsed(false);
+        $("memoInput").value = "";
+        $("pageInput").value = "1";
+        closeIssuePanel();
+        lastPdfFile = null;
+        currentDrawingId = null;
+        currentDrawingStoragePath = null;
+        cachedPdfDoc = null;
+        cachedPdfFileRef = null;
+        $("pdfInput").value = "";
+        currentInspectionId = null;
+        selectedInspectionId = null;
+        selectedCloudInspectionId = null;
+        selectedFloorId = null;
+        selectedFloor = null;
+        currentFloorId = null;
+        currentFloorName = "";
+        dirty = false;
+        redrawBackground();
+        redrawOverlay();
+        redrawList();
+        syncButtons();
+        updatePageInfo();
+        syncSelectorsFromSelectedMarker();
+        updateCloudCurrentIdLabel();
+        showView("inspection_list");
+        toast("保存データを削除しました。");
+      });
+    }else if(btnClearStorage){
+      btnClearStorage.remove();
+    }
 
     // -------------------- Fullscreen --------------------
     let isFullscreen = false;
